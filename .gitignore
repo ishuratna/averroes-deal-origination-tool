@@ -1,0 +1,26 @@
+# Node.js
+**/node_modules
+**/dist
+**/.next
+**/out
+**/build
+
+# Python
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.ipynb_checkpoints
+**/backend/.env
+
+# GCS/GCP
+**/*.json (Service Account keys)
+**/credentials/
+
+# System
+**/.DS_Store
+Thumbs.db
+**/*.log
+
+# Project Specific
+**/docs/scraped_data/
+**/docs/raw_exports/
