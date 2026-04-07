@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Artisan",
+    "website": "https://artisan.co",
+    "sector": "AI / B2B SaaS",
+    "description": "Autonomous AI agents for sales automation.",
+    "match_score": 0.95,
+    "status": "Qualified",
+    "source": "SaaStr London"
+  },
+  {
+    "name": "DuploCloud",
+    "website": "https://duplocloud.com",
+    "sector": "DevOps / B2B SaaS",
+    "description": "No-code DevOps automation for Azure/AWS.",
+    "match_score": 0.88,
+    "status": "Qualified",
+    "source": "SaaStr London"
+  },
+  {
+    "name": "Dust",
+    "website": "https://dust.tt",
+    "sector": "AI / B2B SaaS",
+    "description": "Custom internal AI assistants for enterprises.",
+    "match_score": 0.91,
+    "status": "Under Review",
+    "source": "SaaStr London"
+  },
+  {
+    "name": "Firebolt",
+    "website": "https://firebolt.io",
+    "sector": "Data / B2B SaaS",
+    "description": "High-performance cloud data warehousing.",
+    "match_score": 0.84,
+    "status": "Under Review",
+    "source": "SaaStr London"
+  },
+  {
+    "name": "MatAlytics",
+    "website": "https://matalytics.com",
+    "sector": "Tech / B2B SaaS",
+    "description": "Materials science intelligence.",
+    "match_score": 0.72,
+    "status": "Qualified",
+    "source": "London Tech Week"
+  }
+]

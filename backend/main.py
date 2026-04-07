@@ -1,79 +1,83 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from google.cloud import storage, bigquery
 from dotenv import load_dotenv
 
+from scrapers.conference_scraper import ConferenceScraper
+from storage.gcs_handler import GCSHandler
+from ai.criteria import AverroesPhilosophy, evaluate_target
+
 load_dotenv()
 
 app = FastAPI(title="Averroes Deal Origination API")
+scraper = ConferenceScraper()
+gcs_handler = GCSHandler(bucket_name="averroes-deal-intelligence")
 
 # --- Models ---
-class TargetCriteria(BaseModel):
-    sector: Optional[str] = None
-    min_ebitda: Optional[float] = None
-    min_revenue: Optional[float] = None
-    region: Optional[str] = "UK/Europe"
-
 class CompanyTarget(BaseModel):
     name: str
-    website: str
-    sector: str
-    estimated_ebitda: float
-    description: str
-    match_score: float
-    contact_name: Optional[str] = None
-    contact_email: Optional[str] = None
-
-# --- Services ---
-def get_gcs_client():
-    # Credentials should be in environment or available via ADC
-    return storage.Client()
-
-def get_bq_client():
-    return bigquery.Client()
+    website: Optional[str] = None
+    sector: Optional[str] = "Unknown"
+    match_score: float = 0.0
+    source: str = "Manual"
+    status: str = "Qualified"
 
 # --- Endpoints ---
 
 @app.get("/")
 async def root():
-    return {"status": "Averroes Intelligence Platform Active", "version": "v1.0.0"}
+    return {"status": "Averroes Intelligence Platform Active", "version": "v1.1.0"}
 
-@app.post("/analyze-target", response_model=CompanyTarget)
-async def analyze_target(url: str):
+@app.post("/ingest/conference")
+async def ingest_conference(conference_name: str = Query(..., description="Name of the conference to scrape")):
     """
-    AI-powered analysis of a target URL.
-    1. Scrapes the website.
-    2. Uses Gemini to extract financials/sector.
-    3. Matches against Averroes investment philosophy.
+    1. Scrapes the specific conference website.
+    2. Filters for B2B SaaS in UK/Europe (Placeholder AI check).
+    3. Persists to GCS.
     """
-    # Placeholder for the AI pipeline
-    return CompanyTarget(
-        name="Target Company X",
-        website=url,
-        sector="B2B SaaS",
-        estimated_ebitda=5.5,
-        description="A specialized provider of vertical software solutions.",
-        match_score=0.92,
-        contact_name="Executive Team",
-        contact_email="team@targetx.com"
-    )
+    if conference_name not in scraper.get_all_targets():
+        raise HTTPException(status_code=404, detail="Conference not monitored.")
+    
+    companies = scraper.scrape_conference(conference_name)
+    
+    if not companies:
+        return {"status": "Complete", "count": 0, "message": "No new companies found."}
+    
+    # Simple initial filtering logic
+    philosophy = AverroesPhilosophy()
+    refined_companies = []
+    
+    for c in companies:
+        # Initial score 
+        score = evaluate_target({"sector": "SaaS", "region": "UK"}, philosophy)
+        c["match_score"] = score
+        refined_companies.append(c)
+    
+    # Save to GCS
+    gcs_filename = gcs_handler.save_companies(refined_companies, conference_name.lower().replace(" ", "_"))
+    
+    return {
+        "status": "Success",
+        "count": len(refined_companies),
+        "source": conference_name,
+        "gcs_path": gcs_filename
+    }
 
 @app.get("/pipeline", response_model=List[CompanyTarget])
 async def get_pipeline():
     """
-    Fetch the current target pipeline from BigQuery.
+    Mocked pipeline for now. Will eventually read from BigQuery/GCS.
     """
-    # Placeholder for BigQuery pull
     return [
         CompanyTarget(
             name="SaaS Synergy", 
             website="https://synergy.io", 
-            sector="SaaS", 
-            estimated_ebitda=8.2, 
-            description="Infrastructure for hybrid work.",
-            match_score=0.95
+            sector="B2B SaaS", 
+            match_score=0.95,
+            source="SaaSiest",
+            status="Qualified"
         )
     ]
 
