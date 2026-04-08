@@ -2,8 +2,9 @@ export interface CompanyTarget {
   name: string;
   website: string;
   sector: string;
-  estimated_ebitda: number;
+  source: string;
   description: string;
+  estimated_ebitda?: number;
   match_score: number; // 0 to 1
   contact_name?: string;
   contact_email?: string;

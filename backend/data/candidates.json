@@ -43,5 +43,41 @@
     "match_score": 0.72,
     "status": "Qualified",
     "source": "London Tech Week"
+  },
+  {
+    "name": "DataSyncPro",
+    "website": "https://datasyncpro.io",
+    "sector": "B2B SaaS / Data pipelines",
+    "region": "UK",
+    "ownership": "Bootstrapped, single founder looking to exit.",
+    "growth_signals": true,
+    "description": "A B2B SaaS data pipeline tool syncing PostgreSQL to Snowflake securely. Bootstrapped to $300k ARR.",
+    "source": "Acquire.com",
+    "match_score": 1.0,
+    "status": "Under Review"
+  },
+  {
+    "name": "HealthMatch VC",
+    "website": "https://healthmatch.vc",
+    "sector": "HealthTech Platform",
+    "region": "France",
+    "ownership": "Backed by Sequoia Capital, Series A.",
+    "growth_signals": true,
+    "description": "HealthTech platform matching patients with clinical trials. Fresh off a $10M Series A.",
+    "source": "Acquire.com",
+    "match_score": 0.3,
+    "status": "Not a Fit"
+  },
+  {
+    "name": "NordicHR",
+    "website": "https://nordichr.se",
+    "sector": "B2B SaaS / HR Tech",
+    "region": "Sweden (Nordics)",
+    "ownership": "Self-funded, team of 4.",
+    "growth_signals": true,
+    "description": "HR and payroll compliance software for the Nordic market. Founder-owned and profitable.",
+    "source": "Acquire.com",
+    "match_score": 0.7,
+    "status": "Qualified"
   }
 ]

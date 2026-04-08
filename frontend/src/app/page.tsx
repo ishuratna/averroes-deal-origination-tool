@@ -1,14 +1,69 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
+
+import { useEffect, useState } from "react";
+import { CompanyTarget } from "../types";
+import { dealApi } from "../services/api";
 
 export default function Home() {
+  const [pipeline, setPipeline] = useState<CompanyTarget[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const data = await dealApi.getPipeline();
+        setPipeline(data);
+      } catch (error) {
+        console.error("Failed to load pipeline", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  const renderColumn = (status: string, title: string) => {
+    const filtered = pipeline.filter(c => c.status === status);
+    return (
+      <div className="pipeline-column">
+        <h3>{title} ({filtered.length})</h3>
+        {filtered.length === 0 && !loading && (
+          <div className="card glass empty">
+            <p>No companies currently in {title.toLowerCase()}.</p>
+          </div>
+        )}
+        {filtered.map((company, i) => (
+          <div key={i} className="card glass">
+            <div className="card-header">
+              <span className="badge-growth" style={{
+                background: company.match_score > 0.9 ? 'rgba(100, 255, 218, 0.1)' : 'rgba(212, 175, 55, 0.1)',
+                color: company.match_score > 0.9 ? 'var(--green)' : 'var(--gold)'
+              }}>
+                {Math.round(company.match_score * 100)}% Match
+              </span>
+              <h4>{company.name}</h4>
+            </div>
+            <p>{company.sector} | {company.source}</p>
+            <p className="description">{company.description}</p>
+            <div className="metrics">
+              <a href={company.website} target="_blank" rel="noreferrer" className="link-website">
+                Visit Website ↗
+              </a>
+            </div>
+          </div>
+        ))}
+        {loading && <div className="skeleton">Loading targets...</div>}
+      </div>
+    );
+  };
+
   return (
     <main className="container">
       <header className="navbar">
         <div className="logo">AVERROES CAPITAL</div>
         <nav>
-          <button className="button">
-            New Source +
+          <button className="button" onClick={() => window.location.reload()}>
+            Refresh Sync ↻
           </button>
         </nav>
       </header>
@@ -28,51 +83,9 @@ export default function Home() {
       </section>
 
       <section className="pipeline-grid">
-        <div className="pipeline-column">
-          <h3>Qualified Targets</h3>
-          <div className="card glass">
-            <div className="card-header">
-              <span className="badge-growth">92% Match</span>
-              <h4>SaaS Synergy Corp</h4>
-            </div>
-            <p>B2B Infrastructure | $5M-$10M EBITDA</p>
-            <div className="metrics">
-              <div className="metric"><span>Rule of 40</span> <strong>45%</strong></div>
-              <div className="metric"><span>Growth</span> <strong>28% YoY</strong></div>
-            </div>
-          </div>
-          
-          <div className="card glass">
-            <div className="card-header">
-              <span className="badge-growth">88% Match</span>
-              <h4>Nexus Flow Ltd</h4>
-            </div>
-            <p>FinTech Enabler | $2M-$4M EBITDA</p>
-            <div className="metrics">
-              <div className="metric"><span>Rule of 40</span> <strong>38%</strong></div>
-              <div className="metric"><span>Growth</span> <strong>35% YoY</strong></div>
-            </div>
-          </div>
-        </div>
-
-        <div className="pipeline-column">
-          <h3>Under Review</h3>
-          <div className="card glass empty">
-            <p>Drop companies here to start AI enrichment.</p>
-          </div>
-        </div>
-        
-        <div className="pipeline-column">
-          <h3>Engaged</h3>
-          <div className="card glass">
-            <div className="card-header">
-              <span className="badge-growth" style={{background: 'rgba(212, 175, 55, 0.1)', color: 'var(--gold)'}}>Verified</span>
-              <h4>Alpha Logic</h4>
-            </div>
-            <p>Service-Led Tech | $12M EBITDA</p>
-            <p className="contact-info">CEO: Sarah Jenkins | 077 1234 5678</p>
-          </div>
-        </div>
+        {renderColumn('Qualified', 'Sourced Targets')}
+        {renderColumn('Under Review', 'AI Enrichment')}
+        {renderColumn('Engaged', 'Verified Pipeline')}
       </section>
 
       <style jsx>{`
@@ -150,6 +163,7 @@ export default function Home() {
 
         .card-header {
           display: flex;
+          flex-direction: row-reverse;
           justify-content: space-between;
           align-items: center;
           margin-bottom: 0.5rem;
@@ -163,7 +177,17 @@ export default function Home() {
         .card p {
           font-size: 0.9rem;
           color: var(--slate);
-          margin-bottom: 1rem;
+          margin-bottom: 0.5rem;
+        }
+
+        .description {
+          font-size: 0.85rem !important;
+          color: var(--light-slate) !important;
+          font-style: italic;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
 
         .metrics {
@@ -171,18 +195,13 @@ export default function Home() {
           gap: 1rem;
           border-top: 1px solid rgba(255, 255, 255, 0.05);
           padding-top: 1rem;
+          margin-top: 1rem;
         }
 
-        .metric {
+        .link-website {
           font-size: 0.75rem;
-          color: var(--light-slate);
-          display: flex;
-          flex-direction: column;
-        }
-
-        .metric strong {
-          color: var(--white);
-          font-size: 1rem;
+          color: var(--gold);
+          font-weight: 600;
         }
 
         .empty {
@@ -192,10 +211,18 @@ export default function Home() {
           color: var(--slate);
         }
 
-        .contact-info {
+        .skeleton {
+          padding: 2rem;
+          color: var(--slate);
           font-style: italic;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
-          margin-top: 0.5rem;
+          opacity: 0.6;
+          animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+          0% { opacity: 0.4; }
+          50% { opacity: 0.8; }
+          100% { opacity: 0.4; }
         }
       `}</style>
     </main>
