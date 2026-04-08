@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 
 from scrapers.conference_scraper import ConferenceScraper
 from scrapers.acquire_scraper import AcquireScraper
@@ -13,6 +14,16 @@ from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_p
 load_dotenv()
 
 app = FastAPI(title="Averroes Deal Origination API")
+
+# Add CORS Middleware to allow the Next.js frontend to fetch data
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to the frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 conf_scraper = ConferenceScraper()
 acq_scraper = AcquireScraper()
 gcs_handler = GCSHandler(bucket_name="averroes-deal-intelligence")
@@ -127,6 +138,69 @@ async def ingest_marketplace():
         "count": len(refined_companies),
         "total_in_db": len(new_data),
         "source": "Acquire.com Pipeline",
+        "gcs_path": gcs_filename
+    }
+
+@app.post("/ingest/conference")
+async def ingest_conference(conference_name: str = Query(..., description="Name of the conference to scrape")):
+    """
+    1. Scrapes the specific conference.
+    2. Runs AI filtering.
+    3. Updates Universe (all) and Pipeline (filtered).
+    """
+    if conference_name not in conf_scraper.get_all_targets():
+        raise HTTPException(status_code=404, detail="Conference not monitored.")
+    
+    raw_companies = conf_scraper.scrape_conference(conference_name)
+    
+    if not raw_companies:
+        return {"status": "Complete", "count": 0, "message": "No new companies found."}
+    
+    philosophy = AverroesPhilosophy()
+    refined_companies = []
+    
+    # Process through AI Matching
+    for c in raw_companies:
+        score = evaluate_target(c, philosophy)
+        c["match_score"] = score
+        c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
+        refined_companies.append(c)
+    
+    # 1. Update Universe
+    universe_path = "data/universe.json"
+    existing_universe = []
+    if os.path.exists(universe_path):
+        with open(universe_path, 'r') as f:
+            existing_universe = json.load(f)
+    
+    existing_uni_names = {c['name'] for c in existing_universe}
+    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
+    
+    with open(universe_path, 'w') as f:
+        json.dump(new_universe, f, indent=2)
+
+    # 2. Update Qualified Pipeline
+    qualified_companies = [c for c in refined_companies if c["match_score"] >= 0.4]
+    data_path = "data/candidates.json"
+    existing_data = []
+    if os.path.exists(data_path):
+        with open(data_path, 'r') as f:
+            existing_data = json.load(f)
+    
+    existing_names = {c['name'] for c in existing_data}
+    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
+    
+    with open(data_path, 'w') as f:
+        json.dump(new_data, f, indent=2)
+    
+    # Backup to GCS
+    gcs_filename = gcs_handler.save_companies(refined_companies, conference_name.lower().replace(" ", "_"))
+    
+    return {
+        "status": "Success",
+        "count": len(refined_companies),
+        "total_in_universe": len(new_universe),
+        "source": conference_name,
         "gcs_path": gcs_filename
     }
 
