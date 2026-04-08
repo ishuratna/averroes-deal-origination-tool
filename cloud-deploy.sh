@@ -31,8 +31,8 @@ echo "✅ Backend Live at: $BACKEND_URL"
 # 3. Build and push Frontend
 echo "📦 Building Frontend..."
 cd frontend
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME_FRONTEND \
-    --build-arg NEXT_PUBLIC_API_URL=$BACKEND_URL
+gcloud builds submit --config=cloudbuild.yaml \
+    --substitutions=_NEXT_PUBLIC_API_URL=$BACKEND_URL
 cd ..
 
 # 4. Deploy Frontend to Cloud Run
