@@ -57,18 +57,6 @@
     "status": "Under Review"
   },
   {
-    "name": "HealthMatch VC",
-    "website": "https://healthmatch.vc",
-    "sector": "HealthTech Platform",
-    "region": "France",
-    "ownership": "Backed by Sequoia Capital, Series A.",
-    "growth_signals": true,
-    "description": "HealthTech platform matching patients with clinical trials. Fresh off a $10M Series A.",
-    "source": "Acquire.com",
-    "match_score": 0.3,
-    "status": "Not a Fit"
-  },
-  {
     "name": "NordicHR",
     "website": "https://nordichr.se",
     "sector": "B2B SaaS / HR Tech",

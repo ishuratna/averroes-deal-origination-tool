@@ -38,7 +38,7 @@ async def get_pipeline():
     """
     Reads the active target pipeline from the JSON database.
     """
-    data_path = "backend/data/candidates.json"
+    data_path = "data/candidates.json"
     if not os.path.exists(data_path):
         return []
         
@@ -48,6 +48,21 @@ async def get_pipeline():
             return candidates
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load pipeline: {str(e)}")
+
+@app.get("/universe", response_model=List[CompanyTarget])
+async def get_universe():
+    """
+    Returns the complete Data Lake / Universe of all companies ever scraped,
+    regardless of their match score or qualification.
+    """
+    data_path = "data/universe.json"
+    if not os.path.exists(data_path):
+        return []
+    try:
+        with open(data_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load universe: {str(e)}")
 
 @app.post("/ingest/marketplace")
 async def ingest_marketplace():
@@ -76,17 +91,31 @@ async def ingest_marketplace():
         c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
         refined_companies.append(c)
         
-    # Phase C: Data Entry (Update JSON)
-    data_path = "backend/data/candidates.json"
+    # Phase C.1: Update Universe (ALL data)
+    universe_path = "data/universe.json"
+    existing_universe = []
+    if os.path.exists(universe_path):
+        with open(universe_path, 'r') as f:
+            existing_universe = json.load(f)
+            
+    existing_uni_names = {c['name'] for c in existing_universe}
+    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
+    
+    with open(universe_path, 'w') as f:
+        json.dump(new_universe, f, indent=2)
+
+    # Phase C.2: Update Qualified Candidates (Only >= 0.4 match score)
+    qualified_companies = [c for c in refined_companies if c["match_score"] >= 0.4]
+    
+    data_path = "data/candidates.json"
     existing_data = []
     if os.path.exists(data_path):
         with open(data_path, 'r') as f:
             existing_data = json.load(f)
             
     existing_names = {c['name'] for c in existing_data}
-    new_data = existing_data + [c for c in refined_companies if c['name'] not in existing_names]
+    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
     
-    # We could simulate Step 2 (Registry Check) here before saving, but for now we write directly
     with open(data_path, 'w') as f:
         json.dump(new_data, f, indent=2)
         
