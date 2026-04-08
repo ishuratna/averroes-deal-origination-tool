@@ -40,6 +40,20 @@ export const dealApi = {
   },
 
   /**
+   * Fetch the Master Universe (all scraped targets)
+   */
+  async getUniverse(): Promise<CompanyTarget[]> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/universe`);
+      if (!response.ok) throw new Error('Failed to fetch universe');
+      return await response.json();
+    } catch (error) {
+      console.error('Universe API Error:', error);
+      return [];
+    }
+  },
+
+  /**
    * Run AI Analysis on a new URL
    */
   async analyzeTarget(url: string): Promise<CompanyTarget> {

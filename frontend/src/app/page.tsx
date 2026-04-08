@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from "react";
+import Link from 'next/link';
 import { CompanyTarget } from "../types";
 import { dealApi } from "../services/api";
 
@@ -61,7 +62,9 @@ export default function Home() {
     <main className="container">
       <header className="navbar">
         <div className="logo">AVERROES CAPITAL</div>
-        <nav>
+        <nav style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+          <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none', fontWeight: 600 }}>Active Pipeline</Link>
+          <Link href="/universe" style={{ color: 'var(--white)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Master Universe</Link>
           <button className="button" onClick={() => window.location.reload()}>
             Refresh Sync ↻
           </button>

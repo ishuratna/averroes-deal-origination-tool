@@ -4,6 +4,8 @@ export interface CompanyTarget {
   sector: string;
   source: string;
   description: string;
+  region?: string;
+  ownership?: string;
   estimated_ebitda?: number;
   match_score: number; // 0 to 1
   contact_name?: string;
