@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from scrapers.conference_scraper import ConferenceScraper
 from scrapers.acquire_scraper import AcquireScraper
+from scrapers.ranking_scraper import RankingListScraper
 from storage.gcs_handler import GCSHandler
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
 
@@ -26,7 +27,44 @@ app.add_middleware(
 
 conf_scraper = ConferenceScraper()
 acq_scraper = AcquireScraper()
+rank_scraper = RankingListScraper()
 gcs_handler = GCSHandler(bucket_name="averroes-deal-intelligence")
+
+# --- Utilities ---
+
+def _sync_to_databases(refined_companies: List[dict]):
+    """
+    Unified logic to update Universe and Candidates databases.
+    """
+    # 1. Update Universe (ALL data)
+    universe_path = "data/universe.json"
+    existing_universe = []
+    if os.path.exists(universe_path):
+        with open(universe_path, 'r') as f:
+            existing_universe = json.load(f)
+            
+    existing_uni_names = {c['name'] for c in existing_universe}
+    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
+    
+    with open(universe_path, 'w') as f:
+        json.dump(new_universe, f, indent=2)
+
+    # 2. Update Qualified Candidates (Only >= 0.4 match score)
+    qualified_companies = [c for c in refined_companies if c.get("match_score", 0) >= 0.4]
+    
+    data_path = "data/candidates.json"
+    existing_data = []
+    if os.path.exists(data_path):
+        with open(data_path, 'r') as f:
+            existing_data = json.load(f)
+            
+    existing_names = {c['name'] for c in existing_data}
+    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
+    
+    with open(data_path, 'w') as f:
+        json.dump(new_data, f, indent=2)
+    
+    return len(new_universe), len(new_data)
 
 # --- Models ---
 class CompanyTarget(BaseModel):
@@ -102,33 +140,7 @@ async def ingest_marketplace():
         c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
         refined_companies.append(c)
         
-    # Phase C.1: Update Universe (ALL data)
-    universe_path = "data/universe.json"
-    existing_universe = []
-    if os.path.exists(universe_path):
-        with open(universe_path, 'r') as f:
-            existing_universe = json.load(f)
-            
-    existing_uni_names = {c['name'] for c in existing_universe}
-    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
-    
-    with open(universe_path, 'w') as f:
-        json.dump(new_universe, f, indent=2)
-
-    # Phase C.2: Update Qualified Candidates (Only >= 0.4 match score)
-    qualified_companies = [c for c in refined_companies if c["match_score"] >= 0.4]
-    
-    data_path = "data/candidates.json"
-    existing_data = []
-    if os.path.exists(data_path):
-        with open(data_path, 'r') as f:
-            existing_data = json.load(f)
-            
-    existing_names = {c['name'] for c in existing_data}
-    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
-    
-    with open(data_path, 'w') as f:
-        json.dump(new_data, f, indent=2)
+    uni_count, cand_count = _sync_to_databases(refined_companies)
         
     # Backup to GCS
     gcs_filename = gcs_handler.save_companies(refined_companies, "acquire_marketplace")
@@ -136,7 +148,8 @@ async def ingest_marketplace():
     return {
         "status": "Success",
         "count": len(refined_companies),
-        "total_in_db": len(new_data),
+        "total_in_universe": uni_count,
+        "total_in_candidates": cand_count,
         "source": "Acquire.com Pipeline",
         "gcs_path": gcs_filename
     }
@@ -166,32 +179,7 @@ async def ingest_conference(conference_name: str = Query(..., description="Name 
         c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
         refined_companies.append(c)
     
-    # 1. Update Universe
-    universe_path = "data/universe.json"
-    existing_universe = []
-    if os.path.exists(universe_path):
-        with open(universe_path, 'r') as f:
-            existing_universe = json.load(f)
-    
-    existing_uni_names = {c['name'] for c in existing_universe}
-    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
-    
-    with open(universe_path, 'w') as f:
-        json.dump(new_universe, f, indent=2)
-
-    # 2. Update Qualified Pipeline
-    qualified_companies = [c for c in refined_companies if c["match_score"] >= 0.4]
-    data_path = "data/candidates.json"
-    existing_data = []
-    if os.path.exists(data_path):
-        with open(data_path, 'r') as f:
-            existing_data = json.load(f)
-    
-    existing_names = {c['name'] for c in existing_data}
-    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
-    
-    with open(data_path, 'w') as f:
-        json.dump(new_data, f, indent=2)
+    uni_count, cand_count = _sync_to_databases(refined_companies)
     
     # Backup to GCS
     gcs_filename = gcs_handler.save_companies(refined_companies, conference_name.lower().replace(" ", "_"))
@@ -199,8 +187,45 @@ async def ingest_conference(conference_name: str = Query(..., description="Name 
     return {
         "status": "Success",
         "count": len(refined_companies),
-        "total_in_universe": len(new_universe),
+        "total_in_universe": uni_count,
+        "total_in_candidates": cand_count,
         "source": conference_name,
+        "gcs_path": gcs_filename
+    }
+
+@app.post("/ingest/ranking")
+async def ingest_ranking(list_name: str = Query(..., description="Name of the ranking list to ingest")):
+    """
+    Ingests high-growth companies from curated lists (FT 1000, etc.)
+    """
+    if list_name not in rank_scraper.get_supported_lists():
+        raise HTTPException(status_code=404, detail=f"Ranking list '{list_name}' not supported.")
+    
+    raw_companies = rank_scraper.scrape_ranking(list_name)
+    
+    if not raw_companies:
+        return {"status": "Complete", "count": 0, "message": "No new companies found."}
+    
+    philosophy = AverroesPhilosophy()
+    refined_companies = []
+    
+    for c in raw_companies:
+        score = evaluate_target(c, philosophy)
+        c["match_score"] = score
+        c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
+        refined_companies.append(c)
+        
+    uni_count, cand_count = _sync_to_databases(refined_companies)
+    
+    # Backup to GCS
+    gcs_filename = gcs_handler.save_companies(refined_companies, list_name.lower().replace(" ", "_"))
+    
+    return {
+        "status": "Success",
+        "count": len(refined_companies),
+        "total_in_universe": uni_count,
+        "total_in_candidates": cand_count,
+        "source": list_name,
         "gcs_path": gcs_filename
     }
 
