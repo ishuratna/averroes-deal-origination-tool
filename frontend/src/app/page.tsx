@@ -23,11 +23,23 @@ export default function Home() {
     loadData();
   }, []);
 
+  const handleEnrich = async (name: string) => {
+    try {
+      const updated = await dealApi.enrichCompany(name);
+      setPipeline(prev => prev.map(c => c.name === name ? updated : c));
+    } catch (error) {
+      console.error("Enrichment failed", error);
+    }
+  };
+
   const renderColumn = (status: string, title: string) => {
     const filtered = pipeline.filter(c => c.status === status);
     return (
       <div className="pipeline-column">
-        <h3>{title} ({filtered.length})</h3>
+        <div className="column-header">
+           <h3>{title}</h3>
+           <span className="count-badge">{filtered.length}</span>
+        </div>
         {filtered.length === 0 && !loading && (
           <div className="card glass empty">
             <p>No companies currently in {title.toLowerCase()}.</p>
@@ -42,14 +54,33 @@ export default function Home() {
               }}>
                 {Math.round(company.match_score * 100)}% Match
               </span>
-              <h4>{company.name}</h4>
+              <div className="source-tag">{company.source}</div>
             </div>
-            <p>{company.sector} | {company.source}</p>
+            
+            <h4>{company.name}</h4>
+            <p className="sector-tag">{company.sector}</p>
             <p className="description">{company.description}</p>
-            <div className="metrics">
+            
+            {company.contact_name && (
+              <div className="founder-box">
+                <p className="founder-label">Founder / CEO</p>
+                <p className="founder-name">{company.contact_name}</p>
+                <p className="founder-email">{company.contact_email}</p>
+              </div>
+            )}
+
+            <div className="card-footer">
               <a href={company.website} target="_blank" rel="noreferrer" className="link-website">
-                Visit Website ↗
+                View Site ↗
               </a>
+              {status === 'Qualified' && !company.contact_name && (
+                <button 
+                  className="button-tiny" 
+                  onClick={() => handleEnrich(company.name)}
+                >
+                  Deep Enrich
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -144,67 +175,103 @@ export default function Home() {
           padding-bottom: 5rem;
         }
 
-        .pipeline-column h3 {
-          font-size: 1rem;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--slate);
-          border-bottom: 1px solid var(--navy-lighter);
+        .column-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 2px solid var(--navy-lighter);
           padding-bottom: 1rem;
           margin-bottom: 1.5rem;
         }
 
-        .card {
-          margin-bottom: 1.5rem;
-          transition: transform var(--transition-fast);
+        .column-header h3 {
+          font-size: 0.9rem;
+          text-transform: uppercase;
+          letter-spacing: 0.15em;
+          color: var(--slate);
+          margin: 0;
+          border-bottom: none;
         }
 
-        .card:hover {
-          transform: translateY(-5px);
-          border-color: var(--gold);
+        .count-badge {
+          background: var(--navy-lighter);
+          color: var(--gold);
+          font-size: 0.75rem;
+          font-weight: 700;
+          padding: 0.2rem 0.6rem;
+          border-radius: 10px;
+          border: 1px solid rgba(212, 175, 55, 0.2);
         }
 
-        .card-header {
+        .source-tag {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--slate);
+          opacity: 0.8;
+        }
+
+        .sector-tag {
+          font-size: 0.8rem !important;
+          color: var(--gold) !important;
+          font-weight: 600;
+          margin-bottom: 0.75rem !important;
+        }
+
+        .founder-box {
+          background: rgba(255, 255, 255, 0.03);
+          border-left: 2px solid var(--gold);
+          padding: 0.75rem;
+          margin: 1rem 0;
+          border-radius: 0 4px 4px 0;
+        }
+
+        .founder-label {
+          font-size: 0.65rem !important;
+          text-transform: uppercase;
+          color: var(--slate) !important;
+          margin-bottom: 0.25rem !important;
+          letter-spacing: 0.05em;
+        }
+
+        .founder-name {
+          font-size: 0.9rem !important;
+          color: var(--white) !important;
+          font-weight: 600;
+          margin-bottom: 0.1rem !important;
+        }
+
+        .founder-email {
+          font-size: 0.75rem !important;
+          color: var(--gold) !important;
+          opacity: 0.8;
+          margin: 0 !important;
+        }
+
+        .card-footer {
           display: flex;
-          flex-direction: row-reverse;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 0.5rem;
-        }
-
-        .card h4 {
-          margin: 0;
-          font-size: 1.1rem;
-        }
-
-        .card p {
-          font-size: 0.9rem;
-          color: var(--slate);
-          margin-bottom: 0.5rem;
-        }
-
-        .description {
-          font-size: 0.85rem !important;
-          color: var(--light-slate) !important;
-          font-style: italic;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-
-        .metrics {
-          display: flex;
-          gap: 1rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
-          padding-top: 1rem;
           margin-top: 1rem;
+          padding-top: 1rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .link-website {
-          font-size: 0.75rem;
+        .button-tiny {
+          background: transparent;
+          border: 1px solid var(--gold);
           color: var(--gold);
+          font-size: 0.7rem;
+          padding: 0.3rem 0.6rem;
+          border-radius: 4px;
+          cursor: pointer;
           font-weight: 600;
+          transition: all 0.2s ease;
+        }
+
+        .button-tiny:hover {
+          background: var(--gold);
+          color: var(--navy);
         }
 
         .empty {

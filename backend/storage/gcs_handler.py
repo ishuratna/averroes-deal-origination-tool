@@ -12,8 +12,12 @@ class GCSHandler:
     """
     def __init__(self, bucket_name: str = "averroes-deal-intelligence"):
         self.bucket_name = bucket_name
-        self.storage_client = storage.Client()
-        self._ensure_bucket()
+        try:
+            self.storage_client = storage.Client()
+            self._ensure_bucket()
+        except Exception as e:
+            logger.warning(f"GCS Storage Client could not be initialized (Missing Credentials?): {e}")
+            self.storage_client = None
 
     def _ensure_bucket(self):
         """
@@ -36,6 +40,8 @@ class GCSHandler:
         filename = f"scraped/{source}/{timestamp}_targets.json"
         
         try:
+            if self.storage_client is None:
+                return None
             bucket = self.storage_client.bucket(self.bucket_name)
             blob = bucket.blob(filename)
             blob.upload_from_string(

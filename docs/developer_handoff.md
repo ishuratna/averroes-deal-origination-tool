@@ -26,7 +26,7 @@ This repository is split into decoupled frontend and backend services, housed in
     3.  BigQuery schemas (`scripts/setup_bigquery.py`) are prepped for the production "Gold" layer.
 
 ### **Infrastructure (Google Cloud)**
-*   **GCP Project**: `averroes-portfolio-intel`
+*   **GCP Project**: `averroes-deal-origination`
 *   **Hosting**: Google Cloud Run (Fully managed, serverless containers).
 *   **Region**: `europe-west1` (Belgium).
 

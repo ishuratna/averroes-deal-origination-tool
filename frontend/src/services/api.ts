@@ -64,5 +64,16 @@ export const dealApi = {
     });
     if (!response.ok) throw new Error('Analysis failed');
     return await response.json();
+  },
+
+  /**
+   * Manually trigger deep-dive enrichment for a founder
+   */
+  async enrichCompany(companyName: string): Promise<CompanyTarget> {
+    const response = await fetch(`${API_BASE_URL}/enrich/${encodeURIComponent(companyName)}`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Enrichment failed');
+    return await response.json();
   }
 };

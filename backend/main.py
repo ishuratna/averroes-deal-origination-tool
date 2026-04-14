@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,9 +11,25 @@ from scrapers.conference_scraper import ConferenceScraper
 from scrapers.acquire_scraper import AcquireScraper
 from scrapers.ranking_scraper import RankingListScraper
 from storage.gcs_handler import GCSHandler
+from storage.bq_handler import BigQueryHandler
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
+from ai.enrichment import EnrichmentAgent
 
+# Load .env for local development; Cloud Run injects env vars directly
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ─── GCP Configuration (read from environment) ───────────────────────────────
+GCP_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "averroes-deal-origination")
+GCS_BUCKET  = os.getenv("GCS_BUCKET", "averroes-deal-intelligence")
+BQ_DATASET  = os.getenv("BIGQUERY_DATASET", "averroes_deal_flow")
+
+logger.info(f"Starting API | project={GCP_PROJECT} | bucket={GCS_BUCKET} | bq_dataset={BQ_DATASET}")
+
+# Ensure the data directory exists for local JSON storage
+os.makedirs("data", exist_ok=True)
 
 app = FastAPI(title="Averroes Deal Origination API")
 
@@ -28,43 +45,46 @@ app.add_middleware(
 conf_scraper = ConferenceScraper()
 acq_scraper = AcquireScraper()
 rank_scraper = RankingListScraper()
-gcs_handler = GCSHandler(bucket_name="averroes-deal-intelligence")
+enrichment_agent = EnrichmentAgent()
+gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
+bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
 
 # --- Utilities ---
 
 def _sync_to_databases(refined_companies: List[dict]):
     """
-    Unified logic to update Universe and Candidates databases.
+    Saves evaluated targets into BigQuery.
     """
-    # 1. Update Universe (ALL data)
-    universe_path = "data/universe.json"
-    existing_universe = []
-    if os.path.exists(universe_path):
-        with open(universe_path, 'r') as f:
-            existing_universe = json.load(f)
-            
-    existing_uni_names = {c['name'] for c in existing_universe}
-    new_universe = existing_universe + [c for c in refined_companies if c['name'] not in existing_uni_names]
-    
-    with open(universe_path, 'w') as f:
-        json.dump(new_universe, f, indent=2)
+    # Insert evaluated companies directly into BigQuery
+    success = bq_handler.save_targets(refined_companies)
+    if not success:
+        logger.error("Failed to sync to target database in BigQuery.")
+        
+    return len(refined_companies), sum(1 for c in refined_companies if c.get("match_score", 0) >= 0.3)
 
-    # 2. Update Qualified Candidates (Only >= 0.4 match score)
-    qualified_companies = [c for c in refined_companies if c.get("match_score", 0) >= 0.4]
+def _process_and_refine(raw_companies: List[dict]):
+    """
+    Unified AI evaluation and enrichment logic.
+    """
+    philosophy = AverroesPhilosophy()
+    refined = []
     
-    data_path = "data/candidates.json"
-    existing_data = []
-    if os.path.exists(data_path):
-        with open(data_path, 'r') as f:
-            existing_data = json.load(f)
+    for c in raw_companies:
+        score = evaluate_target(c, philosophy)
+        c["match_score"] = score
+        
+        if score >= 0.85:
+            c["status"] = "Under Review"
+            # Automated Enrichment for high-conviction targets
+            founder_info = enrichment_agent.enrich_founder_details(c['name'])
+            c.update(founder_info)
+        else:
+            c["status"] = "Qualified" if score >= 0.3 else "Not a Fit"
             
-    existing_names = {c['name'] for c in existing_data}
-    new_data = existing_data + [c for c in qualified_companies if c['name'] not in existing_names]
+        refined.append(c)
     
-    with open(data_path, 'w') as f:
-        json.dump(new_data, f, indent=2)
-    
-    return len(new_universe), len(new_data)
+    uni_count, cand_count = _sync_to_databases(refined)
+    return refined, uni_count, cand_count
 
 # --- Models ---
 class CompanyTarget(BaseModel):
@@ -75,41 +95,42 @@ class CompanyTarget(BaseModel):
     match_score: float = 0.0
     source: str = "Manual"
     status: str = "Qualified"
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+    region: Optional[str] = None
+    ownership: Optional[str] = None
 
 # --- Endpoints ---
 
 @app.get("/")
 async def root():
-    return {"status": "Averroes Intelligence Platform Active - Linear Pipeline Mode", "version": "v1.3.0"}
+    return {
+        "status": "Averroes Intelligence Platform Active",
+        "version": "v1.4.0",
+        "project": GCP_PROJECT,
+        "bucket": GCS_BUCKET,
+        "bq_dataset": BQ_DATASET,
+        "gemini_enabled": bool(os.getenv("GEMINI_API_KEY"))
+    }
 
-@app.get("/pipeline", response_model=List[CompanyTarget])
+@app.get("/pipeline", response_model=List[dict])
 async def get_pipeline():
     """
-    Reads the active target pipeline from the JSON database.
+    Reads the active target pipeline from BigQuery.
     """
-    data_path = "data/candidates.json"
-    if not os.path.exists(data_path):
-        return []
-        
     try:
-        with open(data_path, 'r') as f:
-            candidates = json.load(f)
-            return candidates
+        return bq_handler.get_pipeline()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load pipeline: {str(e)}")
 
-@app.get("/universe", response_model=List[CompanyTarget])
+
+@app.get("/universe", response_model=List[dict])
 async def get_universe():
     """
-    Returns the complete Data Lake / Universe of all companies ever scraped,
-    regardless of their match score or qualification.
+    Returns the complete Data Lake (Universe) from BigQuery.
     """
-    data_path = "data/universe.json"
-    if not os.path.exists(data_path):
-        return []
     try:
-        with open(data_path, 'r') as f:
-            return json.load(f)
+        return bq_handler.get_universe()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load universe: {str(e)}")
 
@@ -120,28 +141,12 @@ async def ingest_marketplace():
     Phase B: Evaluate raw targets via Gemini prompt logic.
     Phase C: Update candidates.json
     """
-    # Phase A: Discovery Trigger
     raw_companies = acq_scraper.scrape_marketplace()
-    
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new marketplace companies found."}
     
-    philosophy = AverroesPhilosophy()
-    refined_companies = []
+    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
     
-    # Phase B: AI Evaluation
-    for c in raw_companies:
-        # In production, this would hit Gemini API: `response = gemini.generate_content(generate_analysis_prompt(c['name'], str(c), philosophy))`
-        # Here we simulate the LLM effectively extracting and grading based on the prompt instructions:
-        score = evaluate_target(c, philosophy)
-        c["match_score"] = score
-        
-        # Only retain if it hits a threshold or let the dashboard filter it
-        c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
-        refined_companies.append(c)
-        
-    uni_count, cand_count = _sync_to_databases(refined_companies)
-        
     # Backup to GCS
     gcs_filename = gcs_handler.save_companies(refined_companies, "acquire_marketplace")
     
@@ -165,21 +170,10 @@ async def ingest_conference(conference_name: str = Query(..., description="Name 
         raise HTTPException(status_code=404, detail="Conference not monitored.")
     
     raw_companies = conf_scraper.scrape_conference(conference_name)
-    
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new companies found."}
     
-    philosophy = AverroesPhilosophy()
-    refined_companies = []
-    
-    # Process through AI Matching
-    for c in raw_companies:
-        score = evaluate_target(c, philosophy)
-        c["match_score"] = score
-        c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
-        refined_companies.append(c)
-    
-    uni_count, cand_count = _sync_to_databases(refined_companies)
+    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
     
     # Backup to GCS
     gcs_filename = gcs_handler.save_companies(refined_companies, conference_name.lower().replace(" ", "_"))
@@ -202,20 +196,10 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
         raise HTTPException(status_code=404, detail=f"Ranking list '{list_name}' not supported.")
     
     raw_companies = rank_scraper.scrape_ranking(list_name)
-    
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new companies found."}
     
-    philosophy = AverroesPhilosophy()
-    refined_companies = []
-    
-    for c in raw_companies:
-        score = evaluate_target(c, philosophy)
-        c["match_score"] = score
-        c["status"] = "Under Review" if score >= 0.85 else "Qualified" if score >= 0.4 else "Not a Fit"
-        refined_companies.append(c)
-        
-    uni_count, cand_count = _sync_to_databases(refined_companies)
+    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
     
     # Backup to GCS
     gcs_filename = gcs_handler.save_companies(refined_companies, list_name.lower().replace(" ", "_"))
@@ -228,6 +212,20 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
         "source": list_name,
         "gcs_path": gcs_filename
     }
+
+@app.post("/enrich/{company_name}")
+async def manual_enrich(company_name: str):
+    """
+    Manually triggers enrichment for a specific company in the pipeline.
+    Writes contact updates directly back to BigQuery.
+    """
+    founder_info = enrichment_agent.enrich_founder_details(company_name)
+    success = bq_handler.update_company_enrichment(company_name, founder_info)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update company in database.")
+        
+    return {"status": "Success", "company": company_name, "enriched_data": founder_info}
 
 if __name__ == "__main__":
     import uvicorn

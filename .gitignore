@@ -13,7 +13,8 @@
 **/backend/.env
 
 # GCS/GCP
-**/*.json (Service Account keys)
+service-account*.json
+*credentials*.json
 **/credentials/
 
 # System
