@@ -27,10 +27,20 @@ export default function Home() {
   const handleEnrich = async (name: string) => {
     try {
       const updated = await dealApi.enrichCompany(name);
-      setPipeline(prev => prev.map(c => c.name === name ? updated : c));
+      
+      // Update pipeline state with the full object from backend
+      setPipeline(prev => prev.map(c => 
+        c.name === name ? { ...c, ...updated } : c
+      ));
     } catch (error) {
       console.error("Enrichment failed", error);
     }
+  };
+
+  const isEnriched = (company: CompanyTarget) => {
+    if (!company.contact_name) return false;
+    const placeholders = ['System Override Required', 'Data Missing', 'Pending Activation', 'Unknown Founder'];
+    return !placeholders.includes(company.contact_name);
   };
 
   const renderTop10Pipeline = () => {
@@ -101,7 +111,7 @@ export default function Home() {
                 ) : (
                   <span className="link-website disabled">No Website</span>
                 )}
-                {!company.contact_name && (
+                {!isEnriched(company) && (
                   <button 
                     className="button-tiny" 
                     onClick={() => handleEnrich(company.name)}

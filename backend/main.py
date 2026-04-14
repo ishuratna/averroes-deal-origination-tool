@@ -235,8 +235,11 @@ async def manual_enrich(company_name: str):
     
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update company in database.")
-        
-    return {"status": "Success", "company": company_name, "enriched_data": founder_info}
+    
+    # Return the full updated company object
+    uni = bq_handler.get_universe()
+    updated = next((c for c in uni if c["name"] == company_name), None)
+    return updated or {"status": "Success", "company": company_name, "enriched_data": founder_info}
 
 if __name__ == "__main__":
     import uvicorn
