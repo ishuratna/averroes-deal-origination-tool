@@ -88,7 +88,7 @@ def _gemini_score(company: dict, philosophy: AverroesPhilosophy, api_key: str) -
     """
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-pro")
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
         prompt = generate_analysis_prompt(company.get("name", "Unknown"), json.dumps(company), philosophy)
 

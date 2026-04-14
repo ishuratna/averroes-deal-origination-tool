@@ -26,7 +26,7 @@ class EnrichmentAgent:
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-pro")
+            model = genai.GenerativeModel("gemini-2.5-flash")
             
             prompt = f"""
             You are a private equity researcher. Find the primary founder or CEO for a software company named '{company_name}'.
