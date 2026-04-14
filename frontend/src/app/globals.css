@@ -42,7 +42,7 @@ a:hover {
 
 h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
-  color: var(--white);
+  color: var(--text-primary);
   line-height: 1.1;
   margin-bottom: 1rem;
 }
@@ -59,7 +59,7 @@ h3 { font-size: 1.5rem; }
 
 .button {
   background: var(--gold);
-  color: var(--navy);
+  color: var(--white);
   padding: 0.75rem 1.5rem;
   border-radius: var(--radius-sm);
   font-weight: 600;
@@ -69,10 +69,11 @@ h3 { font-size: 1.5rem; }
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  box-shadow: var(--shadow-sm);
 }
 
 .button:hover {
-  background: var(--white);
+  background: var(--navy);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
@@ -93,18 +94,18 @@ h3 { font-size: 1.5rem; }
   text-transform: uppercase;
 }
 
-/* Glassmorphism Surface */
+/* Card / Surface */
 .glass {
-  background: rgba(17, 34, 64, 0.7);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  box-shadow: var(--shadow-md);
   border-radius: var(--radius-lg);
   padding: 2rem;
 }
 
 /* Anomaly/Alert Styling */
 .badge-growth {
-  background: rgba(100, 255, 218, 0.1);
+  background: rgba(5, 150, 105, 0.1);
   color: var(--green);
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm);

@@ -28,7 +28,7 @@ export default function Universe() {
       <header className="navbar">
         <div className="logo">AVERROES CAPITAL</div>
         <nav style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-          <Link href="/" style={{ color: 'var(--white)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Active Pipeline</Link>
+          <Link href="/" style={{ color: 'var(--navy)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Active Pipeline</Link>
           <Link href="/universe" style={{ color: 'var(--gold)', textDecoration: 'none', fontWeight: 600 }}>Master Universe</Link>
           <button className="button" onClick={() => window.location.reload()}>
             Refresh Sync ↻
@@ -59,7 +59,7 @@ export default function Universe() {
             <tbody>
               {[...universe].sort((a, b) => b.match_score - a.match_score).map((company, i) => (
                 <tr key={i}>
-                  <td style={{ fontWeight: 700, color: 'var(--white)' }}>
+                  <td style={{ fontWeight: 700, color: 'var(--navy)' }}>
                     <a href={company.website} target="_blank" rel="noreferrer" style={{color: 'inherit', textDecoration: 'none'}}>
                       {company.name} ↗
                     </a>
@@ -69,8 +69,8 @@ export default function Universe() {
                   <td>{company.ownership || 'Unknown'}</td>
                   <td>
                     <span className="badge-growth" style={{
-                      background: company.match_score >= 0.4 ? 'rgba(100, 255, 218, 0.1)' : 'rgba(255, 100, 100, 0.1)',
-                      color: company.match_score >= 0.4 ? 'var(--green)' : '#ff6b6b'
+                      background: company.match_score >= 0.4 ? 'rgba(5, 150, 105, 0.1)' : 'rgba(153, 27, 27, 0.1)',
+                      color: company.match_score >= 0.4 ? 'var(--green)' : '#991b1b'
                     }}>
                       {Math.round(company.match_score * 100)}%
                     </span>
@@ -97,7 +97,7 @@ export default function Universe() {
         }
         
         .subtitle {
-          color: var(--slate);
+          color: var(--text-secondary);
           font-size: 1.25rem;
           margin-bottom: 2rem;
         }
@@ -116,31 +116,31 @@ export default function Universe() {
 
         .universe-table th, .universe-table td {
           padding: 1.25rem 1.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          border-bottom: 1px solid var(--light-gray);
         }
 
         .universe-table th {
-          color: var(--gold);
+          color: var(--navy);
           font-size: 0.85rem;
           text-transform: uppercase;
           letter-spacing: 0.1em;
           font-weight: 600;
-          background: rgba(10, 25, 47, 0.8);
+          background: var(--bg-secondary);
         }
 
         .universe-table tr:hover td {
-          background: rgba(212, 175, 55, 0.05);
+          background: var(--bg-secondary);
         }
 
         .universe-table td {
-          color: var(--light-slate);
+          color: var(--text-primary);
           font-size: 0.95rem;
         }
 
         .skeleton {
           padding: 4rem;
           text-align: center;
-          color: var(--slate);
+          color: var(--text-secondary);
           font-style: italic;
           opacity: 0.6;
           animation: pulse 1.5s infinite;

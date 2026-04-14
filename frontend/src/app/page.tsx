@@ -119,7 +119,7 @@ export default function Home() {
         <div className="logo">AVERROES CAPITAL</div>
         <nav style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
           <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none', fontWeight: 600 }}>Active Pipeline</Link>
-          <Link href="/universe" style={{ color: 'var(--white)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Master Universe</Link>
+          <Link href="/universe" style={{ color: 'var(--navy)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Master Universe</Link>
           <button className="button" onClick={() => window.location.reload()}>
             Refresh Sync ↻
           </button>
@@ -153,7 +153,7 @@ export default function Home() {
         }
         
         .subtitle {
-          color: var(--slate);
+          color: var(--text-secondary);
           font-size: 1.25rem;
           margin-bottom: 2rem;
         }
@@ -168,32 +168,39 @@ export default function Home() {
 
         .input-main {
           flex: 1;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: var(--bg-secondary);
+          border: 1px solid var(--light-gray);
           border-radius: var(--radius-sm);
           padding: 1rem;
-          color: var(--white);
+          color: var(--text-primary);
           font-size: 1rem;
+          box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
         }
 
         .input-main:focus {
           outline: none;
           border-color: var(--gold);
+          background: var(--white);
         }
 
         .button-search {
-          background: var(--gold);
-          color: var(--navy);
+          background: var(--navy);
+          color: var(--white);
           border: none;
           padding: 1rem 2rem;
           border-radius: var(--radius-sm);
           font-weight: 700;
           cursor: pointer;
+          transition: background 0.2s;
+        }
+
+        .button-search:hover {
+          background: var(--gold);
         }
 
         .pipeline-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: 1fr;
           gap: 2rem;
           margin-top: 3rem;
           padding-bottom: 5rem;
@@ -213,7 +220,7 @@ export default function Home() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 2px solid var(--navy-lighter);
+          border-bottom: 2px solid var(--light-gray);
           padding-bottom: 1rem;
           margin-bottom: 1.5rem;
         }
@@ -222,27 +229,30 @@ export default function Home() {
           font-size: 0.9rem;
           text-transform: uppercase;
           letter-spacing: 0.15em;
-          color: var(--slate);
+          color: var(--text-secondary);
           margin: 0;
-          border-bottom: none;
         }
 
         .count-badge {
-          background: var(--navy-lighter);
+          background: var(--bg-secondary);
           color: var(--gold);
           font-size: 0.75rem;
           font-weight: 700;
           padding: 0.2rem 0.6rem;
           border-radius: 10px;
-          border: 1px solid rgba(212, 175, 55, 0.2);
+          border: 1px solid var(--light-gray);
+        }
+
+        .card h4 {
+          color: var(--text-primary);
+          font-size: 1.15rem;
         }
 
         .source-tag {
           font-size: 0.65rem;
           text-transform: uppercase;
           letter-spacing: 0.05em;
-          color: var(--slate);
-          opacity: 0.8;
+          color: var(--text-secondary);
         }
 
         .sector-tag {
@@ -252,9 +262,14 @@ export default function Home() {
           margin-bottom: 0.75rem !important;
         }
 
+        .description {
+          color: var(--text-secondary);
+          font-size: 0.9rem;
+        }
+
         .founder-box {
-          background: rgba(255, 255, 255, 0.03);
-          border-left: 2px solid var(--gold);
+          background: var(--bg-secondary);
+          border-left: 3px solid var(--gold);
           padding: 0.75rem;
           margin: 1rem 0;
           border-radius: 0 4px 4px 0;
@@ -263,14 +278,14 @@ export default function Home() {
         .founder-label {
           font-size: 0.65rem !important;
           text-transform: uppercase;
-          color: var(--slate) !important;
+          color: var(--text-secondary) !important;
           margin-bottom: 0.25rem !important;
           letter-spacing: 0.05em;
         }
 
         .founder-name {
           font-size: 0.9rem !important;
-          color: var(--white) !important;
+          color: var(--text-primary) !important;
           font-weight: 600;
           margin-bottom: 0.1rem !important;
         }
@@ -278,7 +293,6 @@ export default function Home() {
         .founder-email {
           font-size: 0.75rem !important;
           color: var(--gold) !important;
-          opacity: 0.8;
           margin: 0 !important;
         }
 
@@ -288,13 +302,19 @@ export default function Home() {
           align-items: center;
           margin-top: 1rem;
           padding-top: 1rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          border-top: 1px solid var(--light-gray);
+        }
+
+        .link-website {
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: var(--navy);
         }
 
         .button-tiny {
           background: transparent;
-          border: 1px solid var(--gold);
-          color: var(--gold);
+          border: 1px solid var(--navy);
+          color: var(--navy);
           font-size: 0.7rem;
           padding: 0.3rem 0.6rem;
           border-radius: 4px;
@@ -304,20 +324,21 @@ export default function Home() {
         }
 
         .button-tiny:hover {
-          background: var(--gold);
-          color: var(--navy);
+          background: var(--navy);
+          color: var(--white);
         }
 
         .empty {
-          border: 2px dashed rgba(255, 255, 255, 0.05);
+          border: 2px dashed var(--light-gray);
+          background: var(--bg-secondary);
           text-align: center;
           padding: 4rem 2rem;
-          color: var(--slate);
+          color: var(--text-secondary);
         }
 
         .skeleton {
           padding: 2rem;
-          color: var(--slate);
+          color: var(--text-secondary);
           font-style: italic;
           opacity: 0.6;
           animation: pulse 1.5s infinite;
