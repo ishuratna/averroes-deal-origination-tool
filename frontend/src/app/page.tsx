@@ -25,6 +25,12 @@ export default function Home() {
   }, []);
 
 
+  const sanitizeContact = (val: string | undefined | null) => {
+    if (!val) return "";
+    const placeholders = ['System Override Required', 'Data Missing', 'Pending Activation', 'Unknown Founder', 'research@averroescapital.com'];
+    return placeholders.includes(val) ? "" : val;
+  };
+
   const renderTop10Pipeline = () => {
     // Filter by search query
     const filteredPipeline = pipeline.filter(c => {
@@ -72,16 +78,16 @@ export default function Home() {
               
               <div className="founder-box">
                 <p className="founder-label">Founder / CEO</p>
-                <p className="founder-name" style={{ opacity: company.contact_name ? 1 : 0.5 }}>
-                  {company.contact_name || 'N/A'}
+                <p className="founder-name" style={{ opacity: sanitizeContact(company.contact_name) ? 1 : 0.5 }}>
+                  {sanitizeContact(company.contact_name) || 'N/A'}
                 </p>
                 {company.linkedin_url && (
                   <a href={company.linkedin_url} target="_blank" rel="noreferrer" className="founder-linkedin">
                     View LinkedIn ↗
                   </a>
                 )}
-                <p className="founder-email" style={{ opacity: company.contact_email ? 1 : 0.5 }}>
-                  {company.contact_email || 'N/A'}
+                <p className="founder-email" style={{ opacity: sanitizeContact(company.contact_email) ? 1 : 0.5 }}>
+                  {sanitizeContact(company.contact_email) || 'N/A'}
                 </p>
               </div>
 

@@ -81,7 +81,10 @@ def _process_and_refine(raw_companies: List[dict]):
             c["status"] = "Under Review" if score >= 0.6 else "Qualified"
             # Fully automated enrichment for all potential targets
             founder_info = enrichment_agent.enrich_founder_details(c['name'])
-            c.update(founder_info)
+            # Only update if found something real, avoid overwriting with NA
+            for key, val in founder_info.items():
+                if val:
+                    c[key] = val
         else:
             c["status"] = "Not a Fit"
             
