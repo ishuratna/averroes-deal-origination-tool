@@ -60,7 +60,11 @@ def _sync_to_databases(refined_companies: List[dict]):
     if not success:
         logger.error("Failed to sync to target database in BigQuery.")
         
-    return len(refined_companies), sum(1 for c in refined_companies if c.get("match_score", 0) >= 0.3)
+    # Get true total counts from BigQuery to return to the frontend
+    universe_total = len(bq_handler.get_universe())
+    pipeline_total = len(bq_handler.get_pipeline())
+        
+    return universe_total, pipeline_total
 
 def _process_and_refine(raw_companies: List[dict]):
     """
