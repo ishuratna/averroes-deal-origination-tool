@@ -70,13 +70,25 @@ class ConferenceScraper:
                         {"name": "Artisan", "website": "https://artisan.co", "sector": "AI / B2B SaaS", "description": "Autonomous AI sales agents."},
                         {"name": "DuploCloud", "website": "https://duplocloud.com", "sector": "DevOps", "description": "No-code DevOps automation."},
                         {"name": "Dust", "website": "https://dust.tt", "sector": "AI", "description": "Custom internal AI assistants."},
-                        {"name": "Firebolt", "website": "https://firebolt.io", "sector": "Data", "description": "High-performance data warehouse."}
+                        {"name": "Firebolt", "website": "https://firebolt.io", "sector": "Data", "description": "High-performance data warehouse."},
+                        {"name": "Cloudsmith", "website": "https://cloudsmith.com", "sector": "Supply Chain Security", "description": "Software supply chain management platform."},
+                        {"name": "Tines", "website": "https://tines.com", "sector": "Security Automation", "description": "Smart automation for security teams."},
+                        {"name": "Paddle", "website": "https://paddle.com", "sector": "Fintech / SaaS", "description": "Payments, tax, and subscriptions for B2B."},
+                        {"name": "Salesloft", "website": "https://salesloft.com", "sector": "Sales Engagement", "description": "The AI-powered revenue orchestration platform."},
+                        {"name": "Lattice", "website": "https://lattice.com", "sector": "HR Tech", "description": "People success platform for high-growth teams."},
+                        {"name": "Synthesia", "website": "https://synthesia.io", "sector": "AI / Video", "description": "AI video creation platform."}
                     ]
                 elif "London Tech Week" in conf_name:
                     companies = [
                         {"name": "MatAlytics", "website": "https://matalytics.com", "sector": "Materials Tech", "description": "AI for materials science."},
                         {"name": "Quantinuum", "website": "https://quantinuum.com", "sector": "Quantum Computing", "description": "World-leading quantum computing platform."},
-                        {"name": "Zego", "website": "https://zego.com", "sector": "InsurTech", "description": "Commercial motor insurance."}
+                        {"name": "Zego", "website": "https://zego.com", "sector": "InsurTech", "description": "Commercial motor insurance."},
+                        {"name": "Starling Bank", "website": "https://starlingbank.com", "sector": "Fintech", "description": "Leading UK digital challenger bank."},
+                        {"name": "Wayve", "website": "https://wayve.ai", "sector": "AI / Mobility", "description": "Embodied AI for autonomous driving."},
+                        {"name": "Syntheni", "website": "https://syntheni.ai", "sector": "AI / Biotech", "description": "Generative AI for synthetic biology."},
+                        {"name": "Huma", "website": "https://huma.com", "sector": "HealthTech", "description": "Digital health platform for predictive care."},
+                        {"name": "Faculty", "website": "https://faculty.ai", "sector": "AI Consultancy", "description": "Making AI work for every organization."},
+                        {"name": "Encord", "website": "https://encord.com", "sector": "AI Infrastructure", "description": "The operating system for AI data."}
                     ]
             
             # Standardize for the main API

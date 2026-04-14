@@ -7,6 +7,7 @@ import { dealApi } from "../services/api";
 
 export default function Home() {
   const [pipeline, setPipeline] = useState<CompanyTarget[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,8 +34,18 @@ export default function Home() {
   };
 
   const renderTop10Pipeline = () => {
+    // Filter by search query
+    const filteredPipeline = pipeline.filter(c => {
+      const q = searchQuery.toLowerCase();
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.sector && c.sector.toLowerCase().includes(q)) ||
+        (c.description && c.description.toLowerCase().includes(q))
+      );
+    });
+
     // Sort by match_score descending, take top 10
-    const top10 = [...pipeline]
+    const top10 = [...filteredPipeline]
       .sort((a, b) => b.match_score - a.match_score)
       .slice(0, 10);
 
@@ -124,6 +135,8 @@ export default function Home() {
             type="text" 
             placeholder="Search company, sector, or investment thesis..." 
             className="input-main"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
           />
           <button className="button-search">Analyze Target</button>
         </div>
