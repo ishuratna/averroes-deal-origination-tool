@@ -32,59 +32,72 @@ export default function Home() {
     }
   };
 
-  const renderColumn = (status: string, title: string) => {
-    const filtered = pipeline.filter(c => c.status === status);
+  const renderTop10Pipeline = () => {
+    // Sort by match_score descending, take top 10
+    const top10 = [...pipeline]
+      .sort((a, b) => b.match_score - a.match_score)
+      .slice(0, 10);
+
     return (
-      <div className="pipeline-column">
+      <div className="pipeline-column-full">
         <div className="column-header">
-           <h3>{title}</h3>
-           <span className="count-badge">{filtered.length}</span>
+           <h3>Current Pipeline (Top 10)</h3>
+           <span className="count-badge">{top10.length}</span>
         </div>
-        {filtered.length === 0 && !loading && (
+        {top10.length === 0 && !loading && (
           <div className="card glass empty">
-            <p>No companies currently in {title.toLowerCase()}.</p>
+            <p>No companies currently in pipeline. Trigger ingestion to find targets.</p>
           </div>
         )}
-        {filtered.map((company, i) => (
-          <div key={i} className="card glass">
-            <div className="card-header">
-              <span className="badge-growth" style={{
-                background: company.match_score > 0.9 ? 'rgba(100, 255, 218, 0.1)' : 'rgba(212, 175, 55, 0.1)',
-                color: company.match_score > 0.9 ? 'var(--green)' : 'var(--gold)'
-              }}>
-                {Math.round(company.match_score * 100)}% Match
-              </span>
-              <div className="source-tag">{company.source}</div>
-            </div>
-            
-            <h4>{company.name}</h4>
-            <p className="sector-tag">{company.sector}</p>
-            <p className="description">{company.description}</p>
-            
-            {company.contact_name && (
+        
+        <div className="cards-grid">
+          {top10.map((company, i) => (
+            <div key={i} className="card glass">
+              <div className="card-header">
+                <span className="badge-growth" style={{
+                  background: company.match_score >= 0.8 ? 'rgba(100, 255, 218, 0.1)' : 'rgba(212, 175, 55, 0.1)',
+                  color: company.match_score >= 0.8 ? 'var(--green)' : 'var(--gold)'
+                }}>
+                  {Math.round(company.match_score * 100)}% Match
+                </span>
+                <div className="source-tag">{company.source}</div>
+              </div>
+              
+              <h4>{company.name}</h4>
+              <p className="sector-tag">{company.sector}</p>
+              <p className="description">{company.description}</p>
+              
               <div className="founder-box">
                 <p className="founder-label">Founder / CEO</p>
-                <p className="founder-name">{company.contact_name}</p>
-                <p className="founder-email">{company.contact_email}</p>
+                <p className="founder-name" style={{ opacity: company.contact_name ? 1 : 0.5 }}>
+                  {company.contact_name || 'N/A'}
+                </p>
+                <p className="founder-email" style={{ opacity: company.contact_email ? 1 : 0.5 }}>
+                  {company.contact_email || 'N/A'}
+                </p>
               </div>
-            )}
 
-            <div className="card-footer">
-              <a href={company.website} target="_blank" rel="noreferrer" className="link-website">
-                View Site ↗
-              </a>
-              {status === 'Qualified' && !company.contact_name && (
-                <button 
-                  className="button-tiny" 
-                  onClick={() => handleEnrich(company.name)}
-                >
-                  Deep Enrich
-                </button>
-              )}
+              <div className="card-footer">
+                {company.website ? (
+                  <a href={company.website} target="_blank" rel="noreferrer" className="link-website">
+                    View Site ↗
+                  </a>
+                ) : (
+                  <span className="link-website disabled">No Website</span>
+                )}
+                {!company.contact_name && (
+                  <button 
+                    className="button-tiny" 
+                    onClick={() => handleEnrich(company.name)}
+                  >
+                    Deep Enrich
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-        {loading && <div className="skeleton">Loading targets...</div>}
+          ))}
+        </div>
+        {loading && <div className="skeleton">Loading pipeline...</div>}
       </div>
     );
   };
@@ -116,10 +129,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="pipeline-grid">
-        {renderColumn('Qualified', 'Sourced Targets')}
-        {renderColumn('Under Review', 'AI Enrichment')}
-        {renderColumn('Engaged', 'Verified Pipeline')}
+      <section className="pipeline-grid" style={{ gridTemplateColumns: '1fr' }}>
+        {renderTop10Pipeline()}
       </section>
 
       <style jsx>{`
@@ -173,6 +184,16 @@ export default function Home() {
           gap: 2rem;
           margin-top: 3rem;
           padding-bottom: 5rem;
+        }
+
+        .cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+          gap: 1.5rem;
+        }
+
+        .pipeline-column-full {
+          width: 100%;
         }
 
         .column-header {

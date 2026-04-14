@@ -57,7 +57,7 @@ export default function Universe() {
               </tr>
             </thead>
             <tbody>
-              {universe.map((company, i) => (
+              {[...universe].sort((a, b) => b.match_score - a.match_score).map((company, i) => (
                 <tr key={i}>
                   <td style={{ fontWeight: 700, color: 'var(--white)' }}>
                     <a href={company.website} target="_blank" rel="noreferrer" style={{color: 'inherit', textDecoration: 'none'}}>
