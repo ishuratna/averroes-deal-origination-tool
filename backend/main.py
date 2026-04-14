@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
 from scrapers.conference_scraper import ConferenceScraper
-from scrapers.acquire_scraper import AcquireScraper
+from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 conf_scraper = ConferenceScraper()
-acq_scraper = AcquireScraper()
+market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
@@ -139,27 +139,34 @@ async def get_universe():
         raise HTTPException(status_code=500, detail=f"Failed to load universe: {str(e)}")
 
 @app.post("/ingest/marketplace")
-async def ingest_marketplace():
+async def ingest_marketplace(marketplace_name: Optional[str] = Query(None, description="Name of the marketplace to scrape. If None, scrapes all.")):
     """
-    Phase A: Trigger the Acquire loop.
-    Phase B: Evaluate raw targets via Gemini prompt logic.
-    Phase C: Update candidates.json
+    Ingests deals from marketplaces (Acquire, Flippa, etc.)
     """
-    raw_companies = acq_scraper.scrape_marketplace()
+    if marketplace_name and marketplace_name not in market_scraper.get_supported_sources():
+        raise HTTPException(status_code=404, detail="Marketplace not monitored.")
+    
+    if marketplace_name:
+        raw_companies = market_scraper.scrape_source(marketplace_name)
+        source_label = marketplace_name
+    else:
+        raw_companies = market_scraper.scrape_all()
+        source_label = "All Marketplaces"
+
     if not raw_companies:
-        return {"status": "Complete", "count": 0, "message": "No new marketplace companies found."}
+        return {"status": "Complete", "count": 0, "message": f"No new companies found from {source_label}."}
     
     refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
     
     # Backup to GCS
-    gcs_filename = gcs_handler.save_companies(refined_companies, "acquire_marketplace")
+    gcs_filename = gcs_handler.save_companies(refined_companies, source_label.lower().replace(".", "").replace(" ", "_"))
     
     return {
         "status": "Success",
         "count": len(refined_companies),
         "total_in_universe": uni_count,
         "total_in_candidates": cand_count,
-        "source": "Acquire.com Pipeline",
+        "source": source_label,
         "gcs_path": gcs_filename
     }
 
