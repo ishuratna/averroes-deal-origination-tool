@@ -1,6 +1,6 @@
 import { CompanyTarget } from "../types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-sxi7lpwcnq-ew.a.run.app';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
 export const dealApi = {
   /**
