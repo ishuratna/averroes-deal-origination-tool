@@ -45,6 +45,7 @@ class BigQueryHandler:
                 "source": c.get("source", "Manual"),
                 "contact_name": c.get("contact_name", None),
                 "contact_email": c.get("contact_email", None),
+                "linkedin_url": c.get("linkedin_url", None),
                 "growth_signals": bool(c.get("growth_signals", False)),
                 "estimated_ebitda": float(c.get("estimated_ebitda", 0.0))
             }
@@ -98,6 +99,7 @@ class BigQueryHandler:
 
         contact_name = enrichment_data.get('contact_name', '')
         contact_email = enrichment_data.get('contact_email', '')
+        linkedin_url = enrichment_data.get('linkedin_url', '')
         
         # In BQ we recommend parameterized queries to avoid SQL injection
         query = f"""
@@ -105,6 +107,7 @@ class BigQueryHandler:
             SET 
                 contact_name = @contact_name,
                 contact_email = @contact_email,
+                linkedin_url = @linkedin_url,
                 status = 'Under Review'
             WHERE name = @name
         """
@@ -113,6 +116,7 @@ class BigQueryHandler:
             query_parameters=[
                 bigquery.ScalarQueryParameter("contact_name", "STRING", contact_name),
                 bigquery.ScalarQueryParameter("contact_email", "STRING", contact_email),
+                bigquery.ScalarQueryParameter("linkedin_url", "STRING", linkedin_url),
                 bigquery.ScalarQueryParameter("name", "STRING", company_name)
             ]
         )

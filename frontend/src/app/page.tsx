@@ -83,6 +83,11 @@ export default function Home() {
                 <p className="founder-name" style={{ opacity: company.contact_name ? 1 : 0.5 }}>
                   {company.contact_name || 'N/A'}
                 </p>
+                {company.linkedin_url && (
+                  <a href={company.linkedin_url} target="_blank" rel="noreferrer" className="founder-linkedin">
+                    View LinkedIn ↗
+                  </a>
+                )}
                 <p className="founder-email" style={{ opacity: company.contact_email ? 1 : 0.5 }}>
                   {company.contact_email || 'N/A'}
                 </p>
@@ -294,6 +299,20 @@ export default function Home() {
           font-size: 0.75rem !important;
           color: var(--gold) !important;
           margin: 0 !important;
+        }
+
+        .founder-linkedin {
+          display: block;
+          font-size: 0.7rem;
+          color: var(--navy);
+          font-weight: 700;
+          text-decoration: underline;
+          margin-bottom: 0.25rem;
+          transition: color 0.2s;
+        }
+
+        .founder-linkedin:hover {
+          color: var(--gold);
         }
 
         .card-footer {

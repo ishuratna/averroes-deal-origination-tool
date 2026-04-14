@@ -13,15 +13,14 @@ class EnrichmentAgent:
     
     def enrich_founder_details(self, company_name: str) -> Dict[str, Optional[str]]:
         """
-        Uses Gemini to intelligently predict the founder's name and contact email 
-        for the given B2B tech company.
+        Uses Gemini to intelligently discover the founder's name, company email,
+        and LinkedIn profile URL for the given B2B tech company.
         """
         logger.info(f"Agents Hunting: Enriching founder details for '{company_name}'...")
         
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            logger.warning("No GEMINI_API_KEY found, returning placeholder contact data.")
-            return {"contact_name": "Pending Activation", "contact_email": "api_key_required@averroes.com"}
+            return {"contact_name": "Pending Activation", "contact_email": "api_key_required@averroes.com", "linkedin_url": ""}
             
         try:
             import google.generativeai as genai
@@ -29,12 +28,22 @@ class EnrichmentAgent:
             model = genai.GenerativeModel("gemini-2.5-flash")
             
             prompt = f"""
-            You are a private equity researcher. Find the primary founder or CEO for a software company named '{company_name}'.
-            Return only a strict JSON object with exactly these two keys:
-            "contact_name": "First Last"
-            "contact_email": "first.last@companydomain.com"
+            Identify the primary founder or current CEO for the B2B tech company '{company_name}'.
             
-            If you don't know the exact person, make your absolute best guess of the CEO's name and business email based on your training data. Do not use markdown blocks.
+            TASKS:
+            1. Find their full name.
+            2. Find their professional LinkedIn profile URL.
+            3. Construct their business email (often first.last@company.com or first@company.com).
+            
+            RETURN FORMAT (STRICT JSON):
+            {{
+                "contact_name": "First Last",
+                "contact_email": "email@domain.com",
+                "linkedin_url": "https://www.linkedin.com/in/username/"
+            }}
+            
+            Do not use markdown blocks. Return only the JSON. 
+            If exact details are missing, provide your highest-confidence estimate based on public records.
             """
             
             response = model.generate_content(
@@ -45,11 +54,9 @@ class EnrichmentAgent:
             result = json.loads(response.text)
             return {
                 "contact_name": result.get("contact_name", "Unknown Founder"),
-                "contact_email": result.get("contact_email", "founders@company.com")
+                "contact_email": result.get("contact_email", ""),
+                "linkedin_url": result.get("linkedin_url", "")
             }
         except Exception as e:
             logger.error(f"Enrichment search failed for {company_name}: {e}")
-            return {
-                "contact_name": "System Override Required", 
-                "contact_email": "research@averroescapital.com"
-            }
+            return {"contact_name": "Data Missing", "contact_email": "", "linkedin_url": ""}

@@ -10,6 +10,7 @@ export interface CompanyTarget {
   match_score: number; // 0 to 1
   contact_name?: string;
   contact_email?: string;
+  linkedin_url?: string;
   status: 'Qualified' | 'Under Review' | 'Engaged' | 'Not a Fit';
 }
 
