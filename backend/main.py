@@ -73,7 +73,7 @@ def _process_and_refine(raw_companies: List[dict]):
         score = evaluate_target(c, philosophy)
         c["match_score"] = score
         
-        if score >= 0.85:
+        if score >= 0.60:
             c["status"] = "Under Review"
             # Automated Enrichment for high-conviction targets
             founder_info = enrichment_agent.enrich_founder_details(c['name'])
