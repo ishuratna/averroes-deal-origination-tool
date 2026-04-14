@@ -20,7 +20,7 @@ class EnrichmentAgent:
         
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            return {"contact_name": "Pending Activation", "contact_email": "api_key_required@averroes.com", "linkedin_url": ""}
+            return {"contact_name": "", "contact_email": "", "linkedin_url": ""}
             
         try:
             import google.generativeai as genai
@@ -43,7 +43,7 @@ class EnrichmentAgent:
             }}
             
             Do not use markdown blocks. Return only the JSON. 
-            If exact details are missing, provide your highest-confidence estimate based on public records.
+            If exact details are missing, return empty strings for those fields.
             """
             
             response = model.generate_content(
@@ -53,10 +53,10 @@ class EnrichmentAgent:
             
             result = json.loads(response.text)
             return {
-                "contact_name": result.get("contact_name", "Unknown Founder"),
+                "contact_name": result.get("contact_name", ""),
                 "contact_email": result.get("contact_email", ""),
                 "linkedin_url": result.get("linkedin_url", "")
             }
         except Exception as e:
             logger.error(f"Enrichment search failed for {company_name}: {e}")
-            return {"contact_name": "Data Missing", "contact_email": "", "linkedin_url": ""}
+            return {"contact_name": "", "contact_email": "", "linkedin_url": ""}
