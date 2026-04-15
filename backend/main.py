@@ -120,8 +120,23 @@ async def root():
         "gemini_enabled": bool(os.getenv("GEMINI_API_KEY"))
     }
 
-@app.get("/pipeline", response_model=List[dict])
-async def get_pipeline():
+@app.get("/debug")
+async def debug_check():
+    """
+    Diagnostic endpoint to check BQ connectivity and environment.
+    """
+    uni = bq_handler.get_universe()
+    return {
+        "project": GCP_PROJECT,
+        "dataset": BQ_DATASET,
+        "table": bq_handler.table_id,
+        "universe_count": len(uni),
+        "first_5": uni[:5] if uni else [],
+        "env_vars": {
+            "GCP_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT"),
+            "BQ_DATASET": os.getenv("BIGQUERY_DATASET")
+        }
+    }
     """
     Reads the active target pipeline from BigQuery.
     """
