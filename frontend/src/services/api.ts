@@ -1,10 +1,10 @@
 import { CompanyTarget } from "../types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export const dealApi = {
   /**
-   * Fetch the active sourcing pipeline
+   * Fetch the active sourcing pipeline (Top matches)
    */
   async getPipeline(): Promise<CompanyTarget[]> {
     try {
@@ -13,29 +13,7 @@ export const dealApi = {
       return await response.json();
     } catch (error) {
       console.error('Deal API Error:', error);
-      // Return mocked data if backend is not alive yet
-      return [
-        {
-          name: "SaaS Synergy Corp",
-          website: "https://synergy.io",
-          sector: "B2B Infrastructure",
-          source: "Historical Database",
-          estimated_ebitda: 7.2,
-          description: "Infrastructure for hybrid work environments.",
-          match_score: 0.92,
-          status: 'Qualified'
-        },
-        {
-          name: "Nexus Flow Ltd",
-          website: "https://nexus.flow",
-          sector: "FinTech Enabler",
-          source: "Manual Research",
-          estimated_ebitda: 3.5,
-          description: "Payment gateway orchestration for Mid-Market.",
-          match_score: 0.88,
-          status: 'Under Review'
-        }
-      ];
+      return [];
     }
   },
 
@@ -54,15 +32,34 @@ export const dealApi = {
   },
 
   /**
-   * Run AI Analysis on a new URL
+   * Trigger Marketplace Ingestion
    */
-  async analyzeTarget(url: string): Promise<CompanyTarget> {
-    const response = await fetch(`${API_BASE_URL}/analyze-target`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+  async ingestMarketplace(name?: string): Promise<any> {
+    const url = name ? `${API_BASE_URL}/ingest/marketplace?marketplace_name=${encodeURIComponent(name)}` : `${API_BASE_URL}/ingest/marketplace`;
+    const response = await fetch(url, { method: 'POST' });
+    if (!response.ok) throw new Error('Marketplace ingestion failed');
+    return await response.json();
+  },
+
+  /**
+   * Trigger Conference Ingestion
+   */
+  async ingestConference(name: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/ingest/conference?conference_name=${encodeURIComponent(name)}`, {
+      method: 'POST'
     });
-    if (!response.ok) throw new Error('Analysis failed');
+    if (!response.ok) throw new Error('Conference ingestion failed');
+    return await response.json();
+  },
+
+  /**
+   * Trigger Ranking List Ingestion
+   */
+  async ingestRanking(name: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/ingest/ranking?list_name=${encodeURIComponent(name)}`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Ranking ingestion failed');
     return await response.json();
   },
 
@@ -74,6 +71,17 @@ export const dealApi = {
       method: 'POST'
     });
     if (!response.ok) throw new Error('Enrichment failed');
+    return await response.json();
+  },
+
+  /**
+   * Trigger AI Deep-Dive Analysis
+   */
+  async analyzeCompany(companyName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/analyze/${encodeURIComponent(companyName)}`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Deep-dive analysis failed');
     return await response.json();
   }
 };

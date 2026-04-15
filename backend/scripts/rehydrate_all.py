@@ -1,7 +1,8 @@
+import os
 import requests
 import time
 
-BASE_URL = "https://averroes-deal-backend-890361705054.europe-west1.run.app"
+BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 def trigger_ingestions():
     print(f"🚀 Rehydrating Master Database at {BASE_URL}")

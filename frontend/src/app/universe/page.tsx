@@ -8,150 +8,626 @@ import { dealApi } from "../../services/api";
 export default function Universe() {
   const [universe, setUniverse] = useState<CompanyTarget[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [ingesting, setIngesting] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const data = await dealApi.getUniverse();
-        setUniverse(data);
-      } catch (error) {
-        console.error("Failed to load universe", error);
-      } finally {
-        setLoading(false);
-      }
-    }
     loadData();
   }, []);
 
+  async function loadData() {
+    setLoading(true);
+    try {
+      const data = await dealApi.getUniverse();
+      setUniverse(data);
+    } catch (error) {
+      console.error("Failed to load universe", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking', name: string) => {
+    setIngesting(name);
+    try {
+      if (type === 'marketplace') await dealApi.ingestMarketplace(name);
+      else if (type === 'conference') await dealApi.ingestConference(name);
+      else if (type === 'ranking') await dealApi.ingestRanking(name);
+      await loadData();
+    } catch (error) {
+      alert(`Ingestion failed for ${name}`);
+    } finally {
+      setIngesting(null);
+    }
+  };
+
+  const filteredUniverse = universe.filter(c => {
+    const q = searchQuery.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.sector && c.sector.toLowerCase().includes(q)) ||
+      (c.source && c.source.toLowerCase().includes(q)) ||
+      (c.status && c.status.toLowerCase().includes(q))
+    );
+  });
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '—';
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
+
   return (
-    <main className="container">
-      <header className="navbar">
-        <div className="logo">AVERROES CAPITAL</div>
-        <nav style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-          <Link href="/" style={{ color: 'var(--navy)', opacity: 0.7, textDecoration: 'none', fontWeight: 600 }}>Active Pipeline</Link>
-          <Link href="/universe" style={{ color: 'var(--gold)', textDecoration: 'none', fontWeight: 600 }}>Master Universe</Link>
-          <button className="button" onClick={() => window.location.reload()}>
-            Refresh Sync ↻
-          </button>
+    <div className="layout-wrapper">
+      {/* Sidebar - Consistent with Home */}
+      <aside className="sidebar">
+        <div className="logo-section">
+          <div className="logo">AVERROES<span>INTEL</span></div>
+        </div>
+        
+        <nav className="sidebar-nav">
+          <div className="nav-group">
+            <span className="group-label">Intelligence</span>
+            <Link href="/" className="nav-item">Deal Pipeline</Link>
+            <Link href="/universe" className="nav-item active">Master Universe</Link>
+          </div>
+
+          <div className="nav-group">
+            <span className="group-label">Sourcing Agents</span>
+            <button 
+              className={`agent-btn ${ingesting === 'Acquire.com' ? 'loading' : ''}`}
+              onClick={() => handleIngest('marketplace', 'Acquire.com')}
+              disabled={!!ingesting}
+            >
+              Monitor Acquire.com {ingesting === 'Acquire.com' && '...'}
+            </button>
+            <button 
+              className={`agent-btn ${ingesting === 'Flippa' ? 'loading' : ''}`}
+              onClick={() => handleIngest('marketplace', 'Flippa')}
+              disabled={!!ingesting}
+            >
+              Monitor Flippa {ingesting === 'Flippa' && '...'}
+            </button>
+            <button 
+              className={`agent-btn ${ingesting === 'FT 1000' ? 'loading' : ''}`}
+              onClick={() => handleIngest('ranking', 'FT 1000')}
+              disabled={!!ingesting}
+            >
+              Scan FT 1000 {ingesting === 'FT 1000' && '...'}
+            </button>
+            <button 
+              className={`agent-btn ${ingesting === 'Web Summit' ? 'loading' : ''}`}
+              onClick={() => handleIngest('conference', 'Web Summit')}
+              disabled={!!ingesting}
+            >
+              Scrape Web Summit {ingesting === 'Web Summit' && '...'}
+            </button>
+          </div>
         </nav>
-      </header>
 
-      <section className="hero">
-        <h1>Master Universe</h1>
-        <p className="subtitle">All raw targets sourced across the entire market dataset.</p>
-      </section>
+        <div className="sidebar-footer">
+          <div className="user-profile">
+            <div className="avatar">IR</div>
+            <div className="user-info">
+              <span className="user-name">Ishu Ratna</span>
+              <span className="user-role">Managing Partner</span>
+            </div>
+          </div>
+        </div>
+      </aside>
 
-      <section className="table-container glass">
-        {loading ? (
-          <div className="skeleton">Loading universe data...</div>
-        ) : (
-          <table className="universe-table">
-            <thead>
-              <tr>
-                <th>Company</th>
-                <th>Sector</th>
-                <th>Region</th>
-                <th>Ownership</th>
-                <th>Match Score</th>
-                <th>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...universe].sort((a, b) => b.match_score - a.match_score).map((company, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 700, color: 'var(--navy)' }}>
-                    <a href={company.website} target="_blank" rel="noreferrer" style={{color: 'inherit', textDecoration: 'none'}}>
-                      {company.name} ↗
-                    </a>
-                  </td>
-                  <td>{company.sector}</td>
-                  <td>{company.region || 'Unknown'}</td>
-                  <td>{company.ownership || 'Unknown'}</td>
-                  <td>
-                    <span className="badge-growth" style={{
-                      background: company.match_score >= 0.4 ? 'rgba(5, 150, 105, 0.1)' : 'rgba(153, 27, 27, 0.1)',
-                      color: company.match_score >= 0.4 ? 'var(--green)' : '#991b1b'
-                    }}>
-                      {Math.round(company.match_score * 100)}%
-                    </span>
-                  </td>
-                  <td>{company.source}</td>
-                </tr>
-              ))}
-              {universe.length === 0 && (
+      <main className="main-content">
+        <header className="page-header">
+          <div className="header-left">
+            <h1>Master Data Universe</h1>
+            <p className="subtitle">Consolidated view of all market targets and historical scrapes.</p>
+          </div>
+          <div className="header-right">
+            <div className="glass search-box">
+              <input 
+                type="text" 
+                placeholder="Search universe..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <span className="search-icon">🔍</span>
+            </div>
+          </div>
+        </header>
+
+        {/* Universe Table Section */}
+        <section className="table-section glass">
+          <div className="section-header">
+            <div className="header-meta">
+              <h3>{filteredUniverse.length} Targets Found</h3>
+              <p className="description">Data refreshed from BigQuery cloud storage.</p>
+            </div>
+            <button className="button-tiny" onClick={loadData}>Force Sync ↻</button>
+          </div>
+
+          <div className="table-scroll-container">
+            <table className="crm-table">
+              <thead>
                 <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', fontStyle: 'italic', color: 'var(--slate)' }}>
-                    No companies found in the Master Universe. Trigger a scraper to populate.
-                  </td>
+                  <th>Company</th>
+                  <th>Sector</th>
+                  <th>Region</th>
+                  <th>Status</th>
+                  <th>Score</th>
+                  <th>Leadership</th>
+                  <th>LinkedIn</th>
+                  <th>Source</th>
+                  <th>Date</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {loading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="skeleton-row">
+                      <td colSpan={9}><div className="skeleton-line"></div></td>
+                    </tr>
+                  ))
+                ) : filteredUniverse.length > 0 ? (
+                  filteredUniverse.map((company, i) => (
+                    <tr key={i}>
+                      <td className="company-cell">
+                        <div className="name-wrap">
+                          <span className="name">{company.name}</span>
+                          {company.website && (
+                             <a href={company.website} target="_blank" rel="noreferrer" className="site-icon">↗</a>
+                          )}
+                        </div>
+                      </td>
+                      <td className="sector-cell">{company.sector || 'TBD'}</td>
+                      <td>{company.region || 'UK/Europe'}</td>
+                      <td>
+                        <span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>
+                          {company.status}
+                        </span>
+                      </td>
+                      <td>
+                         <span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>
+                            {Math.round(company.match_score * 100)}%
+                         </span>
+                      </td>
+                      <td>{company.contact_name || '—'}</td>
+                      <td>
+                        {company.linkedin_url ? (
+                          <a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>
+                        ) : '—'}
+                      </td>
+                      <td className="source-cell">{company.source}</td>
+                      <td className="date-cell">{formatDate(company.ingested_at)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="empty-row">
+                      No targets match your search. Try running a sourcing agent.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
 
       <style jsx>{`
-        .hero {
-          padding: 3rem 0 2rem;
-          text-align: center;
+        .layout-wrapper {
+          display: flex;
+          min-height: 100vh;
         }
-        
+
+        /* Sidebar - Consistent with Home */
+        .sidebar {
+          width: 280px;
+          background: var(--navy-dark);
+          border-right: 1px solid var(--border-glass);
+          display: flex;
+          flex-direction: column;
+          position: fixed;
+          height: 100vh;
+          z-index: 100;
+        }
+
+        .logo-section {
+          padding: 3rem 2rem;
+        }
+
+        .logo {
+          font-size: 1.5rem;
+          font-weight: 900;
+          letter-spacing: 0.1em;
+          color: var(--white);
+        }
+
+        .logo span {
+          color: var(--gold);
+        }
+
+        .sidebar-nav {
+          flex: 1;
+          padding: 0 1.5rem;
+        }
+
+        .nav-group {
+          margin-bottom: 2.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .group-label {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.15em;
+          color: var(--text-dim);
+          padding-left: 0.5rem;
+          margin-bottom: 0.5rem;
+        }
+
+        .nav-item {
+          padding: 0.75rem 1rem;
+          color: var(--text-secondary);
+          border-radius: var(--radius-sm);
+          font-weight: 600;
+          font-size: 0.9rem;
+          transition: all 0.2s;
+        }
+
+        .nav-item:hover, .nav-item.active {
+          color: var(--white);
+          background: var(--bg-tertiary);
+          box-shadow: var(--shadow-sm);
+        }
+
+        .agent-btn {
+          background: transparent;
+          border: 1px solid var(--border-glass);
+          color: var(--text-secondary);
+          padding: 0.75rem 1rem;
+          border-radius: var(--radius-sm);
+          text-align: left;
+          font-size: 0.85rem;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .agent-btn:hover:not(:disabled) {
+          border-color: var(--gold);
+          color: var(--gold);
+        }
+
+        .agent-btn.loading {
+          opacity: 0.6;
+          cursor: wait;
+          border-color: var(--gold);
+        }
+
+        .sidebar-footer {
+          padding: 1.5rem;
+          border-top: 1px solid var(--border-glass);
+        }
+
+        .user-profile {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .avatar {
+          width: 40px;
+          height: 40px;
+          background: var(--gold);
+          color: var(--navy-dark);
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 900;
+        }
+
+        .user-info {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .user-name {
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: var(--white);
+        }
+
+        .user-role {
+          font-size: 0.7rem;
+          color: var(--text-dim);
+        }
+
+        /* Main Content */
+        .main-content {
+          margin-left: 280px;
+          flex: 1;
+          padding: 3rem;
+          max-width: calc(100vw - 280px);
+          transition: all 0.3s ease;
+        }
+
+        @media (max-width: 1280px) {
+          .main-content {
+            padding: 2rem;
+          }
+        }
+
+        @media (max-width: 1024px) {
+          .sidebar {
+            width: 80px;
+          }
+          .sidebar .logo span, 
+          .sidebar .group-label, 
+          .sidebar .nav-item,
+          .sidebar .agent-btn,
+          .sidebar .user-info {
+            display: none;
+          }
+          .sidebar .logo {
+            text-align: center;
+            padding: 2rem 0;
+            font-size: 1rem;
+          }
+          .sidebar-nav {
+            padding: 0 0.5rem;
+          }
+          .main-content {
+            margin-left: 80px;
+            max-width: calc(100vw - 80px);
+          }
+        }
+
+        .page-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          margin-bottom: 3rem;
+          flex-wrap: wrap;
+          gap: 2rem;
+        }
+
+        .header-left {
+          flex: 1;
+          min-width: 300px;
+        }
+
         .subtitle {
           color: var(--text-secondary);
-          font-size: 1.25rem;
+          font-size: 1.1rem;
+          margin-top: 0.5rem;
+        }
+
+        .search-box {
+          display: flex;
+          align-items: center;
+          padding: 1rem 1.5rem;
+          gap: 1rem;
+          min-width: 300px;
+          width: 100%;
+          max-width: 400px;
+        }
+
+        .search-box input {
+          background: transparent;
+          border: none;
+          color: var(--white);
+          width: 100%;
+          outline: none;
+          font-size: 1rem;
+        }
+
+        /* Table Section */
+        .table-section {
+          padding: 2rem;
+        }
+
+        .section-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
           margin-bottom: 2rem;
+          padding-bottom: 1.5rem;
+          border-bottom: 1px solid var(--border-glass);
         }
 
-        .table-container {
+        h3 {
+          font-size: 1.25rem;
+          margin-bottom: 0.25rem;
+        }
+
+        .header-meta .description {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+        }
+
+        .table-scroll-container {
           overflow-x: auto;
-          border-radius: var(--radius-lg);
-          padding: 1px;
         }
 
-        .universe-table {
+        .crm-table {
           width: 100%;
           border-collapse: collapse;
           text-align: left;
         }
 
-        .universe-table th, .universe-table td {
-          padding: 1.25rem 1.5rem;
-          border-bottom: 1px solid var(--light-gray);
-        }
-
-        .universe-table th {
-          color: var(--navy);
-          font-size: 0.85rem;
+        .crm-table th {
+          background: var(--bg-tertiary);
+          color: var(--text-dim);
+          font-size: 0.7rem;
           text-transform: uppercase;
           letter-spacing: 0.1em;
-          font-weight: 600;
-          background: var(--bg-secondary);
+          font-weight: 700;
+          padding: 1rem 1.5rem;
+          border-bottom: 1px solid var(--border-glass);
         }
 
-        .universe-table tr:hover td {
-          background: var(--bg-secondary);
-        }
-
-        .universe-table td {
-          color: var(--text-primary);
-          font-size: 0.95rem;
-        }
-
-        .skeleton {
-          padding: 4rem;
-          text-align: center;
+        .crm-table td {
+          padding: 1.25rem 1.5rem;
+          border-bottom: 1px solid var(--border-glass);
+          font-size: 0.9rem;
           color: var(--text-secondary);
-          font-style: italic;
-          opacity: 0.6;
-          animation: pulse 1.5s infinite;
+          white-space: nowrap;
         }
 
-        @keyframes pulse {
-          0% { opacity: 0.4; }
-          50% { opacity: 0.8; }
-          100% { opacity: 0.4; }
+        @media (max-width: 1400px) {
+           .crm-table th:nth-child(7), .crm-table td:nth-child(7), /* LinkedIn */
+           .crm-table th:nth-child(9), .crm-table td:nth-child(9)  /* Date */ {
+             display: none;
+           }
+        }
+
+        @media (max-width: 1100px) {
+           .crm-table th:nth-child(8), .crm-table td:nth-child(8), /* Source */
+           .crm-table th:nth-child(3), .crm-table td:nth-child(3)  /* Region */ {
+             display: none;
+           }
+        }
+
+        @media (max-width: 768px) {
+           .crm-table th:nth-child(6), .crm-table td:nth-child(6) /* Leadership */ {
+             display: none;
+           }
+           .section-header {
+             flex-direction: column;
+             align-items: flex-start;
+             gap: 1.5rem;
+           }
+        }
+
+        .table-scroll-container::-webkit-scrollbar {
+          height: 8px;
+        }
+        .table-scroll-container::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+        }
+        .table-scroll-container::-webkit-scrollbar-thumb {
+          background: var(--border-glass);
+          border-radius: 4px;
+        }
+        .table-scroll-container::-webkit-scrollbar-thumb:hover {
+          background: var(--gold);
+        }
+
+        .crm-table tr:hover td {
+          background: rgba(255, 255, 255, 0.02);
+        }
+
+        .company-cell .name-wrap {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .company-cell .name {
+          color: var(--white);
+          font-weight: 700;
+        }
+
+        .site-icon {
+          font-size: 0.75rem;
+          color: var(--gold);
+          opacity: 0.6;
+        }
+
+        .site-icon:hover {
+          opacity: 1;
+        }
+
+        .sector-cell {
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+
+        .status-badge {
+          font-size: 0.65rem;
+          font-weight: 800;
+          padding: 0.3rem 0.6rem;
+          border-radius: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .status-badge.qualified {
+          background: var(--green-glow);
+          color: var(--green);
+        }
+
+        .status-badge.under-review {
+          background: var(--gold-muted);
+          color: var(--gold);
+        }
+
+        .status-badge.scraped {
+          background: var(--bg-tertiary);
+          color: var(--text-dim);
+        }
+
+        .status-badge.not-a-fit {
+          background: rgba(255, 77, 77, 0.1);
+          color: #FF4D4D;
+        }
+
+        .score-val {
+          font-weight: 800;
+        }
+
+        .linkedin-link {
+          color: #0A66C2;
+          font-weight: 600;
+          text-decoration: underline;
+        }
+
+        .source-cell {
+          font-size: 0.8rem;
+          font-style: italic;
+        }
+
+        .date-cell {
+          font-size: 0.8rem;
+          white-space: nowrap;
+        }
+
+        .empty-row {
+          text-align: center;
+          padding: 4rem !important;
+          font-style: italic;
+          color: var(--text-dim);
+        }
+
+        .button-tiny {
+          background: transparent;
+          border: 1px solid var(--gold);
+          color: var(--gold);
+          padding: 0.5rem 1rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .button-tiny:hover {
+          background: var(--gold);
+          color: var(--navy-dark);
+        }
+
+        .skeleton-line {
+          height: 12px;
+          background: var(--bg-tertiary);
+          width: 100%;
+          border-radius: 2px;
+          animation: loading-shimmer 1.5s infinite;
         }
       `}</style>
-    </main>
+    </div>
   );
 }

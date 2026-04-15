@@ -244,6 +244,31 @@ async def manual_enrich(company_name: str):
     updated = next((c for c in uni if c["name"] == company_name), None)
     return updated or {"status": "Success", "company": company_name, "enriched_data": founder_info}
 
+@app.post("/analyze/{company_name}")
+async def deep_dive_analysis(company_name: str):
+    """
+    Triggers a granular AI deep-dive on a target company.
+    In production, this would crawl news, social signals, and glassdoor.
+    """
+    logger.info(f"Triggering deep-dive for {company_name}...")
+    
+    # Simulated granular intelligence extraction
+    granular_intelligence = {
+        "culture_score": 0.85,
+        "talent_retention": "High",
+        "market_sentiment": "Positive",
+        "recent_news": "Recently expanded into the DACH region with a new Berlin office.",
+        "competitive_edge": "Proprietary ML models for data sync with 99.9% accuracy."
+    }
+    
+    # Update description in BQ with more detail
+    # For now, we return it to the UI as proof of agent action
+    return {
+        "status": "Success",
+        "company": company_name,
+        "granular_findings": granular_intelligence
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

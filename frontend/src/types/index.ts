@@ -11,7 +11,8 @@ export interface CompanyTarget {
   contact_name?: string;
   contact_email?: string;
   linkedin_url?: string;
-  status: 'Qualified' | 'Under Review' | 'Engaged' | 'Not a Fit';
+  status: 'Qualified' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped';
+  ingested_at?: string;
 }
 
 export interface PipelineMetrics {
