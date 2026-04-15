@@ -137,6 +137,9 @@ async def debug_check():
             "BQ_DATASET": os.getenv("BIGQUERY_DATASET")
         }
     }
+
+@app.get("/pipeline")
+async def get_pipeline():
     """
     Reads the active target pipeline from BigQuery.
     """
