@@ -1,41 +1,45 @@
 :root {
-  /* Core Brand Colors (Executive Navy & Champagne Gold) */
-  --bg-primary: #050B18;
-  --bg-secondary: #0A1428;
-  --bg-tertiary: #121E36;
+  /* Core Palette - Professional Light Theme */
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F8FAFC;
+  --bg-tertiary: #F1F5F9;
   
-  --surface-glass: rgba(18, 30, 54, 0.7);
-  --border-glass: rgba(212, 175, 55, 0.15);
+  --surface-glass: rgba(255, 255, 255, 0.9);
+  --border-glass: #E2E8F0;
   
-  --navy: #0A192F;
-  --navy-light: #112240;
-  --navy-dark: #020C1B;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-dim: #94A3B8;
   
-  --gold: #D4AF37;
-  --gold-glow: rgba(212, 175, 55, 0.4);
-  --gold-muted: rgba(212, 175, 55, 0.2);
+  --primary-blue: #2563EB;
+  --primary-blue-dark: #1E40AF;
+  --primary-blue-light: #EFF6FF;
   
-  --text-primary: #E6F1FF;
-  --text-secondary: #8892B0;
-  --text-dim: #4B5563;
+  --navy: #1E293B;
+  --navy-light: #334155;
+  --navy-dark: #0F172A;
+  
+  --gold: #D97706; 
+  --gold-glow: rgba(217, 119, 6, 0.2);
+  --gold-muted: rgba(217, 119, 6, 0.1);
+  
   --white: #FFFFFF;
-  
-  --green: #64FFDA;
-  --green-glow: rgba(100, 255, 218, 0.2);
-  --red: #FF4D4D;
+  --green: #059669;
+  --green-glow: rgba(5, 150, 105, 0.1);
+  --red: #DC2626;
   
   /* Shadows & Effects */
-  --shadow-sm: 0 4px 6px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.5);
-  --glow-gold: 0 0 15px rgba(212, 175, 55, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --glow-gold: 0 0 10px rgba(217, 119, 6, 0.1);
   
   /* Border Radii */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 20px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
   
   /* Transitions */
-  --transition-fast: 0.2s ease;
-  --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-fast: 0.15s ease;
+  --transition-slow: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

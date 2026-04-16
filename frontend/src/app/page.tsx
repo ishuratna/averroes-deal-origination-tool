@@ -255,13 +255,13 @@ export default function Home() {
         .layout-wrapper {
           display: flex;
           min-height: 100vh;
+          background: var(--bg-secondary);
         }
 
-        /* Sidebar Decor */
         .sidebar {
           width: 280px;
-          background: var(--navy-dark);
-          border-right: 1px solid var(--border-glass);
+          background: var(--white);
+          border-right: 1px solid var(--border-light);
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -277,11 +277,11 @@ export default function Home() {
           font-size: 1.5rem;
           font-weight: 900;
           letter-spacing: 0.1em;
-          color: var(--white);
+          color: var(--text-primary);
         }
 
         .logo span {
-          color: var(--gold);
+          color: var(--primary-blue);
         }
 
         .sidebar-nav {
@@ -315,9 +315,8 @@ export default function Home() {
         }
 
         .nav-item:hover, .nav-item.active {
-          color: var(--white);
-          background: var(--bg-tertiary);
-          box-shadow: var(--shadow-sm);
+          color: var(--primary-blue);
+          background: var(--primary-blue-light);
         }
 
         .agent-btn {
@@ -357,8 +356,8 @@ export default function Home() {
         .avatar {
           width: 40px;
           height: 40px;
-          background: var(--gold);
-          color: var(--navy-dark);
+          background: var(--primary-blue-light);
+          color: var(--primary-blue);
           border-radius: 50%;
           display: flex;
           align-items: center;
@@ -374,7 +373,7 @@ export default function Home() {
         .user-name {
           font-size: 0.9rem;
           font-weight: 700;
-          color: var(--white);
+          color: var(--text-primary);
         }
 
         .user-role {
@@ -450,15 +449,22 @@ export default function Home() {
           padding: 1rem 1.5rem;
           gap: 1rem;
           min-width: 400px;
+          background: var(--white);
+          border: 1.5px solid var(--border-light);
+          border-radius: var(--radius-md);
         }
 
         .search-box input {
           background: transparent;
           border: none;
-          color: var(--white);
+          color: var(--text-primary);
           width: 100%;
           outline: none;
           font-size: 1rem;
+        }
+        
+        .search-box :global(svg) {
+          color: var(--text-dim);
         }
 
         /* Stats Row */
@@ -492,7 +498,7 @@ export default function Home() {
         .stat-value {
           font-size: 2.5rem;
           font-weight: 800;
-          color: var(--white);
+          color: var(--text-primary);
         }
 
         .stat-trend {
@@ -535,11 +541,16 @@ export default function Home() {
         .deal-card {
           display: flex;
           flex-direction: column;
-          border-top: 2px solid var(--border-glass);
+          background: var(--white);
+          padding: 2rem;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-light);
+          box-shadow: var(--shadow-sm);
         }
 
         .deal-card:hover {
-          border-top-color: var(--gold);
+          border-color: var(--primary-blue);
+          box-shadow: var(--shadow-md);
         }
 
         .card-top {
@@ -572,7 +583,7 @@ export default function Home() {
         }
 
         .sector {
-          color: var(--gold);
+          color: var(--primary-blue);
           font-size: 0.85rem;
           font-weight: 700;
           margin-bottom: 1rem;
@@ -672,11 +683,11 @@ export default function Home() {
         }
 
         .button-action {
-          background: var(--bg-tertiary);
-          color: var(--white);
-          border: 1px solid var(--border-glass);
-          padding: 0.5rem 1rem;
-          border-radius: 4px;
+          background: var(--primary-blue-light);
+          color: var(--primary-blue);
+          border: 1.5px solid transparent;
+          padding: 0.525rem 1.25rem;
+          border-radius: 6px;
           font-size: 0.75rem;
           font-weight: 700;
           cursor: pointer;
@@ -684,8 +695,8 @@ export default function Home() {
         }
 
         .button-action:hover {
-          background: var(--gold);
-          color: var(--navy-dark);
+          background: var(--primary-blue);
+          color: var(--white);
         }
 
         .empty-state {

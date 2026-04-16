@@ -23,10 +23,7 @@ body {
   display: flex;
   flex-direction: column;
   color: var(--text-primary);
-  background: var(--bg-primary);
-  background-image: 
-    radial-gradient(circle at 0% 0%, rgba(20, 30, 60, 0.4) 0%, transparent 40%),
-    radial-gradient(circle at 100% 100%, rgba(20, 30, 60, 0.3) 0%, transparent 40%);
+  background: var(--bg-secondary); /* Using off-white for body to make cards pop */
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -34,33 +31,30 @@ body {
 }
 
 a {
-  color: var(--gold);
+  color: var(--primary-blue);
   text-decoration: none;
   transition: all var(--transition-fast);
 }
 
 a:hover {
-  color: var(--white);
-  text-shadow: 0 0 8px var(--gold-glow);
+  color: var(--primary-blue-dark);
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-weight: 700;
-  color: var(--white);
+  font-weight: 800;
+  color: var(--text-primary);
   line-height: 1.1;
   margin-bottom: 1rem;
 }
 
 h1 { 
   font-size: 3.5rem; 
-  letter-spacing: -0.03em; 
-  background: linear-gradient(to right, var(--white), var(--gold));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.04em; 
+  color: var(--text-primary);
 }
 
-h2 { font-size: 2.5rem; }
-h3 { font-size: 1.75rem; color: var(--gold); }
+h2 { font-size: 2.5rem; letter-spacing: -0.02em; }
+h3 { font-size: 1.75rem; color: var(--primary-blue); }
 
 .container {
   max-width: 1400px;
@@ -69,8 +63,8 @@ h3 { font-size: 1.75rem; color: var(--gold); }
 }
 
 .button {
-  background: var(--gold);
-  color: var(--navy-dark);
+  background: var(--primary-blue);
+  color: var(--white);
   padding: 0.8rem 1.8rem;
   border-radius: var(--radius-sm);
   font-weight: 700;
@@ -81,83 +75,58 @@ h3 { font-size: 1.75rem; color: var(--gold); }
   align-items: center;
   gap: 0.6rem;
   box-shadow: var(--shadow-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
 }
 
 .button:hover {
-  background: var(--white);
-  transform: translateY(-2px);
-  box-shadow: var(--glow-gold);
+  background: var(--primary-blue-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .button-outline {
   background: transparent;
-  border: 1px solid var(--gold);
-  color: var(--gold);
+  border: 1.5px solid var(--border-light);
+  color: var(--text-secondary);
 }
 
 .button-outline:hover {
-  background: var(--gold-muted);
-  color: var(--white);
+  background: var(--bg-tertiary);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
 }
 
-/* Premium Navigation */
-.navbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 2.5rem 0;
-  border-bottom: 1px solid var(--border-glass);
-}
-
-.logo {
-  font-size: 1.75rem;
-  font-weight: 900;
-  color: var(--white);
-  letter-spacing: 0.1em;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.logo span {
-  color: var(--gold);
-}
-
-/* Card / Surface - Glassmorphism */
+/* Card / Surface - Clean Professional */
 .glass {
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-glass);
-  box-shadow: var(--shadow-md);
-  border-radius: var(--radius-lg);
-  padding: 2.5rem;
-  transition: transform var(--transition-fast), border-color var(--transition-fast);
+  background: var(--white);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-md);
+  padding: 2rem;
+  transition: all var(--transition-fast);
 }
 
 .glass:hover {
-  border-color: rgba(212, 175, 55, 0.4);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-medium);
 }
 
-/* Anomaly/Alert Styling */
+/* Badge Styling */
 .badge-growth {
   background: var(--green-glow);
   color: var(--green);
-  padding: 0.4rem 0.8rem;
-  border-radius: 20px;
-  font-size: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  border: 1px solid rgba(100, 255, 218, 0.2);
 }
 
-/* Utility to hide/show during loading */
+/* Skeleton */
 .skeleton {
-  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--navy-light) 50%, var(--bg-tertiary) 75%);
+  background: var(--bg-tertiary);
+  background-image: linear-gradient(90deg, var(--bg-tertiary) 25%, #e2e8f0 50%, var(--bg-tertiary) 75%);
   background-size: 200% 100%;
   animation: loading-shimmer 1.5s infinite;
   border-radius: var(--radius-sm);

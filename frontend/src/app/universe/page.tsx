@@ -220,13 +220,13 @@ export default function Universe() {
         .layout-wrapper {
           display: flex;
           min-height: 100vh;
+          background: var(--bg-secondary);
         }
 
-        /* Sidebar - Consistent with Home */
         .sidebar {
           width: 280px;
-          background: var(--navy-dark);
-          border-right: 1px solid var(--border-glass);
+          background: var(--white);
+          border-right: 1px solid var(--border-light);
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -242,11 +242,11 @@ export default function Universe() {
           font-size: 1.5rem;
           font-weight: 900;
           letter-spacing: 0.1em;
-          color: var(--white);
+          color: var(--text-primary);
         }
 
         .logo span {
-          color: var(--gold);
+          color: var(--primary-blue);
         }
 
         .sidebar-nav {
@@ -280,9 +280,8 @@ export default function Universe() {
         }
 
         .nav-item:hover, .nav-item.active {
-          color: var(--white);
-          background: var(--bg-tertiary);
-          box-shadow: var(--shadow-sm);
+          color: var(--primary-blue);
+          background: var(--primary-blue-light);
         }
 
         .agent-btn {
@@ -322,8 +321,8 @@ export default function Universe() {
         .avatar {
           width: 40px;
           height: 40px;
-          background: var(--gold);
-          color: var(--navy-dark);
+          background: var(--primary-blue-light);
+          color: var(--primary-blue);
           border-radius: 50%;
           display: flex;
           align-items: center;
@@ -339,7 +338,7 @@ export default function Universe() {
         .user-name {
           font-size: 0.9rem;
           font-weight: 700;
-          color: var(--white);
+          color: var(--text-primary);
         }
 
         .user-role {
@@ -415,12 +414,15 @@ export default function Universe() {
           min-width: 300px;
           width: 100%;
           max-width: 400px;
+          background: var(--white);
+          border: 1.5px solid var(--border-light);
+          border-radius: var(--radius-md);
         }
 
         .search-box input {
           background: transparent;
           border: none;
-          color: var(--white);
+          color: var(--text-primary);
           width: 100%;
           outline: none;
           font-size: 1rem;
@@ -429,6 +431,10 @@ export default function Universe() {
         /* Table Section */
         .table-section {
           padding: 2rem;
+          background: var(--white);
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-light);
+          box-shadow: var(--shadow-sm);
         }
 
         .section-header {
@@ -468,7 +474,7 @@ export default function Universe() {
           letter-spacing: 0.1em;
           font-weight: 700;
           padding: 1rem 1.5rem;
-          border-bottom: 1px solid var(--border-glass);
+          border-bottom: 2px solid var(--border-light);
         }
 
         .crm-table td {
@@ -519,7 +525,7 @@ export default function Universe() {
         }
 
         .crm-table tr:hover td {
-          background: rgba(255, 255, 255, 0.02);
+          background: var(--primary-blue-light);
         }
 
         .company-cell .name-wrap {
@@ -529,13 +535,13 @@ export default function Universe() {
         }
 
         .company-cell .name {
-          color: var(--white);
+          color: var(--text-primary);
           font-weight: 700;
         }
 
         .site-icon {
           font-size: 0.75rem;
-          color: var(--gold);
+          color: var(--primary-blue);
           opacity: 0.6;
         }
 
