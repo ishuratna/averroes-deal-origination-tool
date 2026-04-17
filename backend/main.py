@@ -120,6 +120,33 @@ async def root():
         "gemini_enabled": bool(os.getenv("GEMINI_API_KEY"))
     }
 
+@app.get("/debug")
+async def debug_check():
+    """
+    Detailed diagnostic test for BQ.
+    """
+    test_rows = [{
+        "company_id": "test-id",
+        "name": "Test Co",
+        "website": "http://test.com",
+        "match_score": 0.5,
+        "status": "Scraped",
+        "source": "Debug",
+        "ingested_at": datetime.utcnow().isoformat()
+    }]
+    
+    errors = bq_handler.client.insert_rows_json(bq_handler.table_id, test_rows) if bq_handler.client else "No Client"
+    uni = bq_handler.get_universe()
+    
+    return {
+        "project": GCP_PROJECT,
+        "dataset": BQ_DATASET,
+        "table": bq_handler.table_id,
+        "insertion_errors": errors,
+        "universe_count": len(uni),
+        "env": dict(os.environ)
+    }
+
 @app.get("/pipeline")
 async def get_pipeline():
     """
