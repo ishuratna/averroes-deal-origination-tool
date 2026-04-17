@@ -123,29 +123,43 @@ async def root():
 @app.get("/debug")
 async def debug_check():
     """
-    Detailed diagnostic test for BQ.
+    Detailed diagnostic test for BQ with full error catching.
     """
-    test_rows = [{
-        "company_id": "test-id",
-        "name": "Test Co",
-        "website": "http://test.com",
-        "match_score": 0.5,
-        "status": "Scraped",
-        "source": "Debug",
-        "ingested_at": datetime.utcnow().isoformat()
-    }]
-    
-    errors = bq_handler.client.insert_rows_json(bq_handler.table_id, test_rows) if bq_handler.client else "No Client"
-    uni = bq_handler.get_universe()
-    
-    return {
+    debug_info = {
         "project": GCP_PROJECT,
         "dataset": BQ_DATASET,
         "table": bq_handler.table_id,
-        "insertion_errors": errors,
-        "universe_count": len(uni),
-        "env": dict(os.environ)
+        "client_status": "initialized" if bq_handler.client else "missing",
+        "errors": None,
+        "trace": None
     }
+    
+    try:
+        test_rows = [{
+            "company_id": "test-" + str(uuid.uuid4())[:8],
+            "name": "Diagnostic Test Co",
+            "website": "http://test.com",
+            "match_score": 0.5,
+            "status": "Scraped",
+            "source": "Debug",
+            "ingested_at": datetime.utcnow().isoformat()
+        }]
+        
+        if bq_handler.client:
+            errors = bq_handler.client.insert_rows_json(bq_handler.table_id, test_rows)
+            debug_info["insertion_errors"] = errors
+        else:
+            debug_info["insertion_errors"] = "No BigQuery client available."
+            
+        uni = bq_handler.get_universe()
+        debug_info["universe_count"] = len(uni)
+        
+    except Exception as e:
+        debug_info["errors"] = str(e)
+        import traceback
+        debug_info["trace"] = traceback.format_exc()
+        
+    return debug_info
 
 @app.get("/pipeline")
 async def get_pipeline():
