@@ -47,7 +47,8 @@ class BigQueryHandler:
                 "contact_email": c.get("contact_email", None),
                 "linkedin_url": c.get("linkedin_url", None),
                 "growth_signals": bool(c.get("growth_signals", False)),
-                "estimated_ebitda": float(c.get("estimated_ebitda", 0.0))
+                "estimated_ebitda": float(c.get("estimated_ebitda", 0.0)),
+                "ingested_at": datetime.utcnow().isoformat()
             }
             rows_to_insert.append(row)
 
