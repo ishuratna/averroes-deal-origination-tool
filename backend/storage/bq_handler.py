@@ -26,17 +26,29 @@ class BigQueryHandler:
 
     def save_targets(self, companies: List[Dict]) -> bool:
         """
-        Inserts new target companies into BigQuery.
+        Inserts new target companies into BigQuery, avoiding duplicates by name.
         """
         if not self.client or not companies:
             return False
 
+        # 1. Fetch existing names to avoid duplicates
+        try:
+            query = f"SELECT DISTINCT name FROM `{self.table_id}`"
+            query_job = self.client.query(query)
+            existing_names = {row.name for row in query_job.result()}
+        except Exception:
+            existing_names = set()
+
         rows_to_insert = []
         for c in companies:
+            name = c.get("name", "").strip()
+            if not name or name in existing_names:
+                continue
+            
             # Map Python dict to BQ Schema
             row = {
                 "company_id": str(uuid.uuid4()),
-                "name": c.get("name", ""),
+                "name": name,
                 "website": c.get("website", ""),
                 "sector": c.get("sector", ""),
                 "region": c.get("region", ""),
@@ -53,13 +65,18 @@ class BigQueryHandler:
                 "ingested_at": datetime.utcnow().isoformat()
             }
             rows_to_insert.append(row)
+            existing_names.add(name) # Prevent duplicates within the same batch
+
+        if not rows_to_insert:
+            logger.info("No new unique targets to insert.")
+            return True
 
         errors = self.client.insert_rows_json(self.table_id, rows_to_insert)
         if errors:
             logger.error(f"Encountered errors while inserting rows: {errors}")
             return False
         
-        logger.info(f"Successfully inserted {len(rows_to_insert)} rows into BigQuery.")
+        logger.info(f"Successfully inserted {len(rows_to_insert)} unique rows into BigQuery.")
         return True
 
     def get_pipeline(self) -> List[Dict]:
