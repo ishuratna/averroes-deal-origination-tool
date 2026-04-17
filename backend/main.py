@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import uuid
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
@@ -130,6 +132,7 @@ async def debug_check():
         "dataset": BQ_DATASET,
         "table": bq_handler.table_id,
         "client_status": "initialized" if bq_handler.client else "missing",
+        "init_error": bq_handler.init_error,
         "errors": None,
         "trace": None
     }

@@ -16,10 +16,12 @@ class BigQueryHandler:
         self.dataset_id = dataset_id
         self.table_id = f"{self.project_id}.{self.dataset_id}.targets"
         
+        self.init_error = None
         try:
             self.client = bigquery.Client(project=project_id)
         except Exception as e:
             logger.warning(f"BigQuery Client could not be initialized: {e}")
+            self.init_error = str(e)
             self.client = None
 
     def save_targets(self, companies: List[Dict]) -> bool:
