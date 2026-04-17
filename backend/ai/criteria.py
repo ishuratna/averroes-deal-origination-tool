@@ -18,17 +18,18 @@ except ImportError:
 class AverroesPhilosophy(BaseModel):
     """
     Standardizes the investment thesis for Averroes Capital.
+    Updated for RELAXED sourcing net.
     """
     THESIS: ClassVar[dict] = {
-        "geography": ["United Kingdom", "Ireland", "Netherlands", "Germany", "France", "Nordics", "Pan-European"],
+        "geography": ["UK", "Ireland", "United Kingdom", "Great Britain", "London", "Dublin"],
         "ownership": ["Founder-led", "Bootstrapped", "Angel-backed", "Family-owned", "Management-owned"],
         "rejections": ["VC-backed", "PE-backed", "Institutional majorities", "Series B+", "Venture Capital"],
-        "focus": "B2B Tech-Enabled / Software / Digital Services / Industrial Tech",
-        "target_ebitda": "Low-Mid Market (£1M - £10M EBITDA range)",
+        "focus": "B2B SaaS / Software / High-Margin Tech-Enabled Services / Industrial Tech",
+        "target_ebitda": "£1M - £10M (Revenue approx £2M - £20M)",
         "scoring_weights": {
-            "b2b_tech_alignment": 0.45,  # Is it B2B? Is it Tech-enabled or Software?
-            "ownership_fit": 0.30,       # No VC/PE backing
-            "growth_signal": 0.25        # Hiring, traffic, or ranking list
+            "b2b_tech_alignment": 0.40,  # Slightly lower weight to allow for broader tech-enabled
+            "ownership_fit": 0.35,       # Higher emphasis on proprietary/founder ownership
+            "geography_focus": 0.25      # Clean UK/Ireland focus
         }
     }
 
@@ -67,16 +68,18 @@ def _keyword_score(company: dict, philosophy: AverroesPhilosophy) -> float:
 
     # 3. Geography & Growth Check (+0.25)
     region = company.get('region', 'Unknown').lower()
-    geo_keywords = [r.lower() for r in thesis["geography"]] + ["uk", "holland", "benelux", "france", "germany"]
+    geo_keywords = [r.lower() for r in thesis["geography"]] + ["uk", "united kingdom", "ireland", "dublin", "london"]
     is_target_region = any(kw in region or region in kw for kw in geo_keywords)
 
-    growth_signals = company.get('growth_signals', False)
-    has_growth = bool(growth_signals)
-
     if is_target_region:
-        score += 0.125
-    if has_growth:
-        score += 0.125
+        score += thesis["scoring_weights"]["geography_focus"]
+        # RELAXED MODE: If it's UK/Ireland B2B, ensure it hits at least 0.4 to enter the universe
+        if is_b2b:
+            score = max(score, 0.45)
+            
+    growth_signals = company.get('growth_signals', False)
+    if growth_signals:
+        score += 0.10
 
     return max(0.0, min(1.0, round(score, 2)))
 

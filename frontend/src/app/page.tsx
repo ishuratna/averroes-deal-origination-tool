@@ -52,6 +52,8 @@ export default function Home() {
     }
   };
 
+  const [selectedVertical, setSelectedVertical] = useState<string>("All");
+
   const handleEnrich = async (name: string) => {
     try {
       await dealApi.enrichCompany(name);
@@ -77,13 +79,17 @@ export default function Home() {
     return placeholders.includes(val) ? "" : val;
   };
 
+  const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Industrial", "E-commerce"];
+
   const filteredPipeline = pipeline.filter(c => {
     const q = searchQuery.toLowerCase();
-    return (
-      c.name.toLowerCase().includes(q) ||
+    const matchesSearch = c.name.toLowerCase().includes(q) ||
       (c.sector && c.sector.toLowerCase().includes(q)) ||
-      (c.description && c.description.toLowerCase().includes(q))
-    );
+      (c.description && c.description.toLowerCase().includes(q));
+    
+    const matchesVertical = selectedVertical === "All" || (c.sector && c.sector.toLowerCase().includes(selectedVertical.toLowerCase()));
+    
+    return matchesSearch && matchesVertical;
   }).sort((a, b) => b.match_score - a.match_score);
 
   return (
@@ -164,29 +170,48 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Stats Row */}
-        <section className="stats-row">
-          <div className="stat-card glass">
-            <span className="stat-label">Total Universe</span>
-            <span className="stat-value">{stats.total}</span>
-            <span className="stat-trend">+12% this week</span>
+        {/* Stats Section */}
+        <section className="dashboard-grid">
+          <div className="stat-card glass animate-in" style={{ animationDelay: '0.1s' }}>
+            <span className="label">Master Universe</span>
+            <div className="value-wrap">
+              <span className="value">{stats.total}</span>
+              <span className="unit">Targets</span>
+            </div>
           </div>
-          <div className="stat-card glass">
-            <span className="stat-label">Qualified Targets</span>
-            <span className="stat-value">{stats.qualified}</span>
-            <span className="stat-trend positive">High Intent</span>
+          <div className="stat-card glass animate-in" style={{ animationDelay: '0.2s' }}>
+            <span className="label">Qualified Assets</span>
+            <div className="value-wrap">
+              <span className="value">{stats.qualified}</span>
+              <span className="unit">PE-Fit</span>
+            </div>
           </div>
-          <div className="stat-card glass">
-            <span className="stat-label">Avg Match Score</span>
-            <span className="stat-value">{stats.avgMatch}%</span>
-            <div className="stat-progress">
-              <div className="progress-bar" style={{ width: `${stats.avgMatch}%` }}></div>
+          <div className="stat-card glass animate-in" style={{ animationDelay: '0.3s' }}>
+            <span className="label">Avg Match Score</span>
+            <div className="value-wrap">
+              <span className="value">{stats.avgMatch}</span>
+              <span className="unit">% Fit</span>
             </div>
           </div>
         </section>
 
-        {/* Pipeline Grid */}
-        <section className="pipeline-section">
+        {/* Pipeline Controls */}
+        <div className="pipeline-controls animate-in" style={{ animationDelay: '0.4s' }}>
+          <div className="vertical-tabs">
+            {verticals.map(v => (
+              <button 
+                key={v} 
+                className={`tab-btn ${selectedVertical === v ? 'active' : ''}`}
+                onClick={() => setSelectedVertical(v)}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Pipeline Section */}
+        <section className="pipeline-section animate-in" style={{ animationDelay: '0.5s' }}>
           <div className="section-header">
             <h3>Top Recommendations</h3>
             <button className="button-tiny" onClick={loadData}>Refresh Data ↻</button>

@@ -84,6 +84,113 @@ h3 { font-size: 1.75rem; color: var(--primary-blue); }
   box-shadow: var(--shadow-md);
 }
 
+/* Analyst Filter Layer */
+.filter-layer {
+  display: flex;
+  gap: 2rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filter-group label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--slate-500);
+  letter-spacing: 0.05em;
+}
+
+.filter-group select {
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  color: var(--slate-900);
+  font-weight: 500;
+  min-width: 160px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filter-group select:hover {
+  border-color: var(--blue-primary);
+}
+
+.score-slider {
+  width: 180px;
+  height: 6px;
+  background: var(--slate-200);
+  border-radius: 5px;
+  appearance: none;
+  outline: none;
+}
+
+.score-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--blue-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.button-reset {
+  background: transparent;
+  color: var(--slate-500);
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px border transparent;
+  transition: all 0.2s;
+}
+
+/* Pipeline Controls & Tabs */
+.pipeline-controls {
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: center;
+}
+
+.vertical-tabs {
+  background: var(--slate-100);
+  padding: 0.25rem;
+  border-radius: 12px;
+  display: flex;
+  gap: 0.25rem;
+  border: 1px solid var(--slate-200);
+}
+
+.tab-btn {
+  background: transparent;
+  color: var(--slate-500);
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tab-btn:hover {
+  color: var(--slate-900);
+}
+
+.tab-btn.active {
+  background: var(--white);
+  color: var(--blue-primary);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+}
+
 .button-outline {
   background: transparent;
   border: 1.5px solid var(--border-light);

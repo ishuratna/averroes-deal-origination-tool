@@ -10,6 +10,18 @@ export default function Universe() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [ingesting, setIngesting] = useState<string | null>(null);
+  
+  // New Analyst Filters
+  const [filters, setFilters] = useState({
+    vertical: "All",
+    region: "All",
+    status: "All",
+    minScore: 0
+  });
+
+  const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
+  const regions = ["All", "UK", "Ireland", "UK/Ireland", "Europe", "North America"];
+  const statuses = ["All", "Qualified", "Under Review", "In Pipeline", "Not a Fit"];
 
   useEffect(() => {
     loadData();
@@ -43,12 +55,24 @@ export default function Universe() {
 
   const filteredUniverse = universe.filter(c => {
     const q = searchQuery.toLowerCase();
-    return (
-      c.name.toLowerCase().includes(q) ||
+    
+    // Text search matches
+    const matchesSearch = c.name.toLowerCase().includes(q) ||
       (c.sector && c.sector.toLowerCase().includes(q)) ||
-      (c.source && c.source.toLowerCase().includes(q)) ||
-      (c.status && c.status.toLowerCase().includes(q))
-    );
+      (c.description && c.description.toLowerCase().includes(q));
+
+    // Dynamic filters
+    const matchesVertical = filters.vertical === "All" || (c.sector && c.sector.toLowerCase().includes(filters.vertical.toLowerCase()));
+    const matchesRegion = filters.region === "All" || (c.region && c.region.toLowerCase().includes(filters.region.toLowerCase()));
+    
+    // Special handling for UK/Ireland grouping
+    const matchesUKIE = filters.region === "UK/Ireland" && 
+      (c.region?.toLowerCase().includes("uk") || c.region?.toLowerCase().includes("ireland") || c.region?.toLowerCase().includes("united kingdom"));
+
+    const matchesStatus = filters.status === "All" || c.status === filters.status;
+    const matchesScore = (c.match_score * 100) >= filters.minScore;
+
+    return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus && matchesScore;
   });
 
   const formatDate = (dateStr?: string) => {
@@ -138,12 +162,64 @@ export default function Universe() {
           </div>
         </header>
 
+        {/* Analyst Filter Layer */}
+        <section className="filter-layer glass">
+          <div className="filter-group">
+            <label>Vertical</label>
+            <select 
+              value={filters.vertical}
+              onChange={(e) => setFilters({...filters, vertical: e.target.value})}
+            >
+              {verticals.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label>Geography</label>
+            <select 
+              value={filters.region}
+              onChange={(e) => setFilters({...filters, region: e.target.value})}
+            >
+              {regions.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label>Status</label>
+            <select 
+              value={filters.status}
+              onChange={(e) => setFilters({...filters, status: e.target.value})}
+            >
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label>Min Score ({filters.minScore}%)</label>
+            <input 
+              type="range" 
+              min="0" 
+              max="100" 
+              step="5"
+              value={filters.minScore}
+              onChange={(e) => setFilters({...filters, minScore: parseInt(e.target.value)})}
+              className="score-slider"
+            />
+          </div>
+
+          <div className="filter-actions">
+            <button className="button-reset" onClick={() => setFilters({vertical: "All", region: "All", status: "All", minScore: 0})}>
+              Reset Filters
+            </button>
+          </div>
+        </section>
+
         {/* Universe Table Section */}
         <section className="table-section glass">
           <div className="section-header">
             <div className="header-meta">
               <h3>{filteredUniverse.length} Targets Found</h3>
-              <p className="description">Data refreshed from BigQuery cloud storage.</p>
+              <p className="description">Filtered from the Master Intelligence Universe.</p>
             </div>
             <button className="button-tiny" onClick={loadData}>Force Sync ↻</button>
           </div>

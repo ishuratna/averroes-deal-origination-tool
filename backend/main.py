@@ -16,6 +16,7 @@ from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
 from ai.enrichment import EnrichmentAgent
+from config.sourcing_config import SOURCING_CRITERIA
 
 # Load .env for local development; Cloud Run injects env vars directly
 load_dotenv()
@@ -79,7 +80,9 @@ def _process_and_refine(raw_companies: List[dict]):
         score = evaluate_target(c, philosophy)
         c["match_score"] = score
         
-        if score >= 0.30:
+        ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
+        
+        if score >= ingestion_threshold:
             c["status"] = "Under Review" if score >= 0.6 else "Qualified"
             # Fully automated enrichment for all potential targets
             founder_info = enrichment_agent.enrich_founder_details(c['name'])
