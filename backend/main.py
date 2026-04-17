@@ -164,6 +164,32 @@ async def debug_check():
         
     return debug_info
 
+@app.get("/deduplicate")
+async def deduplicate_db():
+    """
+    Cleans up the BigQuery table by keeping only the most recent unique company names.
+    """
+    if not bq_handler.client:
+        return {"status": "error", "message": "BigQuery client not initialized"}
+    
+    query = f"""
+    CREATE OR REPLACE TABLE `{bq_handler.table_id}` AS
+    SELECT * EXCEPT(row_num)
+    FROM (
+      SELECT *,
+             ROW_NUMBER() OVER(PARTITION BY name ORDER BY COALESCE(ingested_at, TIMESTAMP '2026-01-01 00:00:00') DESC, company_id) as row_num
+      FROM `{bq_handler.table_id}`
+    )
+    WHERE row_num = 1
+    """
+    
+    try:
+        query_job = bq_handler.client.query(query)
+        query_job.result()
+        return {"status": "success", "message": "Database deduplicated successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/pipeline")
 async def get_pipeline():
     """
