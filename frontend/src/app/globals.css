@@ -154,41 +154,130 @@ h3 { font-size: 1.75rem; color: var(--primary-blue); }
   transition: all 0.2s;
 }
 
-/* Pipeline Controls & Tabs */
+/* 🏛️ Executive Grid & Stats */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.stat-card {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: all 0.3s ease;
+  border: 1px solid var(--slate-200);
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.1);
+  border-color: var(--blue-primary);
+}
+
+.stat-card .label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--slate-500);
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.stat-card .value-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.stat-card .value {
+  font-size: 2.25rem;
+  font-weight: 800;
+  color: var(--slate-900);
+  line-height: 1;
+}
+
+.stat-card .unit {
+  font-size: 0.875rem;
+  color: var(--slate-500);
+  font-weight: 500;
+}
+
+/* 🏢 Pipeline Controls & Tab Bar */
 .pipeline-controls {
-  margin-bottom: 2rem;
+  margin-bottom: 2.5rem;
   display: flex;
   justify-content: center;
 }
 
 .vertical-tabs {
-  background: var(--slate-100);
-  padding: 0.25rem;
-  border-radius: 12px;
+  background: var(--slate-50);
+  padding: 0.4rem;
+  border-radius: 14px;
   display: flex;
-  gap: 0.25rem;
+  gap: 0.5rem;
   border: 1px solid var(--slate-200);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
 }
 
 .tab-btn {
   background: transparent;
   color: var(--slate-500);
-  padding: 0.75rem 1.5rem;
+  padding: 0.6rem 1.25rem;
   border-radius: 10px;
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .tab-btn:hover {
   color: var(--slate-900);
+  background: rgba(0,0,0,0.03);
 }
 
 .tab-btn.active {
   background: var(--white);
   color: var(--blue-primary);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 4px 15px rgba(37, 99, 235, 0.12), 0 1px 2px rgba(0,0,0,0.05);
+}
+
+/* 🔍 Search Box Sophistication */
+.search-box {
+  background: var(--white);
+  border: 1px solid var(--slate-200);
+  padding: 0.6rem 1.2rem;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 380px;
+}
+
+.search-box input {
+  border: none;
+  background: transparent;
+  outline: none;
+  width: 100%;
+  font-size: 0.9rem;
+  color: var(--slate-900);
+}
+
+.search-box input::placeholder {
+  color: var(--slate-400);
+}
+
+.animate-in {
+  opacity: 0;
+  animation: slideUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .button-outline {
