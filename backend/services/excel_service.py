@@ -56,18 +56,22 @@ def parse_proprietary_excel(file_content: bytes) -> List[Dict]:
 
         for _, row in df.iterrows():
             target = {field: "" for field in INTERNAL_SCHEMA}
-            
+            # Ensure numeric fields default to 0.0, not empty string
+            target["match_score"] = 0.8
+            target["estimated_ebitda"] = 0.0
+
             # Map resolved columns
             target["name"] = str(row[name_col]) if pd.notna(row[name_col]) else "Unknown Entity"
             if region_col: target["region"] = str(row[region_col]) if pd.notna(row[region_col]) else ""
             if sector_col: target["sector"] = str(row[sector_col]) if pd.notna(row[sector_col]) else ""
-            
+
             # Smart Revenue Extraction
             if revenue_col and pd.notna(row[revenue_col]):
                 try:
-                    val = str(row[revenue_col]).replace('£', '').replace('m', '').replace('M', '').replace(',', '').strip()
-                    target["estimated_ebitda"] = float(val)
-                except:
+                    val = str(row[revenue_col]).replace('\xc2\xa3', '').replace('£', '').replace('m', '').replace('M', '').replace(',', '').strip()
+                    if val:
+                        target["estimated_ebitda"] = float(val)
+                except (ValueError, TypeError):
                     target["estimated_ebitda"] = 0.0
 
             # Dynamic Context Dump: Capture everything else so no data is lost

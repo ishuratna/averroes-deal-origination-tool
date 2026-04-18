@@ -46,22 +46,30 @@ class BigQueryHandler:
                 continue
             
             # Map Python dict to BQ Schema
+            def safe_float(val, default=0.0):
+                if val is None or val == "" or val == "nan":
+                    return default
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
+
             row = {
                 "company_id": str(uuid.uuid4()),
                 "name": name,
-                "website": c.get("website", ""),
-                "sector": c.get("sector", ""),
-                "region": c.get("region", ""),
-                "ownership": c.get("ownership", ""),
-                "description": c.get("description", ""),
-                "match_score": float(c.get("match_score", 0.0)),
-                "status": c.get("status", "Scraped"),
-                "source": c.get("source", "Manual"),
-                "contact_name": c.get("contact_name", None),
-                "contact_email": c.get("contact_email", None),
-                "linkedin_url": c.get("linkedin_url", None),
+                "website": c.get("website", "") or "",
+                "sector": c.get("sector", "") or "",
+                "region": c.get("region", "") or "",
+                "ownership": c.get("ownership", "") or "",
+                "description": c.get("description", "") or "",
+                "match_score": safe_float(c.get("match_score"), 0.0),
+                "status": c.get("status", "Scraped") or "Scraped",
+                "source": c.get("source", "Manual") or "Manual",
+                "contact_name": c.get("contact_name") or None,
+                "contact_email": c.get("contact_email") or None,
+                "linkedin_url": c.get("linkedin_url") or None,
                 "growth_signals": bool(c.get("growth_signals", False)),
-                "estimated_ebitda": float(c.get("estimated_ebitda", 0.0)),
+                "estimated_ebitda": safe_float(c.get("estimated_ebitda"), 0.0),
                 "ingested_at": datetime.utcnow().isoformat()
             }
             rows_to_insert.append(row)
