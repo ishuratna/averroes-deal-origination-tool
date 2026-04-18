@@ -29,59 +29,66 @@ HEADER_MAP = {
 
 def parse_proprietary_excel(file_content: bytes) -> List[Dict]:
     """
-    Parses an Excel file and maps it to the Master Universe schema.
+    Parses an Excel file with fuzzy matching and safety fallbacks.
     """
     try:
         df = pd.read_excel(io.BytesIO(file_content))
         processed_targets = []
         
-        # Normalize headers (remove whitespace/lowercase)
-        df.columns = [c.strip() for c in df.columns]
+        # 1. Normalize Headers
+        raw_cols = [str(c).strip() for c in df.columns]
+        df.columns = raw_cols
         
+        # Fuzzy mapping logic
+        def find_col(aliases: List[str]):
+            for alias in aliases:
+                for col in raw_cols:
+                    if alias.lower() in col.lower():
+                        return col
+            return None
+
+        # Resolve critical columns with fuzzy matching
+        name_col = find_col(["Company", "Name", "Entity", "Co"]) or raw_cols[0]
+        region_col = find_col(["HQ_country", "Country", "Region", "Location"])
+        sector_col = find_col(["Subsector", "Sector", "Industry", "Vertical"])
+        desc_col = find_col(["Description", "Summary", "About"])
+        revenue_col = find_col(["Revenue_est", "Revenue", "Turnover", "Size"])
+
         for _, row in df.iterrows():
-            target = {field: None for field in INTERNAL_SCHEMA}
+            target = {field: "" for field in INTERNAL_SCHEMA}
             
-            # 1. Direct Mapping
-            for excel_col, internal_field in HEADER_MAP.items():
-                if excel_col in df.columns:
-                    val = row[excel_col]
-                    if pd.notna(val):
-                        # Handle numeric values for estimated_ebitda
-                        if internal_field == "estimated_ebitda":
-                            try:
-                                # Clean £, m, etc.
-                                clean_val = str(val).replace('£', '').replace('m', '').replace('M', '').strip()
-                                target[internal_field] = float(clean_val)
-                            except:
-                                target[internal_field] = 0.0
-                        else:
-                            target[internal_field] = str(val)
-
-            # 2. Smart Merging (Description + Angle + Notes)
-            desc_parts = []
-            if target.get("description"): desc_parts.append(target["description"])
+            # Map resolved columns
+            target["name"] = str(row[name_col]) if pd.notna(row[name_col]) else "Unknown Entity"
+            if region_col: target["region"] = str(row[region_col]) if pd.notna(row[region_col]) else ""
+            if sector_col: target["sector"] = str(row[sector_col]) if pd.notna(row[sector_col]) else ""
             
-            if "Investment_angle" in row and pd.notna(row["Investment_angle"]):
-                desc_parts.append(f"Angle: {row['Investment_angle']}")
-            if "Notes" in row and pd.notna(row["Notes"]):
-                desc_parts.append(f"Notes: {row['Notes']}")
-            if "Source_category" in row and pd.notna(row["Source_category"]):
-                desc_parts.append(f"Source Context: {row['Source_category']}")
-                
-            target["description"] = " | ".join(desc_parts)
+            # Smart Revenue Extraction
+            if revenue_col and pd.notna(row[revenue_col]):
+                try:
+                    val = str(row[revenue_col]).replace('£', '').replace('m', '').replace('M', '').replace(',', '').strip()
+                    target["estimated_ebitda"] = float(val)
+                except:
+                    target["estimated_ebitda"] = 0.0
 
-            # 3. Defaults & Metadata
+            # Dynamic Context Dump: Capture everything else so no data is lost
+            context_bits = []
+            if desc_col and pd.notna(row[desc_col]):
+                context_bits.append(str(row[desc_col]))
+            
+            # Add ALL other columns into the description for searchability
+            for col in raw_cols:
+                if col not in [name_col, region_col, sector_col, desc_col, revenue_col]:
+                    if pd.notna(row[col]):
+                        context_bits.append(f"{col}: {row[col]}")
+            
+            target["description"] = " | ".join(context_bits)
+
+            # Metadata
             target["company_id"] = str(uuid.uuid4())
             target["source"] = "Custom File"
             target["status"] = "Qualified"
             target["ingested_at"] = datetime.utcnow().isoformat()
-            
-            # Simple match score logic for custom files
-            # If "SaaS_fit" is Yes, boost the score
-            base_score = 0.5
-            if "SaaS_fit" in row and str(row["SaaS_fit"]).lower() == "yes":
-                base_score = 0.8
-            target["match_score"] = base_score
+            target["match_score"] = 0.8  # Default high for proprietary lists
 
             processed_targets.append(target)
             
