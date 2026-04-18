@@ -54,16 +54,23 @@ class GCSHandler:
             logger.error(f"Failed to upload to GCS: {str(e)}")
             return None
 
-    def list_files(self, prefix: str = "scraped/"):
+    def save_raw_file(self, content: bytes, filename: str, content_type: str):
         """
-        Lists files in the GCS bucket.
+        Upload binary file content to GCS.
         """
         try:
+            if self.storage_client is None:
+                return None
             bucket = self.storage_client.bucket(self.bucket_name)
-            blobs = bucket.list_blobs(prefix=prefix)
-            return [blob.name for blob in blobs]
-        except Exception:
-            return []
+            blob = bucket.blob(f"uploads/{filename}")
+            blob.upload_from_string(data=content, content_type=content_type)
+            logger.info(f"Raw file saved to GCS: uploads/{filename}")
+            return blob.public_url
+        except Exception as e:
+            logger.error(f"Failed to upload raw file to GCS: {str(e)}")
+            return None
+
+    def list_files(self, prefix: str = "scraped/"):
 
 if __name__ == "__main__":
     # Test

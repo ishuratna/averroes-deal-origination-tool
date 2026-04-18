@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -14,6 +14,7 @@ from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
+from services.excel_service import parse_proprietary_excel
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
 from ai.enrichment import EnrichmentAgent
 from config.sourcing_config import SOURCING_CRITERIA
@@ -231,6 +232,43 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
         "source": list_name,
         "gcs_path": gcs_filename
     }
+
+@app.post("/ingest/upload")
+async def upload_custom_file(file: UploadFile = File(...)):
+    """
+    Uploads an Excel/CSV file, archives it to GCS, parses the targets,
+    and appends them to the BigQuery Master Universe.
+    """
+    if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
+        raise HTTPException(status_code=400, detail="Only Excel or CSV files are supported.")
+    
+    try:
+        content = await file.read()
+        
+        # 1. Archive to GCS
+        gcs = GCSHandler()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = f"{timestamp}_{file.filename.replace(' ', '_')}"
+        gcs.save_raw_file(content, safe_filename, file.content_type)
+        
+        # 2. Parse targets using the Smart Service
+        targets = parse_proprietary_excel(content)
+        
+        # 3. Save to BigQuery
+        if targets:
+            success = bq_handler.save_targets(targets)
+            if not success:
+               raise HTTPException(status_code=500, detail="Failed to sync parsed data to BigQuery.")
+        
+        return {
+            "status": "Success",
+            "message": f"Successfully ingested {len(targets)} proprietary targets from {file.filename}.",
+            "count": len(targets)
+        }
+        
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/enrich/{company_name}")
 async def manual_enrich(company_name: str):

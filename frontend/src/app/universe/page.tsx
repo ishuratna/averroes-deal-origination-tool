@@ -130,6 +130,33 @@ export default function Universe() {
               Scrape Web Summit {ingesting === 'Web Summit' && '...'}
             </button>
           </div>
+
+          <div className="nav-group border-top">
+             <span className="group-label">Proprietary Data</span>
+             <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>
+                {ingesting === 'Upload' ? 'Processing List...' : 'Upload Target List 📤'}
+                <input 
+                  type="file" 
+                  accept=".xlsx,.xls,.csv" 
+                  style={{ display: 'none' }} 
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setIngesting('Upload');
+                      try {
+                        await dealApi.uploadFile(file);
+                        await loadData();
+                        alert("Proprietary list successfully ingested!");
+                      } catch (err) {
+                        alert("Failed to process file. Ensure columns match HQ_country/Company format.");
+                      } finally {
+                        setIngesting(null);
+                      }
+                    }
+                  }}
+                />
+             </label>
+          </div>
         </nav>
 
         <div className="sidebar-footer">

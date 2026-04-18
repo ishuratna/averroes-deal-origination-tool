@@ -83,5 +83,20 @@ export const dealApi = {
     });
     if (!response.ok) throw new Error('Deep-dive analysis failed');
     return await response.json();
+  },
+
+  /**
+   * Upload and process a custom Excel/CSV file
+   */
+  async uploadFile(file: File): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/ingest/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error('File upload failed');
+    return await response.json();
   }
 };
