@@ -25,7 +25,11 @@ class EnrichmentAgent:
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash") # Switching to 1.5 for better search consistency
+            # Enabling live Google Search grounding
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                tools=[{"google_search_retrieval": {}}]
+            )
             
             prompt = f"""
             Identify the primary founder or current CEO for the tech company '{company_name}'.
