@@ -141,11 +141,19 @@ async def enrich_universe_contacts():
         try:
             name = company['name']
             details = enrichment_agent.enrich_founder_details(name)
-            if details['contact_name'] or details['contact_email']:
-                bq_handler.update_company_enrichment(name, details)
-                count += 1
+            
+            # FOOL-PROOF LOGIC:
+            if not details['contact_name'] and not details['contact_email']:
+                # Tag as attempted so we don't waste retry energy
+                details['contact_name'] = "[No Founder Found]"
+                details['contact_email'] = "research@averroescapital.com" # Fallback to internal
+                details['linkedin_url'] = "N/A"
+            
+            bq_handler.update_company_enrichment(name, details)
+            count += 1
         except Exception as e:
-            logger.warning(f"Failed to enrich {company.get('name')}: {e}")
+            # On hard failure (API error), we leave it blank so it CAN be retried
+            logger.warning(f"Technical failure enriching {company.get('name')}: {e}")
             continue
             
     return {
@@ -302,18 +310,21 @@ async def upload_custom_file(file: UploadFile = File(...)):
 async def manual_enrich(company_name: str):
     """
     Manually triggers enrichment for a specific company in the pipeline.
-    Writes contact updates directly back to BigQuery.
     """
-    founder_info = enrichment_agent.enrich_founder_details(company_name)
-    success = bq_handler.update_company_enrichment(company_name, founder_info)
+    details = enrichment_agent.enrich_founder_details(company_name)
+    
+    # Fool-proof tagging
+    if not details['contact_name'] and not details['contact_email']:
+        details['contact_name'] = "[Manual Research Required]"
+        details['contact_email'] = "research@averroescapital.com"
+        details['linkedin_url'] = "N/A"
+
+    success = bq_handler.update_company_enrichment(company_name, details)
     
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to update company in database.")
+        raise HTTPException(status_code=500, detail="Failed to update database.")
     
-    # Return the full updated company object
-    uni = bq_handler.get_universe()
-    updated = next((c for c in uni if c["name"] == company_name), None)
-    return updated or {"status": "Success", "company": company_name, "enriched_data": founder_info}
+    return {"status": "Success", "details": details}
 
 @app.post("/analyze/{company_name}")
 async def deep_dive_analysis(company_name: str):
