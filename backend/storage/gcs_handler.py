@@ -71,6 +71,16 @@ class GCSHandler:
             return None
 
     def list_files(self, prefix: str = "scraped/"):
+        """List files in GCS bucket with given prefix."""
+        if not self.storage_client:
+            return []
+        try:
+            bucket = self.storage_client.bucket(self.bucket_name)
+            blobs = bucket.list_blobs(prefix=prefix)
+            return [blob.name for blob in blobs]
+        except Exception as e:
+            logger.error(f"Failed to list files in GCS: {e}")
+            return []
 
 if __name__ == "__main__":
     # Test
