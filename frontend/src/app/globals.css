@@ -336,21 +336,31 @@ h3 { font-size: 1.75rem; color: var(--primary-blue); }
 
 /* 📁 Proprietary Upload Styling */
 .nav-group.border-top {
-  border-top: 1px solid var(--slate-200);
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
+  border-top: 1px solid var(--slate-100);
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
 }
 
 .upload-btn {
-  background: var(--slate-900) !important;
-  color: var(--white) !important;
-  border: none !important;
+  background: var(--slate-100) !important;
+  color: var(--blue-primary) !important;
+  border: 1px dashed var(--blue-primary) !important;
   justify-content: center !important;
   cursor: pointer;
-  display: flex;
+  display: flex !important;
   align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem !important;
+  font-weight: 700 !important;
+  padding: 0.75rem !important;
+  border-radius: 12px !important;
+  margin-top: 0.5rem;
+  transition: all 0.2s ease !important;
 }
 
 .upload-btn:hover {
   background: var(--blue-primary) !important;
+  color: var(--white) !important;
+  border-style: solid !important;
+  transform: translateY(-1px);
 }

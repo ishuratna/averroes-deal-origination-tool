@@ -96,8 +96,18 @@ export const dealApi = {
       method: 'POST',
       body: formData,
     });
-    if (!response.ok) throw new Error('File upload failed');
-    return await response.json();
+    
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${response.statusText}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || data.message || 'File upload failed');
+    }
+    return data;
   },
 
   /**
