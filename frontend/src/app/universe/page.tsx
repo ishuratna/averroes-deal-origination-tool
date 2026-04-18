@@ -152,6 +152,7 @@ export default function Universe() {
                         alert(`Upload Failed: ${errMsg}\n\nPlease check that the backend is running and dependencies (openpyxl) are loaded.`);
                       } finally {
                         setIngesting(null);
+                        e.target.value = '';
                       }
                     }
                   }}
