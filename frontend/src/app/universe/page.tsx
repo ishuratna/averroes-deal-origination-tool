@@ -144,11 +144,12 @@ export default function Universe() {
                     if (file) {
                       setIngesting('Upload');
                       try {
-                        await dealApi.uploadFile(file);
+                        const res = await dealApi.uploadFile(file);
+                        alert(res.message || "Proprietary list successfully ingested!");
                         await loadData();
-                        alert("Proprietary list successfully ingested!");
-                      } catch (err) {
-                        alert("Failed to process file. Ensure columns match HQ_country/Company format.");
+                      } catch (err: any) {
+                        const errMsg = err.message || "Unknown Upload Error";
+                        alert(`Upload Failed: ${errMsg}\n\nPlease check that the backend is running and dependencies (openpyxl) are loaded.`);
                       } finally {
                         setIngesting(null);
                       }

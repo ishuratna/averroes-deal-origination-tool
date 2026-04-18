@@ -280,21 +280,32 @@ async def upload_custom_file(file: UploadFile = File(...)):
     
     try:
         content = await file.read()
+        logger.info(f"Received file for ingestion: {file.filename} ({len(content)} bytes)")
         
         # 1. Archive to GCS
-        gcs = GCSHandler()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{timestamp}_{file.filename.replace(' ', '_')}"
-        gcs.save_raw_file(content, safe_filename, file.content_type)
+        try:
+            gcs = GCSHandler()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"{timestamp}_{file.filename.replace(' ', '_')}"
+            gcs.save_raw_file(content, safe_filename, file.content_type)
+            logger.info(f"File archived to GCS as {safe_filename}")
+        except Exception as gcs_err:
+            logger.warning(f"GCS Archival failed (continuing anyway): {gcs_err}")
         
-        # 2. Parse targets using the Smart Service
-        targets = parse_proprietary_excel(content)
+        # 2. Parse targets using the Zero-Failure Service
+        try:
+            targets = parse_proprietary_excel(content)
+            logger.info(f"Successfully parsed {len(targets)} targets from {file.filename}")
+        except Exception as parse_err:
+            logger.error(f"Excel Parse Error: {parse_err}")
+            raise HTTPException(status_code=422, detail=f"Data Transformation Failed: {str(parse_err)}. Ensure file is valid Excel/CSV.")
         
         # 3. Save to BigQuery
         if targets:
             success = bq_handler.save_targets(targets)
             if not success:
-               raise HTTPException(status_code=500, detail="Failed to sync parsed data to BigQuery.")
+               logger.error("BigQuery save failed.")
+               raise HTTPException(status_code=500, detail="Database Sync Failed. Check GCP project permissions.")
         
         return {
             "status": "Success",
