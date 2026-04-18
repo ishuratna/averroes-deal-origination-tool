@@ -149,6 +149,18 @@ class BigQueryHandler:
             logger.error(f"Failed to update company in BigQuery: {e}")
             return False
 
+    def get_unenriched_targets(self) -> List[Dict]:
+        """
+        Returns companies that have no contact name or email.
+        """
+        query = f"""
+            SELECT name, website, sector, region FROM `{self.table_id}`
+            WHERE (contact_name IS NULL OR contact_name = '')
+               OR (contact_email IS NULL OR contact_email = '')
+            LIMIT 50
+        """
+        return self._run_query(query)
+
     def _run_query(self, query: str) -> List[Dict]:
         try:
             query_job = self.client.query(query)

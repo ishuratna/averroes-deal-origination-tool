@@ -126,6 +126,34 @@ async def root():
         "gemini_enabled": bool(os.getenv("GEMINI_API_KEY"))
     }
 
+@app.post("/ingest/enrich-universe")
+async def enrich_universe_contacts():
+    """
+    Background task to find contacts for all companies in the universe
+    that are currently missing them.
+    """
+    to_enrich = bq_handler.get_unenriched_targets()
+    if not to_enrich:
+        return {"status": "Complete", "message": "No companies need contact enrichment currently."}
+    
+    count = 0
+    for company in to_enrich:
+        try:
+            name = company['name']
+            details = enrichment_agent.enrich_founder_details(name)
+            if details['contact_name'] or details['contact_email']:
+                bq_handler.update_company_enrichment(name, details)
+                count += 1
+        except Exception as e:
+            logger.warning(f"Failed to enrich {company.get('name')}: {e}")
+            continue
+            
+    return {
+        "status": "Success",
+        "message": f"Successfully retrieved and retrofilled {count} contacts.",
+        "processed": len(to_enrich)
+    }
+
 @app.get("/pipeline")
 async def get_pipeline():
     """

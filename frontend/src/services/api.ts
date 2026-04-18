@@ -98,5 +98,16 @@ export const dealApi = {
     });
     if (!response.ok) throw new Error('File upload failed');
     return await response.json();
+  },
+
+  /**
+   * Bulk enrich all missing contacts in the universe
+   */
+  async enrichUniverse(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/ingest/enrich-universe`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Bulk enrichment failed');
+    return await response.json();
   }
 };

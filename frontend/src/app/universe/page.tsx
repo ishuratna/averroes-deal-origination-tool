@@ -156,6 +156,24 @@ export default function Universe() {
                   }}
                 />
              </label>
+             <button 
+               className={`agent-btn ${ingesting === 'Enrich' ? 'loading' : ''}`}
+               onClick={async () => {
+                 setIngesting('Enrich');
+                 try {
+                   const res = await dealApi.enrichUniverse();
+                   alert(res.message);
+                   await loadData();
+                 } catch (err) {
+                   alert("Contact discovery failed.");
+                 } finally {
+                   setIngesting(null);
+                 }
+               }}
+               disabled={!!ingesting}
+             >
+               Find Missing Contacts 🕵️‍♂️
+             </button>
           </div>
         </nav>
 

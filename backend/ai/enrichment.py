@@ -25,25 +25,32 @@ class EnrichmentAgent:
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            model = genai.GenerativeModel("gemini-1.5-flash") # Switching to 1.5 for better search consistency
             
             prompt = f"""
-            Identify the primary founder or current CEO for the B2B tech company '{company_name}'.
+            Identify the primary founder or current CEO for the tech company '{company_name}'.
             
-            TASKS:
-            1. Find their full name.
-            2. Find their professional LinkedIn profile URL.
-            3. Construct their business email (often first.last@company.com or first@company.com).
+            INVESTIGATIVE STEPS:
+            1. Scan recent LinkedIn activity and corporate websites for '{company_name}'.
+            2. Identify the lead professional (Founder, Co-Founder, or Managing Director).
+            3. Find their LinkedIn URL (MUST be a direct individual link).
+            4. Verify or construct the most likely professional email (e.g., name@company.com).
+            
+            QUALITY GUIDELINES:
+            - If you are unsure, provide the best lead found but mark reasonably.
+            - Focus on identifying REAL human names, not generic roles.
+            
+            WHICH TO TARGET:
+            - Priority 1: Founder
+            - Priority 2: Co-Founder
+            - Priority 3: CEO / Managing Director
             
             RETURN FORMAT (STRICT JSON):
             {{
                 "contact_name": "First Last",
-                "contact_email": "email@domain.com",
-                "linkedin_url": "https://www.linkedin.com/in/username/"
+                "contact_email": "name@company.com",
+                "linkedin_url": "https://www.linkedin.com/in/..."
             }}
-            
-            Do not use markdown blocks. Return only the JSON. 
-            If exact details are missing, return empty strings for those fields.
             """
             
             response = model.generate_content(
