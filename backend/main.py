@@ -271,124 +271,75 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
 
 @app.post("/ingest/upload")
 async def upload_custom_file(file: UploadFile = File(...)):
-    """
-    Full proprietary upload workflow:
-      1. Archive raw file to GCS
-      2. Parse & map Excel columns to master universe schema
-      3. AI-score each company against Averroes investment thesis
-      4. Enrich ALL companies with founder/LinkedIn details via internet search
-      5. Save enriched, scored targets to BigQuery
-    Source is tagged as "Upload: {filename}" for traceability.
-    """
+    """Fast upload: Parse Excel -> deduplicate -> save to BigQuery. No Gemini calls."""
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(status_code=400, detail="Only Excel or CSV files are supported.")
-
     try:
         content = await file.read()
         logger.info(f"Received file for ingestion: {file.filename} ({len(content)} bytes)")
-
-        # Step 1: Archive raw file to GCS
         try:
             gcs = GCSHandler()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             safe_filename = f"{timestamp}_{file.filename.replace(' ', '_')}"
             gcs.save_raw_file(content, safe_filename, file.content_type)
-            logger.info(f"File archived to GCS as {safe_filename}")
         except Exception as gcs_err:
-            logger.warning(f"GCS Archival failed (continuing anyway): {gcs_err}")
-
-        # Step 2: Parse and map to master universe schema
+            logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
         try:
             targets = parse_proprietary_excel(content)
-            logger.info(f"Successfully parsed {len(targets)} targets from {file.filename}")
+            logger.info(f"Parsed {len(targets)} targets from {file.filename}")
         except Exception as parse_err:
-            logger.error(f"Excel Parse Error: {parse_err}")
-            raise HTTPException(status_code=422, detail=f"Data Transformation Failed: {str(parse_err)}. Ensure file is valid Excel/CSV.")
-
+            raise HTTPException(status_code=422, detail=f"Parse failed: {str(parse_err)}")
         if not targets:
-            return {"status": "Complete", "count": 0, "message": "File parsed but contained no valid targets."}
-
-        # Step 3: Dedup BEFORE scoring to save Gemini API calls
-        try:
-            existing_names = {r['name'] for r in bq_handler.get_universe() if r.get('name')}
-        except Exception:
-            existing_names = set()
-
-        new_targets = [t for t in targets if t.get("name", "").strip() not in existing_names]
-        skipped_count = len(targets) - len(new_targets)
-        if skipped_count > 0:
-            logger.info(f"Dedup: {skipped_count} already in universe, {len(new_targets)} new to process.")
-
-        if not new_targets:
-            return {"status": "Complete", "count": 0,
-                    "message": f"All {len(targets)} companies already exist. No API calls made.",
-                    "skipped": skipped_count}
-
-        # Step 4: Tag source
+            return {"status": "Complete", "count": 0, "message": "No valid targets found."}
         source_label = f"Upload: {file.filename}"
-        for t in new_targets:
+        for t in targets:
             t["source"] = source_label
-
-        # Step 5: AI Score + Enrich only NEW companies
-        philosophy = AverroesPhilosophy()
-        scored_count = 0
-        enriched_count = 0
-
-        for t in new_targets:
-            try:
-                score = evaluate_target(t, philosophy)
-                t["match_score"] = score
-                scored_count += 1
-                ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
-                if score >= 0.6:
-                    t["status"] = "Under Review"
-                elif score >= ingestion_threshold:
-                    t["status"] = "Qualified"
-                else:
-                    t["status"] = "Not a Fit"
-            except Exception as score_err:
-                logger.warning(f"Scoring failed for {t.get('name')}: {score_err}")
-                t["match_score"] = 0.5
-                t["status"] = "Qualified"
-
-            try:
-                founder_info = enrichment_agent.enrich_founder_details(t.get("name", ""))
-                for key, val in founder_info.items():
-                    if val:
-                        t[key] = val
-                if founder_info.get("contact_name"):
-                    enriched_count += 1
-            except Exception as enrich_err:
-                logger.warning(f"Enrichment failed for {t.get('name')}: {enrich_err}")
-
-        logger.info(f"Upload pipeline: {scored_count} scored, {enriched_count} enriched out of {len(targets)} targets")
-
-        # Step 5: Save to BigQuery
-        uni_count, cand_count = _sync_to_databases(new_targets)
-
-        try:
-            gcs_handler.save_companies(new_targets, f"upload_{file.filename.replace(' ', '_').replace('.xlsx','').replace('.csv','')}")
-        except Exception:
-            pass
-
-        return {
-            "status": "Success",
-            "message": f"Processed {len(new_targets)} new targets from {file.filename}. ({skipped_count} skipped as duplicates) "
-                       f"{scored_count} scored by AI, {enriched_count} enriched with founder details.",
-            "count": len(new_targets),
-            "skipped": skipped_count,
-            "scored": scored_count,
-            "enriched": enriched_count,
-            "total_in_universe": uni_count,
-            "total_in_candidates": cand_count,
-            "source": source_label
-        }
-
+            t["status"] = "Uploaded"
+        success = bq_handler.save_targets(targets)
+        if not success:
+            raise HTTPException(status_code=500, detail="Database save failed.")
+        return {"status": "Success", "message": f"Uploaded {len(targets)} targets from {file.filename}. Use SmartFill to enrich.", "count": len(targets), "source": source_label}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/smartfill/{company_name}")
+async def smartfill_company(company_name: str):
+    """SmartFill: AI score + internet search for founder/LinkedIn/website."""
+    logger.info(f"SmartFill triggered for: {company_name}")
+    philosophy = AverroesPhilosophy()
+    company_data = {"name": company_name}
+    try:
+        for c in bq_handler.get_universe():
+            if c.get("name") == company_name:
+                company_data = c
+                break
+    except Exception:
+        pass
+    score = evaluate_target(company_data, philosophy)
+    ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
+    status = "Under Review" if score >= 0.6 else ("Qualified" if score >= ingestion_threshold else "Not a Fit")
+    founder_info = enrichment_agent.enrich_founder_details(company_name)
+    try:
+        from google.cloud import bigquery as bq_lib
+        query = f"""UPDATE `{bq_handler.table_id}` SET match_score = @score, status = @status, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
+        job_config = bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("score", "FLOAT64", score),
+            bq_lib.ScalarQueryParameter("status", "STRING", status),
+            bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
+            bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
+            bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ])
+        bq_handler.client.query(query, job_config=job_config).result()
+    except Exception as e:
+        logger.error(f"SmartFill BQ update failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+    return {"status": "Success", "company": company_name, "match_score": score, "new_status": status, "contact_name": founder_info.get("contact_name",""), "contact_email": founder_info.get("contact_email",""), "linkedin_url": founder_info.get("linkedin_url","")}
+
 
 @app.post("/enrich/{company_name}")
 async def manual_enrich(company_name: str):

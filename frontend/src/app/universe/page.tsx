@@ -10,6 +10,7 @@ export default function Universe() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [ingesting, setIngesting] = useState<string | null>(null);
+  const [smartFilling, setSmartFilling] = useState<string | null>(null);
   
   // New Analyst Filters
   const [filters, setFilters] = useState({
@@ -134,7 +135,7 @@ export default function Universe() {
           <div className="nav-group border-top">
              <span className="group-label">Proprietary Data</span>
              <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>
-                {ingesting === 'Upload' ? 'Scoring & Enriching...' : 'Upload Target List 📤'}
+                {ingesting === 'Upload' ? 'Uploading...' : 'Upload Target List 📤'}
                 <input 
                   type="file" 
                   accept=".xlsx,.xls,.csv" 
@@ -286,13 +287,14 @@ export default function Universe() {
                   <th>LinkedIn</th>
                   <th>Source</th>
                   <th>Date</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="skeleton-row">
-                      <td colSpan={9}><div className="skeleton-line"></div></td>
+                      <td colSpan={10}><div className="skeleton-line"></div></td>
                     </tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
@@ -326,11 +328,30 @@ export default function Universe() {
                       </td>
                       <td className="source-cell">{company.source}</td>
                       <td className="date-cell">{formatDate(company.ingested_at)}</td>
+                      <td>
+                        <button
+                          className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`}
+                          disabled={smartFilling === company.name}
+                          onClick={async () => {
+                            setSmartFilling(company.name);
+                            try {
+                              await dealApi.smartFill(company.name);
+                              await loadData();
+                            } catch (err: any) {
+                              alert(`SmartFill failed: ${err.message}`);
+                            } finally {
+                              setSmartFilling(null);
+                            }
+                          }}
+                        >
+                          {smartFilling === company.name ? '...' : 'SmartFill'}
+                        </button>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="empty-row">
+                    <td colSpan={10} className="empty-row">
                       No targets match your search. Try running a sourcing agent.
                     </td>
                   </tr>
@@ -751,6 +772,28 @@ export default function Universe() {
           color: var(--navy-dark);
         }
 
+        .smartfill-btn {
+          background: transparent;
+          border: 1px solid var(--primary-blue);
+          color: var(--primary-blue);
+          padding: 0.35rem 0.75rem;
+          border-radius: 4px;
+          font-size: 0.7rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s;
+          white-space: nowrap;
+        }
+        .smartfill-btn:hover:not(:disabled) {
+          background: var(--primary-blue);
+          color: white;
+        }
+        .smartfill-btn.filling {
+          opacity: 0.5;
+          cursor: wait;
+          border-color: var(--gold);
+          color: var(--gold);
+        }
         .skeleton-line {
           height: 12px;
           background: var(--bg-tertiary);

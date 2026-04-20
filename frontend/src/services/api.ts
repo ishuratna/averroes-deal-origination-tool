@@ -111,13 +111,15 @@ export const dealApi = {
   },
 
   /**
-   * Bulk enrich all missing contacts in the universe
+   * SmartFill: AI score + enrich a single company
    */
-  async enrichUniverse(): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/ingest/enrich-universe`, {
+  async smartFill(companyName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/smartfill/${encodeURIComponent(companyName)}`, {
       method: 'POST'
     });
-    if (!response.ok) throw new Error('Bulk enrichment failed');
-    return await response.json();
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error('SmartFill failed'); }
+    if (!response.ok) throw new Error(data.detail || 'SmartFill failed');
+    return data;
   }
 };
