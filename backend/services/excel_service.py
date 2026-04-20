@@ -62,7 +62,7 @@ def parse_proprietary_excel(file_content: bytes) -> List[Dict]:
 
         for _, row in df.iterrows():
             target = {field: "" for field in INTERNAL_SCHEMA}
-            target["match_score"] = 0.8
+            target["match_score"] = 0.0  # Set by AI scoring
             target["estimated_ebitda"] = 0.0
 
             target["name"] = str(row[name_col]).strip() if pd.notna(row[name_col]) else "Unknown Entity"
