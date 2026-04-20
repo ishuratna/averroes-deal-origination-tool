@@ -134,7 +134,7 @@ export default function Universe() {
           <div className="nav-group border-top">
              <span className="group-label">Proprietary Data</span>
              <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>
-                {ingesting === 'Upload' ? 'Processing List...' : 'Upload Target List 📤'}
+                {ingesting === 'Upload' ? 'Scoring & Enriching...' : 'Upload Target List 📤'}
                 <input 
                   type="file" 
                   accept=".xlsx,.xls,.csv" 
@@ -145,7 +145,9 @@ export default function Universe() {
                       setIngesting('Upload');
                       try {
                         const res = await dealApi.uploadFile(file);
-                        alert(res.message || "Proprietary list successfully ingested!");
+                        const summary = res.message || "Proprietary list successfully ingested!";
+                        const details = res.scored ? `\n\n${res.scored} scored by AI, ${res.enriched} enriched with founder details.` : '';
+                        alert(summary + details);
                         await loadData();
                       } catch (err: any) {
                         const errMsg = err.message || "Unknown Upload Error";

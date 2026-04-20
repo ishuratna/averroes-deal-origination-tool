@@ -272,17 +272,22 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
 @app.post("/ingest/upload")
 async def upload_custom_file(file: UploadFile = File(...)):
     """
-    Uploads an Excel/CSV file, archives it to GCS, parses the targets,
-    and appends them to the BigQuery Master Universe.
+    Full proprietary upload workflow:
+      1. Archive raw file to GCS
+      2. Parse & map Excel columns to master universe schema
+      3. AI-score each company against Averroes investment thesis
+      4. Enrich ALL companies with founder/LinkedIn details via internet search
+      5. Save enriched, scored targets to BigQuery
+    Source is tagged as "Upload: {filename}" for traceability.
     """
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(status_code=400, detail="Only Excel or CSV files are supported.")
-    
+
     try:
         content = await file.read()
         logger.info(f"Received file for ingestion: {file.filename} ({len(content)} bytes)")
-        
-        # 1. Archive to GCS
+
+        # Step 1: Archive raw file to GCS
         try:
             gcs = GCSHandler()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -291,28 +296,79 @@ async def upload_custom_file(file: UploadFile = File(...)):
             logger.info(f"File archived to GCS as {safe_filename}")
         except Exception as gcs_err:
             logger.warning(f"GCS Archival failed (continuing anyway): {gcs_err}")
-        
-        # 2. Parse targets using the Zero-Failure Service
+
+        # Step 2: Parse and map to master universe schema
         try:
             targets = parse_proprietary_excel(content)
             logger.info(f"Successfully parsed {len(targets)} targets from {file.filename}")
         except Exception as parse_err:
             logger.error(f"Excel Parse Error: {parse_err}")
             raise HTTPException(status_code=422, detail=f"Data Transformation Failed: {str(parse_err)}. Ensure file is valid Excel/CSV.")
-        
-        # 3. Save to BigQuery
-        if targets:
-            success = bq_handler.save_targets(targets)
-            if not success:
-               logger.error("BigQuery save failed.")
-               raise HTTPException(status_code=500, detail="Database Sync Failed. Check GCP project permissions.")
-        
+
+        if not targets:
+            return {"status": "Complete", "count": 0, "message": "File parsed but contained no valid targets."}
+
+        # Step 3: Tag source as Upload: filename
+        source_label = f"Upload: {file.filename}"
+        for t in targets:
+            t["source"] = source_label
+
+        # Step 4: AI Score + Enrich ALL companies
+        philosophy = AverroesPhilosophy()
+        scored_count = 0
+        enriched_count = 0
+
+        for t in targets:
+            try:
+                score = evaluate_target(t, philosophy)
+                t["match_score"] = score
+                scored_count += 1
+                ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
+                if score >= 0.6:
+                    t["status"] = "Under Review"
+                elif score >= ingestion_threshold:
+                    t["status"] = "Qualified"
+                else:
+                    t["status"] = "Not a Fit"
+            except Exception as score_err:
+                logger.warning(f"Scoring failed for {t.get('name')}: {score_err}")
+                t["match_score"] = 0.5
+                t["status"] = "Qualified"
+
+            try:
+                founder_info = enrichment_agent.enrich_founder_details(t.get("name", ""))
+                for key, val in founder_info.items():
+                    if val:
+                        t[key] = val
+                if founder_info.get("contact_name"):
+                    enriched_count += 1
+            except Exception as enrich_err:
+                logger.warning(f"Enrichment failed for {t.get('name')}: {enrich_err}")
+
+        logger.info(f"Upload pipeline: {scored_count} scored, {enriched_count} enriched out of {len(targets)} targets")
+
+        # Step 5: Save to BigQuery
+        uni_count, cand_count = _sync_to_databases(targets)
+
+        try:
+            gcs_handler.save_companies(targets, f"upload_{file.filename.replace(' ', '_').replace('.xlsx','').replace('.csv','')}")
+        except Exception:
+            pass
+
         return {
             "status": "Success",
-            "message": f"Successfully ingested {len(targets)} proprietary targets from {file.filename}.",
-            "count": len(targets)
+            "message": f"Successfully processed {len(targets)} targets from {file.filename}. "
+                       f"{scored_count} scored by AI, {enriched_count} enriched with founder details.",
+            "count": len(targets),
+            "scored": scored_count,
+            "enriched": enriched_count,
+            "total_in_universe": uni_count,
+            "total_in_candidates": cand_count,
+            "source": source_label
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

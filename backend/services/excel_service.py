@@ -90,8 +90,8 @@ def parse_proprietary_excel(file_content: bytes) -> List[Dict]:
             target["description"] = " | ".join(context_bits)
 
             target["company_id"] = str(uuid.uuid4())
-            target["source"] = "Custom File"
-            target["status"] = "Qualified"
+            target["source"] = "Custom File"  # Overridden by endpoint
+            target["status"] = "Pending"       # Overridden by AI scoring
             target["ingested_at"] = datetime.utcnow().isoformat()
 
             processed_targets.append(target)
