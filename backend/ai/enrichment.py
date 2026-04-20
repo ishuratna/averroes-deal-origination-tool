@@ -25,10 +25,14 @@ class EnrichmentAgent:
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            # Enabling live Google Search grounding
+            
+            # Google Search grounding for SDK 0.8.x
+            from google.generativeai.types import Tool as GenAITool
+            search_tool = GenAITool(google_search=genai.types.GoogleSearch())
+            
             model = genai.GenerativeModel(
                 model_name="gemini-2.5-flash",
-                tools="google_search"
+                tools=[search_tool]
             )
             
             prompt = f"""
@@ -57,12 +61,14 @@ class EnrichmentAgent:
             }}
             """
             
-            response = model.generate_content(
-                prompt,
-                generation_config={"response_mime_type": "application/json"}
-            )
+            response = model.generate_content(prompt)
             
-            result = json.loads(response.text)
+            # Parse JSON from response, handling markdown code blocks
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            
+            result = json.loads(text)
             return {
                 "contact_name": result.get("contact_name", ""),
                 "contact_email": result.get("contact_email", ""),
