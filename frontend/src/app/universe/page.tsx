@@ -11,6 +11,7 @@ export default function Universe() {
   const [searchQuery, setSearchQuery] = useState("");
   const [ingesting, setIngesting] = useState<string | null>(null);
   const [smartFilling, setSmartFilling] = useState<string | null>(null);
+  const [smartFillResult, setSmartFillResult] = useState<any | null>(null);
   
   const [filters, setFilters] = useState({
     vertical: "All",
@@ -68,12 +69,62 @@ export default function Universe() {
   });
 
   const formatDate = (dateStr?: string) => {
-    if (!dateStr) return '—';
+    if (!dateStr) return '\u2014';
     return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
   return (
     <div className="layout-wrapper">
+      {/* SmartFill Results Modal */}
+      {smartFillResult && (
+        <div className="modal-overlay" onClick={() => setSmartFillResult(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>SmartFill Results</h3>
+              <button className="modal-close" onClick={() => setSmartFillResult(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <div className="result-company-name">{smartFillResult.company}</div>
+              <div className="result-grid">
+                <div className="result-row">
+                  <span className="result-label">AI Match Score</span>
+                  <span className={`result-value ${smartFillResult.match_score >= 0.6 ? 'found' : smartFillResult.match_score >= 0.3 ? 'partial' : 'low'}`}>
+                    {Math.round(smartFillResult.match_score * 100)}%
+                  </span>
+                </div>
+                <div className="result-row">
+                  <span className="result-label">Status</span>
+                  <span className="result-value found">{smartFillResult.new_status}</span>
+                </div>
+                <div className="result-row">
+                  <span className="result-label">Founder / CEO</span>
+                  <span className={`result-value ${smartFillResult.contact_name ? 'found' : 'not-found'}`}>
+                    {smartFillResult.contact_name || 'Not Found'}
+                  </span>
+                </div>
+                <div className="result-row">
+                  <span className="result-label">Contact Email</span>
+                  <span className={`result-value ${smartFillResult.contact_email ? 'found' : 'not-found'}`}>
+                    {smartFillResult.contact_email || 'Not Found'}
+                  </span>
+                </div>
+                <div className="result-row">
+                  <span className="result-label">LinkedIn</span>
+                  <span className={`result-value ${smartFillResult.linkedin_url ? 'found' : 'not-found'}`}>
+                    {smartFillResult.linkedin_url ? (
+                      <a href={smartFillResult.linkedin_url} target="_blank" rel="noreferrer">{smartFillResult.linkedin_url}</a>
+                    ) : 'Not Found'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="modal-ok-btn" onClick={() => setSmartFillResult(null)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <aside className="sidebar">
         <div className="logo-section">
           <div className="logo">AVERROES<span>INTEL</span></div>
@@ -254,7 +305,8 @@ export default function Universe() {
                           onClick={async () => {
                             setSmartFilling(company.name);
                             try {
-                              await dealApi.smartFill(company.name);
+                              const res = await dealApi.smartFill(company.name);
+                              setSmartFillResult(res);
                               await loadData();
                             } catch (err: any) {
                               alert(`SmartFill failed: ${err.message}`);
@@ -360,6 +412,28 @@ export default function Universe() {
         .smartfill-btn:hover:not(:disabled) { background: var(--primary-blue); color: white; }
         .smartfill-btn.filling { opacity: 0.5; cursor: wait; border-color: var(--gold); color: var(--gold); }
         .skeleton-line { height: 12px; background: var(--bg-tertiary); width: 100%; border-radius: 2px; animation: loading-shimmer 1.5s infinite; }
+
+        /* Modal Styles */
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
+        .modal-content { background: white; border-radius: 12px; width: 480px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 2rem; border-bottom: 1px solid var(--border-light); }
+        .modal-header h3 { font-size: 1.1rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+        .modal-close { background: none; border: none; font-size: 1.5rem; color: var(--text-dim); cursor: pointer; padding: 0; line-height: 1; }
+        .modal-close:hover { color: var(--text-primary); }
+        .modal-body { padding: 2rem; }
+        .result-company-name { font-size: 1.3rem; font-weight: 900; color: var(--text-primary); margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--primary-blue); }
+        .result-grid { display: flex; flex-direction: column; gap: 0.75rem; }
+        .result-row { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-radius: 8px; background: var(--bg-secondary); }
+        .result-label { font-size: 0.8rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+        .result-value { font-size: 0.9rem; font-weight: 700; text-align: right; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+        .result-value.found { color: var(--green, #16a34a); }
+        .result-value.partial { color: var(--gold, #d97706); }
+        .result-value.low { color: #FF4D4D; }
+        .result-value.not-found { color: #FF4D4D; font-style: italic; }
+        .result-value a { color: #0A66C2; text-decoration: underline; word-break: break-all; }
+        .modal-footer { padding: 1rem 2rem 1.5rem; display: flex; justify-content: flex-end; }
+        .modal-ok-btn { background: var(--primary-blue, #2563EB); color: white; border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+        .modal-ok-btn:hover { opacity: 0.9; }
       `}</style>
     </div>
   );
