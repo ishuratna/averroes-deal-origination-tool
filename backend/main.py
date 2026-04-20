@@ -308,17 +308,33 @@ async def upload_custom_file(file: UploadFile = File(...)):
         if not targets:
             return {"status": "Complete", "count": 0, "message": "File parsed but contained no valid targets."}
 
-        # Step 3: Tag source as Upload: filename
+        # Step 3: Dedup BEFORE scoring to save Gemini API calls
+        try:
+            existing_names = {r['name'] for r in bq_handler.get_universe() if r.get('name')}
+        except Exception:
+            existing_names = set()
+
+        new_targets = [t for t in targets if t.get("name", "").strip() not in existing_names]
+        skipped_count = len(targets) - len(new_targets)
+        if skipped_count > 0:
+            logger.info(f"Dedup: {skipped_count} already in universe, {len(new_targets)} new to process.")
+
+        if not new_targets:
+            return {"status": "Complete", "count": 0,
+                    "message": f"All {len(targets)} companies already exist. No API calls made.",
+                    "skipped": skipped_count}
+
+        # Step 4: Tag source
         source_label = f"Upload: {file.filename}"
-        for t in targets:
+        for t in new_targets:
             t["source"] = source_label
 
-        # Step 4: AI Score + Enrich ALL companies
+        # Step 5: AI Score + Enrich only NEW companies
         philosophy = AverroesPhilosophy()
         scored_count = 0
         enriched_count = 0
 
-        for t in targets:
+        for t in new_targets:
             try:
                 score = evaluate_target(t, philosophy)
                 t["match_score"] = score
@@ -348,18 +364,19 @@ async def upload_custom_file(file: UploadFile = File(...)):
         logger.info(f"Upload pipeline: {scored_count} scored, {enriched_count} enriched out of {len(targets)} targets")
 
         # Step 5: Save to BigQuery
-        uni_count, cand_count = _sync_to_databases(targets)
+        uni_count, cand_count = _sync_to_databases(new_targets)
 
         try:
-            gcs_handler.save_companies(targets, f"upload_{file.filename.replace(' ', '_').replace('.xlsx','').replace('.csv','')}")
+            gcs_handler.save_companies(new_targets, f"upload_{file.filename.replace(' ', '_').replace('.xlsx','').replace('.csv','')}")
         except Exception:
             pass
 
         return {
             "status": "Success",
-            "message": f"Successfully processed {len(targets)} targets from {file.filename}. "
+            "message": f"Processed {len(new_targets)} new targets from {file.filename}. ({skipped_count} skipped as duplicates) "
                        f"{scored_count} scored by AI, {enriched_count} enriched with founder details.",
-            "count": len(targets),
+            "count": len(new_targets),
+            "skipped": skipped_count,
             "scored": scored_count,
             "enriched": enriched_count,
             "total_in_universe": uni_count,
