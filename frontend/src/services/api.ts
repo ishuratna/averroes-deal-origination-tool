@@ -122,4 +122,14 @@ export const dealApi = {
     if (!response.ok) throw new Error(data.detail || 'SmartFill failed');
     return data;
   }
+  /**
+   * Trigger Directory Scraping (e.g., TheSaaSDirectory.com)
+   */
+  async ingestDirectory(sourceName: string, maxPages: number = 20): Promise<any> {
+    const response = await fetch(\`\${API_BASE_URL}/ingest/directory?source_name=\${encodeURIComponent(sourceName)}&max_pages=\${maxPages}\`, {
+      method: 'POST'
+    });
+    if (!response.ok) throw new Error('Directory ingestion failed');
+    return await response.json();
+  }
 };

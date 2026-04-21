@@ -161,6 +161,13 @@ export default function Universe() {
             </button>
           </div>
 
+          <div className="nav-group">
+            <span className="group-label">Directories</span>
+            <button className={\`agent-btn \${ingesting === 'TheSaaSDirectory' ? 'loading' : ''}\`} onClick={() => handleDirectoryScrape('TheSaaSDirectory')} disabled={!!ingesting}>
+              Scrape SaaS Directory {ingesting === 'TheSaaSDirectory' && '...'}
+            </button>
+          </div>
+
           <div className="nav-group border-top">
              <span className="group-label">Proprietary Data</span>
              <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>

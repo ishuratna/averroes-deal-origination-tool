@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from scrapers.conference_scraper import ConferenceScraper
 from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
+from scrapers.directory_scraper import DirectoryScraper
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
@@ -267,6 +268,34 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
         "total_in_candidates": cand_count,
         "source": list_name,
         "gcs_path": gcs_filename
+    }
+
+@app.post("/ingest/directory")
+async def ingest_directory(source_name: str = Query(..., description="Name of the directory to scrape"), max_pages: int = Query(20, description="Max pages to scrape")):
+    """
+    Scrapes B2B SaaS company directories (e.g., TheSaaSDirectory.com).
+    Real web scraping - not demo data.
+    """
+    if source_name not in directory_scraper.get_supported_sources():
+        raise HTTPException(status_code=404, detail=f"Directory '{source_name}' not supported.")
+    
+    raw_companies = directory_scraper.scrape_source(source_name, max_pages)
+    if not raw_companies:
+        return {"status": "Complete", "count": 0, "message": f"No companies found from {source_name}."}
+    
+    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
+    
+    try:
+        gcs_handler.save_companies(refined_companies, source_name.lower().replace(" ", "_"))
+    except Exception:
+        pass
+    
+    return {
+        "status": "Success",
+        "count": len(refined_companies),
+        "total_in_universe": uni_count,
+        "total_in_candidates": cand_count,
+        "source": source_name
     }
 
 @app.post("/ingest/upload")
