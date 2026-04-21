@@ -15,7 +15,6 @@ export default function Universe() {
   const [outreachTarget, setOutreachTarget] = useState<any | null>(null);
   const [outreachDraft, setOutreachDraft] = useState<{to: string; subject: string; body: string; company: string} | null>(null);
   const [outreachLoading, setOutreachLoading] = useState(false);
-  const [outreachSending, setOutreachSending] = useState(false);
   const [outreachSent, setOutreachSent] = useState(false);
   
   const [filters, setFilters] = useState({
@@ -96,18 +95,19 @@ export default function Universe() {
     }
   };
 
-  const handleSendOutreach = async () => {
+  const handleSendOutreach = () => {
     if (!outreachDraft) return;
-    setOutreachSending(true);
-    try {
-      await dealApi.sendOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.company);
-      setOutreachSent(true);
-      await loadData();
-    } catch (err: any) {
-      alert(`Send failed: ${err.message}`);
-    } finally {
-      setOutreachSending(false);
-    }
+    // Open Gmail compose with pre-filled fields
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(outreachDraft.to)}&su=${encodeURIComponent(outreachDraft.subject)}&body=${encodeURIComponent(outreachDraft.body)}`;
+    window.open(gmailUrl, '_blank');
+    setOutreachSent(true);
+  };
+
+  const handleCopyDraft = () => {
+    if (!outreachDraft) return;
+    const text = `To: ${outreachDraft.to}\nSubject: ${outreachDraft.subject}\n\n${outreachDraft.body}`;
+    navigator.clipboard.writeText(text);
+    alert('Draft copied to clipboard!');
   };
 
   return (
@@ -166,11 +166,11 @@ export default function Universe() {
       )}
 
       {outreachTarget && (
-        <div className="modal-overlay" onClick={() => { if (!outreachSending) { setOutreachTarget(null); setOutreachDraft(null); } }}>
+        <div className="modal-overlay" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>
           <div className="modal-content outreach-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Outreach — {outreachTarget.name}</h3>
-              <button className="modal-close" onClick={() => { if (!outreachSending) { setOutreachTarget(null); setOutreachDraft(null); } }}>&times;</button>
+              <button className="modal-close" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>&times;</button>
             </div>
             <div className="modal-body">
               {outreachLoading ? (
@@ -182,9 +182,9 @@ export default function Universe() {
               ) : outreachSent ? (
                 <div className="outreach-sent">
                   <div className="sent-icon">&#10003;</div>
-                  <h4>Email Sent!</h4>
-                  <p>Your outreach to <strong>{outreachDraft?.to}</strong> has been sent.</p>
-                  <p className="sent-sub">Status updated to Engaged.</p>
+                  <h4>Draft Opened in Gmail</h4>
+                  <p>Your outreach to <strong>{outreachDraft?.to}</strong> is ready in Gmail.</p>
+                  <p className="sent-sub">Review and hit Send in the Gmail compose window.</p>
                 </div>
               ) : outreachDraft ? (
                 <div className="outreach-form">
@@ -212,8 +212,9 @@ export default function Universe() {
               ) : outreachDraft && !outreachLoading ? (
                 <>
                   <button className="outreach-cancel-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Cancel</button>
-                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={outreachSending || !outreachDraft.to}>
-                    {outreachSending ? 'Sending...' : 'Send Email'}
+                  <button className="outreach-copy-btn" onClick={handleCopyDraft}>Copy Draft</button>
+                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={!outreachDraft.to}>
+                    Open in Gmail
                   </button>
                 </>
               ) : null}
@@ -535,6 +536,8 @@ export default function Universe() {
         .from-label { font-size: 0.8rem; color: var(--text-dim); font-style: italic; }
         .outreach-cancel-btn { background: transparent; border: 1px solid var(--border-light); color: var(--text-dim); padding: 0.6rem 1.5rem; border-radius: 6px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
         .outreach-cancel-btn:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+        .outreach-copy-btn { background: transparent; border: 1px solid var(--primary-blue); color: var(--primary-blue); padding: 0.6rem 1.5rem; border-radius: 6px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
+        .outreach-copy-btn:hover { background: var(--primary-blue-light); }
         .outreach-send-btn { background: var(--gold); color: var(--navy-dark, #1a1a2e); border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 800; font-size: 0.9rem; cursor: pointer; letter-spacing: 0.03em; }
         .outreach-send-btn:hover:not(:disabled) { opacity: 0.9; }
         .outreach-send-btn:disabled { opacity: 0.5; cursor: wait; }
