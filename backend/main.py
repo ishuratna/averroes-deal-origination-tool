@@ -50,6 +50,7 @@ app.add_middleware(
 conf_scraper = ConferenceScraper()
 market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
+directory_scraper = DirectoryScraper()
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
