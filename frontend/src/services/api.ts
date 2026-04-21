@@ -78,5 +78,25 @@ export const dealApi = {
     try { data = await response.json(); } catch (e) { throw new Error(`SmartFill failed: ${response.statusText}`); }
     if (!response.ok) { throw new Error(data.detail || 'SmartFill failed'); }
     return data;
+  },
+
+  async draftOutreach(companyName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/outreach/draft/${encodeURIComponent(companyName)}`, { method: 'POST' });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Draft failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Draft generation failed'); }
+    return data;
+  },
+
+  async sendOutreach(to: string, subject: string, body: string, companyName?: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/outreach/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, body, company_name: companyName }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Send failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Email send failed'); }
+    return data;
   }
 };

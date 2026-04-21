@@ -17,6 +17,7 @@ from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
 from services.pitchbook_service import parse_pitchbook_excel
+from services.outreach_service import draft_outreach_email, send_email
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
 from ai.enrichment import EnrichmentAgent
 from config.sourcing_config import SOURCING_CRITERIA
@@ -416,6 +417,52 @@ async def deep_dive_analysis(company_name: str):
         "company": company_name,
         "granular_findings": granular_intelligence
     }
+
+class OutreachSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    company_name: Optional[str] = None
+
+
+@app.post("/outreach/draft/{company_name}")
+async def draft_outreach(company_name: str):
+    """Generate a personalised outreach email draft using Gemini AI."""
+    logger.info(f"Outreach draft requested for: {company_name}")
+    # Fetch company data from BQ
+    company_data = {"name": company_name}
+    try:
+        for c in bq_handler.get_universe():
+            if c.get("name") == company_name:
+                company_data = c
+                break
+    except Exception:
+        pass
+    result = draft_outreach_email(company_data)
+    return result
+
+
+@app.post("/outreach/send")
+async def send_outreach(req: OutreachSendRequest):
+    """Send an outreach email via Gmail SMTP."""
+    logger.info(f"Sending outreach to: {req.to} (company: {req.company_name})")
+    result = send_email(req.to, req.subject, req.body)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    # Log the sent email in BQ (best-effort)
+    try:
+        from google.cloud import bigquery as bq_lib
+        query = f"""UPDATE `{bq_handler.table_id}`
+                    SET status = 'Engaged'
+                    WHERE name = @name AND status != 'Not a Fit'"""
+        job_config = bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("name", "STRING", req.company_name or ""),
+        ])
+        bq_handler.client.query(query, job_config=job_config).result()
+    except Exception as e:
+        logger.warning(f"Failed to update status after outreach: {e}")
+    return result
+
 
 if __name__ == "__main__":
     import uvicorn

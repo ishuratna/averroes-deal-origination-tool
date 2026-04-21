@@ -12,6 +12,11 @@ export default function Universe() {
   const [ingesting, setIngesting] = useState<string | null>(null);
   const [smartFilling, setSmartFilling] = useState<string | null>(null);
   const [smartFillResult, setSmartFillResult] = useState<any | null>(null);
+  const [outreachTarget, setOutreachTarget] = useState<any | null>(null);
+  const [outreachDraft, setOutreachDraft] = useState<{to: string; subject: string; body: string; company: string} | null>(null);
+  const [outreachLoading, setOutreachLoading] = useState(false);
+  const [outreachSending, setOutreachSending] = useState(false);
+  const [outreachSent, setOutreachSent] = useState(false);
   
   const [filters, setFilters] = useState({
     vertical: "All",
@@ -70,6 +75,41 @@ export default function Universe() {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
+  const openOutreach = async (company: any) => {
+    setOutreachTarget(company);
+    setOutreachDraft(null);
+    setOutreachSent(false);
+    setOutreachLoading(true);
+    try {
+      const draft = await dealApi.draftOutreach(company.name);
+      setOutreachDraft({
+        to: draft.to || company.contact_email || '',
+        subject: draft.subject || '',
+        body: draft.body || '',
+        company: company.name,
+      });
+    } catch (err: any) {
+      alert(`Failed to generate draft: ${err.message}`);
+      setOutreachTarget(null);
+    } finally {
+      setOutreachLoading(false);
+    }
+  };
+
+  const handleSendOutreach = async () => {
+    if (!outreachDraft) return;
+    setOutreachSending(true);
+    try {
+      await dealApi.sendOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.company);
+      setOutreachSent(true);
+      await loadData();
+    } catch (err: any) {
+      alert(`Send failed: ${err.message}`);
+    } finally {
+      setOutreachSending(false);
+    }
+  };
+
   return (
     <div className="layout-wrapper">
       {smartFillResult && (
@@ -120,6 +160,63 @@ export default function Universe() {
             </div>
             <div className="modal-footer">
               <button className="modal-ok-btn" onClick={() => setSmartFillResult(null)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {outreachTarget && (
+        <div className="modal-overlay" onClick={() => { if (!outreachSending) { setOutreachTarget(null); setOutreachDraft(null); } }}>
+          <div className="modal-content outreach-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Outreach — {outreachTarget.name}</h3>
+              <button className="modal-close" onClick={() => { if (!outreachSending) { setOutreachTarget(null); setOutreachDraft(null); } }}>&times;</button>
+            </div>
+            <div className="modal-body">
+              {outreachLoading ? (
+                <div className="outreach-loading">
+                  <div className="spinner"></div>
+                  <p>Drafting personalised email with AI...</p>
+                  <p className="loading-sub">Researching {outreachTarget.name} to craft the perfect intro</p>
+                </div>
+              ) : outreachSent ? (
+                <div className="outreach-sent">
+                  <div className="sent-icon">&#10003;</div>
+                  <h4>Email Sent!</h4>
+                  <p>Your outreach to <strong>{outreachDraft?.to}</strong> has been sent.</p>
+                  <p className="sent-sub">Status updated to Engaged.</p>
+                </div>
+              ) : outreachDraft ? (
+                <div className="outreach-form">
+                  <div className="form-row">
+                    <label>To</label>
+                    <input type="email" value={outreachDraft.to} onChange={(e) => setOutreachDraft({...outreachDraft, to: e.target.value})} />
+                  </div>
+                  <div className="form-row">
+                    <label>Subject</label>
+                    <input type="text" value={outreachDraft.subject} onChange={(e) => setOutreachDraft({...outreachDraft, subject: e.target.value})} />
+                  </div>
+                  <div className="form-row">
+                    <label>Body</label>
+                    <textarea rows={12} value={outreachDraft.body} onChange={(e) => setOutreachDraft({...outreachDraft, body: e.target.value})} />
+                  </div>
+                  <div className="form-row from-row">
+                    <span className="from-label">From: Ishu Ratna &lt;iratna@averroescapital.com&gt;</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-footer">
+              {outreachSent ? (
+                <button className="modal-ok-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Done</button>
+              ) : outreachDraft && !outreachLoading ? (
+                <>
+                  <button className="outreach-cancel-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Cancel</button>
+                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={outreachSending || !outreachDraft.to}>
+                    {outreachSending ? 'Sending...' : 'Send Email'}
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
         </div>
@@ -286,20 +383,25 @@ export default function Universe() {
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>{company.status}</span></td>
                       <td><span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>{Math.round(company.match_score * 100)}%</span></td>
                       <td>{company.contact_name || '\u2014'}</td>
-                      <td className="email-cell">{company.contact_email ? (<a href={`mailto:${company.contact_email}`} className="email-link">{company.contact_email}</a>) : '\u2014'}</td>
+                      <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '\u2014'}</td>
                       <td>{company.linkedin_url ? (<a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>) : '\u2014'}</td>
                       <td className="source-cell">{company.source}</td>
                       <td className="date-cell">{formatDate(company.ingested_at)}</td>
                       <td>
-                        <button className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`} disabled={smartFilling === company.name}
-                          onClick={async () => {
-                            setSmartFilling(company.name);
-                            try { const res = await dealApi.smartFill(company.name); setSmartFillResult(res); await loadData(); }
-                            catch (err: any) { alert(`SmartFill failed: ${err.message}`); }
-                            finally { setSmartFilling(null); }
-                          }}>
-                          {smartFilling === company.name ? '...' : 'SmartFill'}
-                        </button>
+                        <div className="action-btns">
+                          <button className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`} disabled={smartFilling === company.name}
+                            onClick={async () => {
+                              setSmartFilling(company.name);
+                              try { const res = await dealApi.smartFill(company.name); setSmartFillResult(res); await loadData(); }
+                              catch (err: any) { alert(`SmartFill failed: ${err.message}`); }
+                              finally { setSmartFilling(null); }
+                            }}>
+                            {smartFilling === company.name ? '...' : 'SmartFill'}
+                          </button>
+                          <button className="outreach-btn" onClick={() => openOutreach(company)}>
+                            Outreach
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -410,6 +512,33 @@ export default function Universe() {
         .modal-footer { padding: 1rem 2rem 1.5rem; display: flex; justify-content: flex-end; }
         .modal-ok-btn { background: var(--primary-blue, #2563EB); color: white; border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
         .modal-ok-btn:hover { opacity: 0.9; }
+        .action-btns { display: flex; gap: 0.4rem; }
+        .outreach-btn { background: transparent; border: 1px solid var(--gold); color: var(--gold); padding: 0.35rem 0.75rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+        .outreach-btn:hover { background: var(--gold); color: var(--navy-dark); }
+        .outreach-modal { width: 640px; }
+        .outreach-loading { text-align: center; padding: 3rem 2rem; }
+        .outreach-loading p { color: var(--text-secondary); margin-top: 1rem; font-size: 1rem; }
+        .outreach-loading .loading-sub { font-size: 0.85rem; color: var(--text-dim); margin-top: 0.25rem; }
+        .spinner { width: 40px; height: 40px; border: 3px solid var(--border-light); border-top-color: var(--primary-blue); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .outreach-sent { text-align: center; padding: 2rem; }
+        .sent-icon { font-size: 3rem; color: var(--green, #16a34a); margin-bottom: 1rem; }
+        .outreach-sent h4 { font-size: 1.3rem; color: var(--text-primary); margin-bottom: 0.5rem; }
+        .outreach-sent .sent-sub { font-size: 0.85rem; color: var(--text-dim); margin-top: 0.5rem; }
+        .outreach-form { display: flex; flex-direction: column; gap: 1rem; }
+        .form-row { display: flex; flex-direction: column; gap: 0.3rem; }
+        .form-row label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); font-weight: 700; }
+        .form-row input { padding: 0.6rem 0.75rem; border: 1px solid var(--border-light); border-radius: var(--radius-sm); font-size: 0.9rem; color: var(--text-primary); background: var(--bg-secondary); }
+        .form-row textarea { padding: 0.75rem; border: 1px solid var(--border-light); border-radius: var(--radius-sm); font-size: 0.9rem; color: var(--text-primary); background: var(--bg-secondary); resize: vertical; line-height: 1.6; font-family: inherit; }
+        .form-row input:focus, .form-row textarea:focus { outline: none; border-color: var(--primary-blue); }
+        .from-row { flex-direction: row; }
+        .from-label { font-size: 0.8rem; color: var(--text-dim); font-style: italic; }
+        .outreach-cancel-btn { background: transparent; border: 1px solid var(--border-light); color: var(--text-dim); padding: 0.6rem 1.5rem; border-radius: 6px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
+        .outreach-cancel-btn:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+        .outreach-send-btn { background: var(--gold); color: var(--navy-dark, #1a1a2e); border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 800; font-size: 0.9rem; cursor: pointer; letter-spacing: 0.03em; }
+        .outreach-send-btn:hover:not(:disabled) { opacity: 0.9; }
+        .outreach-send-btn:disabled { opacity: 0.5; cursor: wait; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 0.75rem; }
       `}</style>
     </div>
   );
