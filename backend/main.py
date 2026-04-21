@@ -323,12 +323,14 @@ async def smartfill_company(company_name: str):
     ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
     status = "Under Review" if score >= 0.6 else ("Qualified" if score >= ingestion_threshold else "Not a Fit")
     founder_info = enrichment_agent.enrich_founder_details(company_name)
+    website = founder_info.get("website", "")
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET match_score = @score, status = @status, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET match_score = @score, status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("score", "FLOAT64", score),
             bq_lib.ScalarQueryParameter("status", "STRING", status),
+            bq_lib.ScalarQueryParameter("website", "STRING", website),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
@@ -338,7 +340,7 @@ async def smartfill_company(company_name: str):
     except Exception as e:
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
-    return {"status": "Success", "company": company_name, "match_score": score, "new_status": status, "contact_name": founder_info.get("contact_name",""), "contact_email": founder_info.get("contact_email",""), "linkedin_url": founder_info.get("linkedin_url","")}
+    return {"status": "Success", "company": company_name, "match_score": score, "new_status": status, "website": website, "contact_name": founder_info.get("contact_name",""), "contact_email": founder_info.get("contact_email",""), "linkedin_url": founder_info.get("linkedin_url","")}
 
 
 @app.post("/enrich/{company_name}")

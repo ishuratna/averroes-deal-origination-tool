@@ -97,6 +97,14 @@ export default function Universe() {
                   <span className="result-value found">{smartFillResult.new_status}</span>
                 </div>
                 <div className="result-row">
+                  <span className="result-label">Website</span>
+                  <span className={`result-value ${smartFillResult.website ? 'found' : 'not-found'}`}>
+                    {smartFillResult.website ? (
+                      <a href={smartFillResult.website} target="_blank" rel="noreferrer">{smartFillResult.website}</a>
+                    ) : 'Not Found'}
+                  </span>
+                </div>
+                <div className="result-row">
                   <span className="result-label">Founder / CEO</span>
                   <span className={`result-value ${smartFillResult.contact_name ? 'found' : 'not-found'}`}>
                     {smartFillResult.contact_name || 'Not Found'}
@@ -254,6 +262,7 @@ export default function Universe() {
                   <th>Status</th>
                   <th>Score</th>
                   <th>Leadership</th>
+                  <th>Email</th>
                   <th>LinkedIn</th>
                   <th>Source</th>
                   <th>Date</th>
@@ -264,7 +273,7 @@ export default function Universe() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="skeleton-row">
-                      <td colSpan={10}><div className="skeleton-line"></div></td>
+                      <td colSpan={11}><div className="skeleton-line"></div></td>
                     </tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
@@ -291,6 +300,11 @@ export default function Universe() {
                          </span>
                       </td>
                       <td>{company.contact_name || '\u2014'}</td>
+                      <td className="email-cell">
+                        {company.contact_email ? (
+                          <a href={`mailto:${company.contact_email}`} className="email-link">{company.contact_email}</a>
+                        ) : '\u2014'}
+                      </td>
                       <td>
                         {company.linkedin_url ? (
                           <a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>
@@ -322,7 +336,7 @@ export default function Universe() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="empty-row">
+                    <td colSpan={11} className="empty-row">
                       No targets match your search. Try running a sourcing agent.
                     </td>
                   </tr>
@@ -382,9 +396,9 @@ export default function Universe() {
         .crm-table { width: 100%; border-collapse: collapse; text-align: left; }
         .crm-table th { background: var(--bg-tertiary); color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; padding: 1rem 1.5rem; border-bottom: 2px solid var(--border-light); }
         .crm-table td { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border-glass); font-size: 0.9rem; color: var(--text-secondary); white-space: nowrap; }
-        @media (max-width: 1400px) { .crm-table th:nth-child(7), .crm-table td:nth-child(7), .crm-table th:nth-child(9), .crm-table td:nth-child(9) { display: none; } }
-        @media (max-width: 1100px) { .crm-table th:nth-child(8), .crm-table td:nth-child(8), .crm-table th:nth-child(3), .crm-table td:nth-child(3) { display: none; } }
-        @media (max-width: 768px) { .crm-table th:nth-child(6), .crm-table td:nth-child(6) { display: none; } .section-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; } }
+        @media (max-width: 1400px) { .crm-table th:nth-child(8), .crm-table td:nth-child(8), .crm-table th:nth-child(10), .crm-table td:nth-child(10) { display: none; } }
+        @media (max-width: 1100px) { .crm-table th:nth-child(9), .crm-table td:nth-child(9), .crm-table th:nth-child(3), .crm-table td:nth-child(3) { display: none; } }
+        @media (max-width: 768px) { .crm-table th:nth-child(6), .crm-table td:nth-child(6), .crm-table th:nth-child(7), .crm-table td:nth-child(7) { display: none; } .section-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; } }
         .table-scroll-container::-webkit-scrollbar { height: 8px; }
         .table-scroll-container::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
         .table-scroll-container::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 4px; }
@@ -402,6 +416,9 @@ export default function Universe() {
         .status-badge.scraped { background: var(--bg-tertiary); color: var(--text-dim); }
         .status-badge.not-a-fit { background: rgba(255, 77, 77, 0.1); color: #FF4D4D; }
         .score-val { font-weight: 800; }
+        .email-cell { font-size: 0.8rem; }
+        .email-link { color: var(--primary-blue); text-decoration: none; }
+        .email-link:hover { text-decoration: underline; }
         .linkedin-link { color: #0A66C2; font-weight: 600; text-decoration: underline; }
         .source-cell { font-size: 0.8rem; font-style: italic; }
         .date-cell { font-size: 0.8rem; white-space: nowrap; }
@@ -412,10 +429,8 @@ export default function Universe() {
         .smartfill-btn:hover:not(:disabled) { background: var(--primary-blue); color: white; }
         .smartfill-btn.filling { opacity: 0.5; cursor: wait; border-color: var(--gold); color: var(--gold); }
         .skeleton-line { height: 12px; background: var(--bg-tertiary); width: 100%; border-radius: 2px; animation: loading-shimmer 1.5s infinite; }
-
-        /* Modal Styles */
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
-        .modal-content { background: white; border-radius: 12px; width: 480px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+        .modal-content { background: white; border-radius: 12px; width: 520px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
         .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 2rem; border-bottom: 1px solid var(--border-light); }
         .modal-header h3 { font-size: 1.1rem; font-weight: 800; color: var(--text-primary); margin: 0; }
         .modal-close { background: none; border: none; font-size: 1.5rem; color: var(--text-dim); cursor: pointer; padding: 0; line-height: 1; }
