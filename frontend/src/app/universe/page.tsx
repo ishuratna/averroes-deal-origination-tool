@@ -201,7 +201,7 @@ export default function Universe() {
                     <textarea rows={12} value={outreachDraft.body} onChange={(e) => setOutreachDraft({...outreachDraft, body: e.target.value})} />
                   </div>
                   <div className="form-row from-row">
-                    <span className="from-label">From: Ishu Ratna &lt;iratna@averroescapital.com&gt;</span>
+                    <span className="from-label">From: Beatrice Carrara &lt;iratna@averroescapital.com&gt;</span>
                   </div>
                 </div>
               ) : null}
@@ -284,7 +284,7 @@ export default function Universe() {
             <div className="avatar">IR</div>
             <div className="user-info">
               <span className="user-name">Ishu Ratna</span>
-              <span className="user-role">Managing Partner</span>
+              <span className="user-role">Associate</span>
             </div>
           </div>
         </div>

@@ -145,7 +145,7 @@ export default function Home() {
             <div className="avatar">IR</div>
             <div className="user-info">
               <span className="user-name">Ishu Ratna</span>
-              <span className="user-role">Managing Partner</span>
+              <span className="user-role">Associate</span>
             </div>
           </div>
         </div>

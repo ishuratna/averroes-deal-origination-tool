@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ── Sender config (env vars on Cloud Run) ──────────────────────────────────────
 SENDER_EMAIL = os.getenv("OUTREACH_EMAIL", "iratna@averroescapital.com")
-SENDER_NAME = os.getenv("OUTREACH_NAME", "Ishu Ratna")
+SENDER_NAME = os.getenv("OUTREACH_NAME", "Beatrice Carrara")
 SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 
 
@@ -82,7 +82,7 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
     first_name = contact_name.split()[0] if contact_name and contact_name.strip() else "there"
 
     prompt = f"""
-    You are Ishu Ratna, Managing Partner at Averroes Capital — a growth capital / private equity
+    You are Beatrice Carrara, Partner at Averroes Capital — a growth capital / private equity
     investor focused on B2B SaaS and tech-enabled services in the UK & Europe.
 
     Write a SHORT, warm, personalised outreach email to {contact_name or 'the founder'} at {name}.
@@ -102,7 +102,7 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
       * Respect for what they've built
       * No pressure, just exploring a conversation
     - CTA: Suggest a brief 15-minute call, keep it low-commitment.
-    - Sign off as: Ishu Ratna, Managing Partner, Averroes Capital
+    - Sign off as: Beatrice Carrara, Partner, Averroes Capital
     - Do NOT include email headers (To, From, Date) — just subject and body.
 
     Return ONLY valid JSON with exactly these keys:
@@ -199,7 +199,7 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"having a like-minded investor in your corner.\n\n"
         f"Would you be open to a brief 15-minute chat? No pressure at all — happy to work "
         f"around your schedule.\n\n"
-        f"Best,\nIshu Ratna\nManaging Partner, Averroes Capital"
+        f"Best,\nBeatrice Carrara\nPartner, Averroes Capital"
     )
 
     return {
