@@ -16,6 +16,7 @@ from scrapers.directory_scraper import DirectoryScraper
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
+from services.pitchbook_service import parse_pitchbook_excel
 from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
 from ai.enrichment import EnrichmentAgent
 from config.sourcing_config import SOURCING_CRITERIA
@@ -203,100 +204,93 @@ async def ingest_marketplace(marketplace_name: Optional[str] = Query(None, descr
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": f"No new companies found from {source_label}."}
     
-    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
-    
-    # Backup to GCS
-    gcs_filename = gcs_handler.save_companies(refined_companies, source_label.lower().replace(".", "").replace(" ", "_"))
-    
+    # Tag and save raw — no AI scoring, no enrichment
+    for c in raw_companies:
+        c["source"] = c.get("source", source_label)
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    success = bq_handler.save_targets(raw_companies)
+    if not success:
+        raise HTTPException(status_code=500, detail="Database save failed.")
+    gcs_filename = gcs_handler.save_companies(raw_companies, source_label.lower().replace(".", "").replace(" ", "_"))
     return {
         "status": "Success",
-        "count": len(refined_companies),
-        "total_in_universe": uni_count,
-        "total_in_candidates": cand_count,
+        "count": len(raw_companies),
         "source": source_label,
+        "message": f"Scraped {len(raw_companies)} companies from {source_label}. Use SmartFill to score and enrich.",
         "gcs_path": gcs_filename
     }
 
 @app.post("/ingest/conference")
 async def ingest_conference(conference_name: str = Query(..., description="Name of the conference to scrape")):
-    """
-    1. Scrapes the specific conference.
-    2. Runs AI filtering.
-    3. Updates Universe (all) and Pipeline (filtered).
-    """
+    """Scrape conference → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
     if conference_name not in conf_scraper.get_all_targets():
         raise HTTPException(status_code=404, detail="Conference not monitored.")
-    
     raw_companies = conf_scraper.scrape_conference(conference_name)
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new companies found."}
-    
-    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
-    
-    # Backup to GCS
-    gcs_filename = gcs_handler.save_companies(refined_companies, conference_name.lower().replace(" ", "_"))
-    
+    for c in raw_companies:
+        c["source"] = c.get("source", conference_name)
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    success = bq_handler.save_targets(raw_companies)
+    if not success:
+        raise HTTPException(status_code=500, detail="Database save failed.")
+    gcs_filename = gcs_handler.save_companies(raw_companies, conference_name.lower().replace(" ", "_"))
     return {
         "status": "Success",
-        "count": len(refined_companies),
-        "total_in_universe": uni_count,
-        "total_in_candidates": cand_count,
+        "count": len(raw_companies),
         "source": conference_name,
+        "message": f"Scraped {len(raw_companies)} companies from {conference_name}. Use SmartFill to score and enrich.",
         "gcs_path": gcs_filename
     }
 
 @app.post("/ingest/ranking")
 async def ingest_ranking(list_name: str = Query(..., description="Name of the ranking list to ingest")):
-    """
-    Ingests high-growth companies from curated lists (FT 1000, etc.)
-    """
+    """Scrape ranking list → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
     if list_name not in rank_scraper.get_supported_lists():
         raise HTTPException(status_code=404, detail=f"Ranking list '{list_name}' not supported.")
-    
     raw_companies = rank_scraper.scrape_ranking(list_name)
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new companies found."}
-    
-    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
-    
-    # Backup to GCS
-    gcs_filename = gcs_handler.save_companies(refined_companies, list_name.lower().replace(" ", "_"))
-    
+    for c in raw_companies:
+        c["source"] = c.get("source", list_name)
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    success = bq_handler.save_targets(raw_companies)
+    if not success:
+        raise HTTPException(status_code=500, detail="Database save failed.")
+    gcs_filename = gcs_handler.save_companies(raw_companies, list_name.lower().replace(" ", "_"))
     return {
         "status": "Success",
-        "count": len(refined_companies),
-        "total_in_universe": uni_count,
-        "total_in_candidates": cand_count,
+        "count": len(raw_companies),
         "source": list_name,
+        "message": f"Scraped {len(raw_companies)} companies from {list_name}. Use SmartFill to score and enrich.",
         "gcs_path": gcs_filename
     }
 
 @app.post("/ingest/directory")
-async def ingest_directory(source_name: str = Query(..., description="Name of the directory to scrape"), max_pages: int = Query(20, description="Max pages to scrape")):
-    """
-    Scrapes B2B SaaS company directories (e.g., TheSaaSDirectory.com).
-    Real web scraping - not demo data.
-    """
+async def ingest_directory(source_name: str = Query("TheSaaSDirectory", description="Directory source to scrape"), max_pages: int = Query(20, description="Max pages to scrape")):
+    """Scrape SaaS directory → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
     if source_name not in directory_scraper.get_supported_sources():
         raise HTTPException(status_code=404, detail=f"Directory '{source_name}' not supported.")
-    
     raw_companies = directory_scraper.scrape_source(source_name, max_pages)
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": f"No companies found from {source_name}."}
-    
-    refined_companies, uni_count, cand_count = _process_and_refine(raw_companies)
-    
-    try:
-        gcs_handler.save_companies(refined_companies, source_name.lower().replace(" ", "_"))
-    except Exception:
-        pass
-    
+    for c in raw_companies:
+        c["source"] = c.get("source", source_name)
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    success = bq_handler.save_targets(raw_companies)
+    if not success:
+        raise HTTPException(status_code=500, detail="Database save failed.")
+    gcs_filename = gcs_handler.save_companies(raw_companies, source_name.lower().replace(" ", "_"))
     return {
         "status": "Success",
-        "count": len(refined_companies),
-        "total_in_universe": uni_count,
-        "total_in_candidates": cand_count,
-        "source": source_name
+        "count": len(raw_companies),
+        "source": source_name,
+        "message": f"Scraped {len(raw_companies)} companies from {source_name}. Use SmartFill to score and enrich.",
+        "gcs_path": gcs_filename
     }
 
 @app.post("/ingest/upload")
@@ -314,9 +308,14 @@ async def upload_custom_file(file: UploadFile = File(...)):
             gcs.save_raw_file(content, safe_filename, file.content_type)
         except Exception as gcs_err:
             logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
+        is_pitchbook = "pitchbook" in file.filename.lower()
         try:
-            targets = parse_proprietary_excel(content)
-            logger.info(f"Parsed {len(targets)} targets from {file.filename}")
+            if is_pitchbook:
+                logger.info(f"PitchBook file detected: {file.filename}")
+                targets = parse_pitchbook_excel(content)
+            else:
+                targets = parse_proprietary_excel(content)
+            logger.info(f"Parsed {len(targets)} targets from {file.filename} ({'PitchBook' if is_pitchbook else 'Generic'})")
         except Exception as parse_err:
             raise HTTPException(status_code=422, detail=f"Parse failed: {str(parse_err)}")
         if not targets:

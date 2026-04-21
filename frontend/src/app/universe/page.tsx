@@ -249,6 +249,10 @@ export default function Universe() {
                   <th>Company</th>
                   <th>Sector</th>
                   <th>Region</th>
+                  <th>Employees</th>
+                  <th>Founded</th>
+                  <th>Raised</th>
+                  <th>Valuation</th>
                   <th>Status</th>
                   <th>Score</th>
                   <th>Leadership</th>
@@ -262,7 +266,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={11}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={15}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -275,6 +279,10 @@ export default function Universe() {
                       </td>
                       <td className="sector-cell">{company.sector || 'TBD'}</td>
                       <td>{company.region || 'UK/Europe'}</td>
+                      <td className="num-cell">{company.employees ? company.employees.toLocaleString() : '\u2014'}</td>
+                      <td className="num-cell">{company.year_founded || '\u2014'}</td>
+                      <td className="num-cell">{company.total_raised_m ? `\u00A3${company.total_raised_m.toFixed(1)}M` : '\u2014'}</td>
+                      <td className="num-cell">{company.valuation_estimate_m ? `\u00A3${company.valuation_estimate_m.toFixed(1)}M` : '\u2014'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>{company.status}</span></td>
                       <td><span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>{Math.round(company.match_score * 100)}%</span></td>
                       <td>{company.contact_name || '\u2014'}</td>
@@ -296,7 +304,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={11} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
+                  <tr><td colSpan={15} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
@@ -347,9 +355,11 @@ export default function Universe() {
         .crm-table { width: 100%; border-collapse: collapse; text-align: left; }
         .crm-table th { background: var(--bg-tertiary); color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; padding: 1rem 1.5rem; border-bottom: 2px solid var(--border-light); }
         .crm-table td { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border-glass); font-size: 0.9rem; color: var(--text-secondary); white-space: nowrap; }
-        @media (max-width: 1400px) { .crm-table th:nth-child(8), .crm-table td:nth-child(8), .crm-table th:nth-child(10), .crm-table td:nth-child(10) { display: none; } }
-        @media (max-width: 1100px) { .crm-table th:nth-child(9), .crm-table td:nth-child(9), .crm-table th:nth-child(3), .crm-table td:nth-child(3) { display: none; } }
-        @media (max-width: 768px) { .crm-table th:nth-child(6), .crm-table td:nth-child(6), .crm-table th:nth-child(7), .crm-table td:nth-child(7) { display: none; } .section-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; } }
+        .num-cell { font-size: 0.85rem; font-variant-numeric: tabular-nums; text-align: right; }
+        @media (max-width: 1600px) { .crm-table th:nth-child(6), .crm-table td:nth-child(6), .crm-table th:nth-child(7), .crm-table td:nth-child(7) { display: none; } }
+        @media (max-width: 1400px) { .crm-table th:nth-child(12), .crm-table td:nth-child(12), .crm-table th:nth-child(14), .crm-table td:nth-child(14) { display: none; } }
+        @media (max-width: 1100px) { .crm-table th:nth-child(4), .crm-table td:nth-child(4), .crm-table th:nth-child(5), .crm-table td:nth-child(5), .crm-table th:nth-child(13), .crm-table td:nth-child(13) { display: none; } }
+        @media (max-width: 768px) { .crm-table th:nth-child(10), .crm-table td:nth-child(10), .crm-table th:nth-child(11), .crm-table td:nth-child(11) { display: none; } .section-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; } }
         .table-scroll-container::-webkit-scrollbar { height: 8px; }
         .table-scroll-container::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
         .table-scroll-container::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 4px; }
