@@ -24,20 +24,13 @@ export default function Universe() {
   const regions = ["All", "UK", "Ireland", "UK/Ireland", "Europe", "North America"];
   const statuses = ["All", "Qualified", "Under Review", "Uploaded", "In Pipeline", "Not a Fit"];
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    try {
-      const data = await dealApi.getUniverse();
-      setUniverse(data);
-    } catch (error) {
-      console.error("Failed to load universe", error);
-    } finally {
-      setLoading(false);
-    }
+    try { const data = await dealApi.getUniverse(); setUniverse(data); }
+    catch (error) { console.error("Failed to load universe", error); }
+    finally { setLoading(false); }
   }
 
   const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking', name: string) => {
@@ -47,22 +40,26 @@ export default function Universe() {
       else if (type === 'conference') await dealApi.ingestConference(name);
       else if (type === 'ranking') await dealApi.ingestRanking(name);
       await loadData();
-    } catch (error) {
-      alert(`Ingestion failed for ${name}`);
-    } finally {
-      setIngesting(null);
-    }
+    } catch (error) { alert(`Ingestion failed for ${name}`); }
+    finally { setIngesting(null); }
+  };
+
+  const handleDirectoryScrape = async (sourceName: string) => {
+    setIngesting(sourceName);
+    try {
+      const res = await dealApi.ingestDirectory(sourceName);
+      alert(`Found ${res.count} companies from ${sourceName}. ${res.total_in_universe || ''} total in universe.`);
+      await loadData();
+    } catch (error) { alert(`Scraping failed for ${sourceName}`); }
+    finally { setIngesting(null); }
   };
 
   const filteredUniverse = universe.filter(c => {
     const q = searchQuery.toLowerCase();
-    const matchesSearch = c.name.toLowerCase().includes(q) ||
-      (c.sector && c.sector.toLowerCase().includes(q)) ||
-      (c.description && c.description.toLowerCase().includes(q));
+    const matchesSearch = c.name.toLowerCase().includes(q) || (c.sector && c.sector.toLowerCase().includes(q)) || (c.description && c.description.toLowerCase().includes(q));
     const matchesVertical = filters.vertical === "All" || (c.sector && c.sector.toLowerCase().includes(filters.vertical.toLowerCase()));
     const matchesRegion = filters.region === "All" || (c.region && c.region.toLowerCase().includes(filters.region.toLowerCase()));
-    const matchesUKIE = filters.region === "UK/Ireland" && 
-      (c.region?.toLowerCase().includes("uk") || c.region?.toLowerCase().includes("ireland") || c.region?.toLowerCase().includes("united kingdom"));
+    const matchesUKIE = filters.region === "UK/Ireland" && (c.region?.toLowerCase().includes("uk") || c.region?.toLowerCase().includes("ireland") || c.region?.toLowerCase().includes("united kingdom"));
     const matchesStatus = filters.status === "All" || c.status === filters.status;
     const matchesScore = (c.match_score * 100) >= filters.minScore;
     return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus && matchesScore;
@@ -75,7 +72,6 @@ export default function Universe() {
 
   return (
     <div className="layout-wrapper">
-      {/* SmartFill Results Modal */}
       {smartFillResult && (
         <div className="modal-overlay" onClick={() => setSmartFillResult(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -99,9 +95,7 @@ export default function Universe() {
                 <div className="result-row">
                   <span className="result-label">Website</span>
                   <span className={`result-value ${smartFillResult.website ? 'found' : 'not-found'}`}>
-                    {smartFillResult.website ? (
-                      <a href={smartFillResult.website} target="_blank" rel="noreferrer">{smartFillResult.website}</a>
-                    ) : 'Not Found'}
+                    {smartFillResult.website ? (<a href={smartFillResult.website} target="_blank" rel="noreferrer">{smartFillResult.website}</a>) : 'Not Found'}
                   </span>
                 </div>
                 <div className="result-row">
@@ -119,9 +113,7 @@ export default function Universe() {
                 <div className="result-row">
                   <span className="result-label">LinkedIn</span>
                   <span className={`result-value ${smartFillResult.linkedin_url ? 'found' : 'not-found'}`}>
-                    {smartFillResult.linkedin_url ? (
-                      <a href={smartFillResult.linkedin_url} target="_blank" rel="noreferrer">{smartFillResult.linkedin_url}</a>
-                    ) : 'Not Found'}
+                    {smartFillResult.linkedin_url ? (<a href={smartFillResult.linkedin_url} target="_blank" rel="noreferrer">{smartFillResult.linkedin_url}</a>) : 'Not Found'}
                   </span>
                 </div>
               </div>
@@ -137,14 +129,12 @@ export default function Universe() {
         <div className="logo-section">
           <div className="logo">AVERROES<span>INTEL</span></div>
         </div>
-        
         <nav className="sidebar-nav">
           <div className="nav-group">
             <span className="group-label">Intelligence</span>
             <Link href="/" className="nav-item">Deal Pipeline</Link>
             <Link href="/universe" className="nav-item active">Master Universe</Link>
           </div>
-
           <div className="nav-group">
             <span className="group-label">Sourcing Agents</span>
             <button className={`agent-btn ${ingesting === 'Acquire.com' ? 'loading' : ''}`} onClick={() => handleIngest('marketplace', 'Acquire.com')} disabled={!!ingesting}>
@@ -160,22 +150,17 @@ export default function Universe() {
               Scrape Web Summit {ingesting === 'Web Summit' && '...'}
             </button>
           </div>
-
           <div className="nav-group">
             <span className="group-label">Directories</span>
-            <button className={\`agent-btn \${ingesting === 'TheSaaSDirectory' ? 'loading' : ''}\`} onClick={() => handleDirectoryScrape('TheSaaSDirectory')} disabled={!!ingesting}>
+            <button className={`agent-btn ${ingesting === 'TheSaaSDirectory' ? 'loading' : ''}`} onClick={() => handleDirectoryScrape('TheSaaSDirectory')} disabled={!!ingesting}>
               Scrape SaaS Directory {ingesting === 'TheSaaSDirectory' && '...'}
             </button>
           </div>
-
           <div className="nav-group border-top">
              <span className="group-label">Proprietary Data</span>
              <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>
                 {ingesting === 'Upload' ? 'Uploading...' : 'Upload Target List'}
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  style={{ display: 'none' }}
+                <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (file) {
@@ -185,7 +170,7 @@ export default function Universe() {
                         alert(res.message || "Upload complete!");
                         await loadData();
                       } catch (err: any) {
-                        alert(`Upload Failed: ${err.message || "Unknown error"}\n\nPlease check that the backend is running and dependencies (openpyxl) are loaded.`);
+                        alert(`Upload Failed: ${err.message || "Unknown error"}\n\nPlease check that the backend is running.`);
                       } finally {
                         setIngesting(null);
                         if (e.target) e.target.value = '';
@@ -196,7 +181,6 @@ export default function Universe() {
              </label>
           </div>
         </nav>
-
         <div className="sidebar-footer">
           <div className="user-profile">
             <div className="avatar">IR</div>
@@ -258,7 +242,6 @@ export default function Universe() {
             </div>
             <button className="button-tiny" onClick={loadData}>Force Sync &#8635;</button>
           </div>
-
           <div className="table-scroll-container">
             <table className="crm-table">
               <thead>
@@ -279,9 +262,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row">
-                      <td colSpan={11}><div className="skeleton-line"></div></td>
-                    </tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={11}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -289,64 +270,33 @@ export default function Universe() {
                       <td className="company-cell">
                         <div className="name-wrap">
                           <span className="name">{company.name}</span>
-                          {company.website && (
-                             <a href={company.website} target="_blank" rel="noreferrer" className="site-icon">&#8599;</a>
-                          )}
+                          {company.website && (<a href={company.website} target="_blank" rel="noreferrer" className="site-icon">&#8599;</a>)}
                         </div>
                       </td>
                       <td className="sector-cell">{company.sector || 'TBD'}</td>
                       <td>{company.region || 'UK/Europe'}</td>
-                      <td>
-                        <span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>
-                          {company.status}
-                        </span>
-                      </td>
-                      <td>
-                         <span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>
-                            {Math.round(company.match_score * 100)}%
-                         </span>
-                      </td>
+                      <td><span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>{company.status}</span></td>
+                      <td><span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>{Math.round(company.match_score * 100)}%</span></td>
                       <td>{company.contact_name || '\u2014'}</td>
-                      <td className="email-cell">
-                        {company.contact_email ? (
-                          <a href={`mailto:${company.contact_email}`} className="email-link">{company.contact_email}</a>
-                        ) : '\u2014'}
-                      </td>
-                      <td>
-                        {company.linkedin_url ? (
-                          <a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>
-                        ) : '\u2014'}
-                      </td>
+                      <td className="email-cell">{company.contact_email ? (<a href={`mailto:${company.contact_email}`} className="email-link">{company.contact_email}</a>) : '\u2014'}</td>
+                      <td>{company.linkedin_url ? (<a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>) : '\u2014'}</td>
                       <td className="source-cell">{company.source}</td>
                       <td className="date-cell">{formatDate(company.ingested_at)}</td>
                       <td>
-                        <button
-                          className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`}
-                          disabled={smartFilling === company.name}
+                        <button className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`} disabled={smartFilling === company.name}
                           onClick={async () => {
                             setSmartFilling(company.name);
-                            try {
-                              const res = await dealApi.smartFill(company.name);
-                              setSmartFillResult(res);
-                              await loadData();
-                            } catch (err: any) {
-                              alert(`SmartFill failed: ${err.message}`);
-                            } finally {
-                              setSmartFilling(null);
-                            }
-                          }}
-                        >
+                            try { const res = await dealApi.smartFill(company.name); setSmartFillResult(res); await loadData(); }
+                            catch (err: any) { alert(`SmartFill failed: ${err.message}`); }
+                            finally { setSmartFilling(null); }
+                          }}>
                           {smartFilling === company.name ? '...' : 'SmartFill'}
                         </button>
                       </td>
                     </tr>
                   ))
                 ) : (
-                  <tr>
-                    <td colSpan={11} className="empty-row">
-                      No targets match your search. Try running a sourcing agent.
-                    </td>
-                  </tr>
+                  <tr><td colSpan={11} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
@@ -360,8 +310,8 @@ export default function Universe() {
         .logo-section { padding: 3rem 2rem; }
         .logo { font-size: 1.5rem; font-weight: 900; letter-spacing: 0.1em; color: var(--text-primary); }
         .logo span { color: var(--primary-blue); }
-        .sidebar-nav { flex: 1; padding: 0 1.5rem; }
-        .nav-group { margin-bottom: 2.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+        .sidebar-nav { flex: 1; padding: 0 1.5rem; overflow-y: auto; }
+        .nav-group { margin-bottom: 2rem; display: flex; flex-direction: column; gap: 0.5rem; }
         .group-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-dim); padding-left: 0.5rem; margin-bottom: 0.5rem; }
         .nav-item { padding: 0.75rem 1rem; color: var(--text-secondary); border-radius: var(--radius-sm); font-weight: 600; font-size: 0.9rem; transition: all 0.2s; }
         .nav-item:hover, .nav-item.active { color: var(--primary-blue); background: var(--primary-blue-light); }
@@ -376,13 +326,7 @@ export default function Universe() {
         .user-role { font-size: 0.7rem; color: var(--text-dim); }
         .main-content { margin-left: 280px; flex: 1; padding: 3rem; max-width: calc(100vw - 280px); transition: all 0.3s ease; }
         @media (max-width: 1280px) { .main-content { padding: 2rem; } }
-        @media (max-width: 1024px) {
-          .sidebar { width: 80px; }
-          .sidebar .logo span, .sidebar .group-label, .sidebar .nav-item, .sidebar .agent-btn, .sidebar .user-info { display: none; }
-          .sidebar .logo { text-align: center; padding: 2rem 0; font-size: 1rem; }
-          .sidebar-nav { padding: 0 0.5rem; }
-          .main-content { margin-left: 80px; max-width: calc(100vw - 80px); }
-        }
+        @media (max-width: 1024px) { .sidebar { width: 80px; } .sidebar .logo span, .sidebar .group-label, .sidebar .nav-item, .sidebar .agent-btn, .sidebar .user-info { display: none; } .sidebar .logo { text-align: center; padding: 2rem 0; font-size: 1rem; } .sidebar-nav { padding: 0 0.5rem; } .main-content { margin-left: 80px; max-width: calc(100vw - 80px); } }
         .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 3rem; flex-wrap: wrap; gap: 2rem; }
         .header-left { flex: 1; min-width: 300px; }
         .subtitle { color: var(--text-secondary); font-size: 1.1rem; margin-top: 0.5rem; }
