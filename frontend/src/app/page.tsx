@@ -130,12 +130,12 @@ export default function Home() {
             >
               Scan FT 1000 {ingesting === 'FT 1000' && '...'}
             </button>
-            <button 
-              className={`agent-btn ${ingesting === 'Web Summit' ? 'loading' : ''}`}
-              onClick={() => handleIngest('conference', 'Web Summit')}
+            <button
+              className={`agent-btn ${ingesting === 'SaaStock Europe' ? 'loading' : ''}`}
+              onClick={() => handleIngest('conference', 'SaaStock Europe')}
               disabled={!!ingesting}
             >
-              Scrape Web Summit {ingesting === 'Web Summit' && '...'}
+              Scrape SaaStock {ingesting === 'SaaStock Europe' && '...'}
             </button>
           </div>
         </nav>

@@ -244,8 +244,8 @@ export default function Universe() {
             <button className={`agent-btn ${ingesting === 'FT 1000' ? 'loading' : ''}`} onClick={() => handleIngest('ranking', 'FT 1000')} disabled={!!ingesting}>
               Scan FT 1000 {ingesting === 'FT 1000' && '...'}
             </button>
-            <button className={`agent-btn ${ingesting === 'Web Summit' ? 'loading' : ''}`} onClick={() => handleIngest('conference', 'Web Summit')} disabled={!!ingesting}>
-              Scrape Web Summit {ingesting === 'Web Summit' && '...'}
+            <button className={`agent-btn ${ingesting === 'SaaStock Europe' ? 'loading' : ''}`} onClick={() => handleIngest('conference', 'SaaStock Europe')} disabled={!!ingesting}>
+              Scrape SaaStock {ingesting === 'SaaStock Europe' && '...'}
             </button>
           </div>
           <div className="nav-group">
