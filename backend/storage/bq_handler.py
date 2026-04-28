@@ -72,15 +72,18 @@ class BigQueryHandler:
         except Exception as e:
             logger.warning(f"Schema expansion check failed (non-fatal): {e}")
 
+    # Fields that should NEVER be overwritten by a merge (they're set by SmartFill or are identity fields)
+    PROTECTED_FIELDS = {"company_id", "name", "ingested_at", "match_score", "status"}
+
     def save_targets(self, companies: List[Dict]) -> bool:
         """
-        Inserts new target companies into BigQuery using DML INSERT (not streaming),
-        so rows can be updated immediately after insertion.
+        Smart-dedup insert: new companies are INSERTed, existing companies get
+        empty/null fields filled in from the incoming data (merge, never overwrite).
         """
         if not self.client or not companies:
             return False
 
-        # 1. Fetch existing names to avoid duplicates
+        # 1. Fetch existing names
         try:
             query = f"SELECT DISTINCT name FROM `{self.table_id}`"
             query_job = self.client.query(query)
@@ -89,9 +92,13 @@ class BigQueryHandler:
             existing_names = set()
 
         rows_to_insert = []
+        rows_to_merge = []
         for c in companies:
             name = c.get("name", "").strip()
-            if not name or name in existing_names:
+            if not name:
+                continue
+            if name in existing_names:
+                rows_to_merge.append(c)
                 continue
 
             def safe_float(val, default=0.0):
@@ -321,7 +328,117 @@ class BigQueryHandler:
                 return False
 
         logger.info(f"Successfully inserted {total_inserted} unique rows into BigQuery via DML.")
+
+        # ── Phase 2: Merge new data into existing duplicates ──
+        if rows_to_merge:
+            merged_count = self._merge_duplicates(rows_to_merge)
+            logger.info(f"Smart-merge: updated {merged_count} existing records with new field data.")
+
         return True
+
+    def _merge_duplicates(self, companies: List[Dict]) -> int:
+        """
+        For each duplicate company, fill in fields that are currently empty/null
+        in BQ with values from the incoming data. Never overwrite non-empty fields.
+        Protected fields (match_score, status, company_id, ingested_at) are never touched.
+        """
+        # All mergeable field names and their BQ types
+        MERGE_FIELDS = [
+            ("website", "STRING"), ("sector", "STRING"), ("region", "STRING"),
+            ("ownership", "STRING"), ("description", "STRING"),
+            ("source", "STRING"), ("contact_name", "STRING"), ("contact_email", "STRING"),
+            ("linkedin_url", "STRING"),
+            ("estimated_ebitda", "FLOAT64"),
+            ("contact_title", "STRING"), ("contact_phone", "STRING"),
+            ("hq_email", "STRING"), ("hq_phone", "STRING"),
+            ("hq_location", "STRING"), ("hq_city", "STRING"), ("hq_country", "STRING"),
+            ("employees", "INT64"), ("year_founded", "INT64"),
+            ("keywords", "STRING"), ("verticals", "STRING"),
+            ("industry_group", "STRING"), ("industry_code", "STRING"),
+            ("emerging_spaces", "STRING"), ("business_status", "STRING"),
+            ("financing_status", "STRING"), ("total_raised_m", "FLOAT64"),
+            ("revenue_m", "FLOAT64"), ("net_income_m", "FLOAT64"),
+            ("enterprise_value_m", "FLOAT64"), ("revenue_growth_pct", "FLOAT64"),
+            ("valuation_estimate_m", "FLOAT64"), ("last_valuation_m", "FLOAT64"),
+            ("last_valuation_date", "STRING"), ("active_investors", "STRING"),
+            ("num_active_investors", "INT64"), ("former_investors", "STRING"),
+            ("last_financing_date", "STRING"), ("last_financing_size_m", "FLOAT64"),
+            ("last_financing_valuation_m", "FLOAT64"), ("last_financing_type", "STRING"),
+            ("first_financing_date", "STRING"), ("first_financing_size_m", "FLOAT64"),
+            ("pitchbook_growth_rate", "FLOAT64"), ("growth_rate_percentile", "INT64"),
+            ("web_visitors", "INT64"), ("opportunity_score", "INT64"),
+            ("success_probability", "INT64"), ("ma_probability", "INT64"),
+            ("predicted_exit_type", "STRING"), ("total_patents", "INT64"),
+            ("competitors", "STRING"), ("also_known_as", "STRING"),
+            ("legal_name", "STRING"), ("registration_number", "STRING"),
+            ("financing_note", "STRING"),
+        ]
+
+        merged = 0
+        for c in companies:
+            name = c.get("name", "").strip()
+            if not name:
+                continue
+
+            # Build SET clauses: only update fields where existing is empty/null AND incoming has data
+            set_clauses = []
+            params = [bigquery.ScalarQueryParameter("merge_name", "STRING", name)]
+
+            for field_name, field_type in MERGE_FIELDS:
+                val = c.get(field_name)
+                # Skip if incoming value is empty/None/zero
+                if val is None or val == "" or val == 0 or val == 0.0:
+                    continue
+
+                param_name = f"m_{field_name}"
+
+                # For STRING fields: update if existing is NULL or empty string
+                if field_type == "STRING":
+                    set_clauses.append(
+                        f"{field_name} = CASE WHEN ({field_name} IS NULL OR {field_name} = '') THEN @{param_name} ELSE {field_name} END"
+                    )
+                    params.append(bigquery.ScalarQueryParameter(param_name, "STRING", str(val)))
+                # For numeric fields: update if existing is NULL or 0
+                elif field_type == "FLOAT64":
+                    try:
+                        float_val = float(val)
+                    except (ValueError, TypeError):
+                        continue
+                    if float_val == 0.0:
+                        continue
+                    set_clauses.append(
+                        f"{field_name} = CASE WHEN ({field_name} IS NULL OR {field_name} = 0.0) THEN @{param_name} ELSE {field_name} END"
+                    )
+                    params.append(bigquery.ScalarQueryParameter(param_name, "FLOAT64", float_val))
+                elif field_type == "INT64":
+                    try:
+                        int_val = int(float(val))
+                    except (ValueError, TypeError):
+                        continue
+                    if int_val == 0:
+                        continue
+                    set_clauses.append(
+                        f"{field_name} = CASE WHEN ({field_name} IS NULL OR {field_name} = 0) THEN @{param_name} ELSE {field_name} END"
+                    )
+                    params.append(bigquery.ScalarQueryParameter(param_name, "INT64", int_val))
+
+            if not set_clauses:
+                continue
+
+            update_query = f"""
+                UPDATE `{self.table_id}`
+                SET {', '.join(set_clauses)}
+                WHERE name = @merge_name
+            """
+            job_config = bigquery.QueryJobConfig(query_parameters=params)
+            try:
+                job = self.client.query(update_query, job_config=job_config)
+                job.result()
+                merged += 1
+            except Exception as e:
+                logger.warning(f"Smart-merge failed for '{name}': {e}")
+
+        return merged
 
     def get_pipeline(self) -> List[Dict]:
         if not self.client:
