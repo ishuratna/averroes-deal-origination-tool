@@ -445,8 +445,8 @@ class BigQueryHandler:
             return []
         query = f"""
             SELECT * FROM `{self.table_id}`
-            WHERE status != 'Not a Fit'
-            ORDER BY match_score DESC
+            WHERE status IN ('Qualified', 'Engaged')
+            ORDER BY name ASC
         """
         return self._run_query(query)
 

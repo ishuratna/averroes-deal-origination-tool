@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from pydantic import BaseModel
-from typing import Optional, List, ClassVar
+from typing import Optional, List, Dict, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -12,88 +12,133 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    logger.warning("google-generativeai not installed. Falling back to keyword scoring.")
+    logger.warning("google-generativeai not installed. Falling back to keyword qualification.")
 
 
 class AverroesPhilosophy(BaseModel):
     """
     Standardizes the investment thesis for Averroes Capital.
-    Updated for RELAXED sourcing net.
+    Two hard filters: UK/Ireland geography + technology-related company.
     """
     THESIS: ClassVar[dict] = {
-        "geography": ["UK", "Ireland", "United Kingdom", "Great Britain", "London", "Dublin"],
-        "ownership": ["Founder-led", "Bootstrapped", "Angel-backed", "Family-owned", "Management-owned"],
-        "rejections": ["VC-backed", "PE-backed", "Institutional majorities", "Series B+", "Venture Capital"],
+        "geography": ["UK", "Ireland", "United Kingdom", "Great Britain",
+                       "London", "Dublin", "Edinburgh", "Manchester",
+                       "Birmingham", "Belfast", "Glasgow", "Bristol",
+                       "Leeds", "Cardiff", "Cork", "Galway", "Limerick"],
+        "tech_keywords": [
+            "software", "saas", "platform", "cloud", "paas", "iaas",
+            "tech", "technology", "digital", "ai", "artificial intelligence",
+            "machine learning", "data", "analytics", "automation",
+            "cyber", "fintech", "healthtech", "edtech", "insurtech",
+            "proptech", "regtech", "legaltech", "martech", "adtech",
+            "devops", "api", "iot", "blockchain", "robotics",
+            "it services", "managed services", "hosting",
+            "e-commerce platform", "marketplace platform",
+        ],
         "focus": "B2B SaaS / Software / High-Margin Tech-Enabled Services / Industrial Tech",
         "target_ebitda": "£1M - £10M (Revenue approx £2M - £20M)",
-        "scoring_weights": {
-            "b2b_tech_alignment": 0.40,  # Slightly lower weight to allow for broader tech-enabled
-            "ownership_fit": 0.35,       # Higher emphasis on proprietary/founder ownership
-            "geography_focus": 0.25      # Clean UK/Ireland focus
-        }
     }
 
 
-def _keyword_score(company: dict, philosophy: AverroesPhilosophy) -> float:
+# ── Hard filter: Geography ──────────────────────────────────────────────────
+
+def _is_uk_ireland(company: dict) -> bool:
+    """Check if the company is based in UK or Ireland using all available location fields."""
+    thesis = AverroesPhilosophy.THESIS
+    geo_targets = [g.lower() for g in thesis["geography"]]
+    # Also accept common country codes / abbreviations
+    geo_targets += ["uk", "gb", "ie", "england", "scotland", "wales", "northern ireland"]
+
+    # Check every location-related field
+    fields_to_check = [
+        company.get("region", ""),
+        company.get("hq_country", ""),
+        company.get("hq_city", ""),
+        company.get("hq_location", ""),
+    ]
+    combined = " ".join(str(f) for f in fields_to_check).lower()
+
+    return any(kw in combined for kw in geo_targets)
+
+
+# ── Hard filter: Technology ──────────────────────────────────────────────────
+
+def _is_tech_related(company: dict) -> bool:
+    """Check if the company is technology or technology-related."""
+    thesis = AverroesPhilosophy.THESIS
+    tech_kw = thesis["tech_keywords"]
+
+    # Check sector, description, keywords, verticals, industry group
+    fields_to_check = [
+        company.get("sector", ""),
+        company.get("description", ""),
+        company.get("keywords", ""),
+        company.get("verticals", ""),
+        company.get("industry_group", ""),
+        company.get("emerging_spaces", ""),
+    ]
+    combined = " ".join(str(f) for f in fields_to_check).lower()
+
+    return any(kw in combined for kw in tech_kw)
+
+
+# ── Main qualification function ──────────────────────────────────────────────
+
+def qualify_company(company: dict) -> Dict[str, any]:
     """
-    Deterministic keyword-based fallback scorer.
-    Used when GEMINI_API_KEY is not set.
+    Applies two hard filters to a company:
+      1. Must be UK or Ireland based
+      2. Must be technology or tech-related
+
+    Returns dict with:
+      - qualified: bool
+      - status: 'Qualified' or 'Not a Fit'
+      - is_uk_ireland: bool
+      - is_tech: bool
+      - reason: str (human-readable explanation)
     """
-    score = 0.0
-    thesis = philosophy.THESIS
+    uk_ire = _is_uk_ireland(company)
+    tech = _is_tech_related(company)
+    qualified = uk_ire and tech
 
-    # 1. B2B Tech Alignment (+0.45)
-    content = (company.get('sector', '') + " " + company.get('description', '')).lower()
-    is_b2b = any(kw in content for kw in ["b2b", "enterprise", "industrial", "corporate", "professional services", "business", "logistics"])
-    is_saas = any(kw in content for kw in ["software", "saas", "platform", "cloud", "paas", "software-as-a-service"])
-    is_tech_enabled = any(kw in content for kw in ["tech-enabled", "automation", "digital", "ai", "data", "it services", "proprietary tech", "analytics"])
+    if qualified:
+        reason = "UK/Ireland technology company — meets both hard filters."
+    elif not uk_ire and not tech:
+        reason = "Failed both filters: not UK/Ireland, not tech-related."
+    elif not uk_ire:
+        reason = "Not UK/Ireland based."
+    else:
+        reason = "Not a technology-related company."
 
-    if is_b2b:
-        if is_saas:
-            score += thesis["scoring_weights"]["b2b_tech_alignment"]
-        elif is_tech_enabled:
-            score += thesis["scoring_weights"]["b2b_tech_alignment"] * 0.9
-        else:
-            score += 0.15
-
-    # 2. Ownership Check (+0.3)
-    ownership = company.get('ownership', '').lower()
-    is_bootstrapped = any(o.lower() in ownership for o in thesis["ownership"])
-    is_rejected = any(r.lower() in ownership for r in thesis["rejections"])
-
-    if is_bootstrapped and not is_rejected:
-        score += thesis["scoring_weights"]["ownership_fit"]
-    elif is_rejected:
-        score -= 0.6
-
-    # 3. Geography & Growth Check (+0.25)
-    region = company.get('region', 'Unknown').lower()
-    geo_keywords = [r.lower() for r in thesis["geography"]] + ["uk", "united kingdom", "ireland", "dublin", "london"]
-    is_target_region = any(kw in region or region in kw for kw in geo_keywords)
-
-    if is_target_region:
-        score += thesis["scoring_weights"]["geography_focus"]
-        # RELAXED MODE: If it's UK/Ireland B2B, ensure it hits at least 0.4 to enter the universe
-        if is_b2b:
-            score = max(score, 0.45)
-            
-    growth_signals = company.get('growth_signals', False)
-    if growth_signals:
-        score += 0.10
-
-    return max(0.0, min(1.0, round(score, 2)))
+    return {
+        "qualified": qualified,
+        "status": "Qualified" if qualified else "Not a Fit",
+        "is_uk_ireland": uk_ire,
+        "is_tech": tech,
+        "reason": reason,
+    }
 
 
-def _gemini_score(company: dict, philosophy: AverroesPhilosophy, api_key: str) -> float:
+# ── Gemini-powered qualification (richer data = better filter accuracy) ──────
+
+def qualify_company_with_gemini(company: dict) -> Dict[str, any]:
     """
-    Uses Gemini 1.5 Pro to evaluate a company against the Averroes thesis.
-    Returns a float match_score between 0.0 and 1.0.
+    Uses Gemini to determine geography and tech-relatedness when local data
+    is sparse. Falls back to keyword qualification if Gemini unavailable.
     """
+    api_key = os.getenv("GEMINI_API_KEY", "")
+
+    if not api_key or not GEMINI_AVAILABLE:
+        logger.info(f"Qualifying '{company.get('name')}' via keyword filters...")
+        return qualify_company(company)
+
+    logger.info(f"Qualifying '{company.get('name')}' via Gemini...")
+
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash")
 
-        prompt = generate_analysis_prompt(company.get("name", "Unknown"), json.dumps(company), philosophy)
+        prompt = _build_qualification_prompt(company)
 
         response = model.generate_content(
             prompt,
@@ -101,71 +146,87 @@ def _gemini_score(company: dict, philosophy: AverroesPhilosophy, api_key: str) -
         )
 
         result = json.loads(response.text)
-        score = float(result.get("match_score", 0.0))
-        
-        # Also pull in enriched fields from Gemini response if available
-        for field in ["sector", "region", "ownership", "description", "status"]:
-            if field in result and not company.get(field):
+
+        # Extract Gemini's assessment
+        is_uk_ire = bool(result.get("is_uk_ireland", False))
+        is_tech = bool(result.get("is_tech_related", False))
+        qualified = is_uk_ire and is_tech
+
+        # Pull in any enriched fields Gemini found
+        for field in ["sector", "region", "ownership", "description"]:
+            if field in result and result[field] and not company.get(field):
                 company[field] = result[field]
 
-        return max(0.0, min(1.0, round(score, 2)))
+        reason = result.get("reason", "")
+        if not reason:
+            if qualified:
+                reason = "UK/Ireland technology company — meets both hard filters."
+            elif not is_uk_ire and not is_tech:
+                reason = "Failed both filters: not UK/Ireland, not tech-related."
+            elif not is_uk_ire:
+                reason = "Not UK/Ireland based."
+            else:
+                reason = "Not a technology-related company."
+
+        return {
+            "qualified": qualified,
+            "status": "Qualified" if qualified else "Not a Fit",
+            "is_uk_ireland": is_uk_ire,
+            "is_tech": is_tech,
+            "reason": reason,
+        }
 
     except Exception as e:
-        logger.warning(f"Gemini scoring failed for {company.get('name')}: {e}. Falling back to keyword score.")
-        return _keyword_score(company, philosophy)
+        logger.warning(f"Gemini qualification failed for {company.get('name')}: {e}. Falling back to keywords.")
+        return qualify_company(company)
 
+
+def _build_qualification_prompt(company: dict) -> str:
+    """Build a Gemini prompt that checks the two hard filters."""
+    company_json = json.dumps(company, default=str)
+    return f"""
+    You are an expert Private Equity analyst for Averroes Capital.
+    Determine TWO things about this company:
+
+    COMPANY DATA:
+    {company_json}
+
+    QUESTION 1 — GEOGRAPHY:
+    Is this company headquartered in the UK or Ireland?
+    Look at region, hq_country, hq_city, hq_location, or infer from any available data.
+    UK includes: England, Scotland, Wales, Northern Ireland, and all UK cities.
+    Ireland includes: Republic of Ireland and all Irish cities.
+
+    QUESTION 2 — TECHNOLOGY:
+    Is this a technology or technology-related company?
+    This includes: software, SaaS, platforms, AI/ML, data/analytics, cloud,
+    fintech, healthtech, edtech, cybersecurity, IT services, digital services,
+    tech-enabled services, industrial tech, IoT, robotics, etc.
+    Traditional industries (pure manufacturing, retail, hospitality, construction)
+    that don't use tech as a core product do NOT count.
+
+    RETURN FORMAT — JSON only:
+    {{
+        "is_uk_ireland": true or false,
+        "is_tech_related": true or false,
+        "reason": "One sentence explaining your assessment",
+        "sector": "string — the company's sector if you can determine it",
+        "region": "string — the company's HQ region/country if you can determine it",
+        "ownership": "string — ownership structure if you can determine it",
+        "description": "string — one sentence company summary if the existing one is empty"
+    }}
+    """
+
+
+# ── Legacy compatibility ─────────────────────────────────────────────────────
+# These are kept so existing code that imports them doesn't break.
 
 def evaluate_target(company: dict, philosophy: AverroesPhilosophy) -> float:
-    """
-    Unified scoring engine. Uses Gemini if API key is set, else falls back to keyword scorer.
-    """
-    api_key = os.getenv("GEMINI_API_KEY", "")
-
-    if api_key and GEMINI_AVAILABLE:
-        logger.info(f"Scoring '{company.get('name')}' via Gemini 1.5 Pro...")
-        return _gemini_score(company, philosophy, api_key)
-    else:
-        logger.info(f"Scoring '{company.get('name')}' via keyword fallback...")
-        return _keyword_score(company, philosophy)
+    """Legacy wrapper. Returns 1.0 for Qualified, 0.0 for Not a Fit."""
+    result = qualify_company(company)
+    return 1.0 if result["qualified"] else 0.0
 
 
 def generate_analysis_prompt(company_name: str, web_data: str, philosophy: AverroesPhilosophy) -> str:
-    thesis = philosophy.THESIS
-    return f"""
-    You are an expert Private Equity Investment Analyst for Averroes Capital.
-    Analyze the following company data and return a structured JSON evaluation.
-
-    COMPANY DATA:
-    {web_data}
-
-    AVERROES INVESTMENT PHILOSOPHY:
-    - Focus: {thesis['focus']}
-    - Geography: {', '.join(thesis['geography'])}
-    - Ownership: Strictly {', '.join(thesis['ownership'])}. REJECT any company with {', '.join(thesis['rejections'])} status.
-    - Target EBITDA: {thesis['target_ebitda']}
-
-    EVALUATION TASKS:
-    1. Verify B2B orientation (is the primary customer a business, not a consumer?).
-    2. Identify tech-enablement (do they use a platform, proprietary tech, or automation?).
-    3. Ascertain geographic HQ (UK or European focus scores higher).
-    4. Determine ownership structure (look for 'Self-funded', 'Family-owned', 'Bootstrapped').
-    5. Check for growth signals (hiring, awards, fast-growing revenue).
-
-    SCORING GUIDE:
-    - 0.9 - 1.0: Perfect thesis fit (UK/EU B2B SaaS, bootstrapped, strong growth).
-    - 0.7 - 0.89: Strong fit, minor gaps (e.g., correct sector but continental Europe only).
-    - 0.4 - 0.69: Partial fit (B2B but not tech-enabled, or geography uncertain).
-    - 0.0 - 0.39: Poor fit or disqualifier present (VC-backed, B2C, outside Europe).
-
-    RETURN FORMAT: A single JSON object with these exact keys:
-    {{
-        "name": "{company_name}",
-        "sector": "string",
-        "region": "string",
-        "ownership": "string",
-        "growth_signals": true or false,
-        "match_score": float between 0.0 and 1.0,
-        "status": "Qualified" or "Rejected",
-        "description": "string — one sentence summary of why this score was given"
-    }}
-    """
+    """Legacy — kept for backward compatibility."""
+    return _build_qualification_prompt({"name": company_name, "raw_data": web_data})

@@ -18,7 +18,7 @@ from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
 from services.pitchbook_service import parse_pitchbook_excel
 from services.outreach_service import draft_outreach_email, send_email
-from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt
+from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt, qualify_company, qualify_company_with_gemini
 from ai.enrichment import EnrichmentAgent
 from config.sourcing_config import SOURCING_CRITERIA
 
@@ -338,9 +338,8 @@ async def upload_custom_file(file: UploadFile = File(...)):
 
 @app.post("/smartfill/{company_name}")
 async def smartfill_company(company_name: str):
-    """SmartFill: AI score + internet search for founder/LinkedIn/website."""
+    """SmartFill: Qualify (UK/Ireland + Tech) + enrich founder/LinkedIn/website."""
     logger.info(f"SmartFill triggered for: {company_name}")
-    philosophy = AverroesPhilosophy()
     company_data = {"name": company_name}
     try:
         for c in bq_handler.get_universe():
@@ -349,17 +348,21 @@ async def smartfill_company(company_name: str):
                 break
     except Exception:
         pass
-    score = evaluate_target(company_data, philosophy)
-    ingestion_threshold = SOURCING_CRITERIA.get("min_ingestion_score", 0.3)
-    status = "Under Review" if score >= 0.6 else ("Qualified" if score >= ingestion_threshold else "Not a Fit")
+
+    # Step 1: Qualify via hard filters (Gemini if available, else keywords)
+    qual = qualify_company_with_gemini(company_data)
+    new_status = qual["status"]
+
+    # Step 2: Enrich with founder details
     founder_info = enrichment_agent.enrich_founder_details(company_name)
     website = founder_info.get("website", "")
+
+    # Step 3: Update BQ
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET match_score = @score, status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
-            bq_lib.ScalarQueryParameter("score", "FLOAT64", score),
-            bq_lib.ScalarQueryParameter("status", "STRING", status),
+            bq_lib.ScalarQueryParameter("status", "STRING", new_status),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
@@ -370,7 +373,63 @@ async def smartfill_company(company_name: str):
     except Exception as e:
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
-    return {"status": "Success", "company": company_name, "match_score": score, "new_status": status, "website": website, "contact_name": founder_info.get("contact_name",""), "contact_email": founder_info.get("contact_email",""), "linkedin_url": founder_info.get("linkedin_url","")}
+
+    return {
+        "status": "Success",
+        "company": company_name,
+        "new_status": new_status,
+        "is_uk_ireland": qual["is_uk_ireland"],
+        "is_tech": qual["is_tech"],
+        "reason": qual["reason"],
+        "website": website,
+        "contact_name": founder_info.get("contact_name", ""),
+        "contact_email": founder_info.get("contact_email", ""),
+        "linkedin_url": founder_info.get("linkedin_url", ""),
+    }
+
+
+@app.post("/requalify-all")
+async def requalify_all():
+    """Re-evaluate ALL companies in the universe against the two hard filters.
+    Updates status to Qualified or Not a Fit for every row."""
+    logger.info("Re-qualifying entire universe...")
+    universe = bq_handler.get_universe()
+    if not universe:
+        return {"status": "Complete", "message": "Universe is empty.", "qualified": 0, "rejected": 0}
+
+    qualified_count = 0
+    rejected_count = 0
+    errors = 0
+
+    from google.cloud import bigquery as bq_lib
+
+    for company in universe:
+        try:
+            qual = qualify_company(company)
+            new_status = qual["status"]
+
+            query = f"""UPDATE `{bq_handler.table_id}` SET status = @status WHERE name = @name"""
+            job_config = bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("status", "STRING", new_status),
+                bq_lib.ScalarQueryParameter("name", "STRING", company["name"]),
+            ])
+            bq_handler.client.query(query, job_config=job_config).result()
+
+            if qual["qualified"]:
+                qualified_count += 1
+            else:
+                rejected_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to requalify {company.get('name')}: {e}")
+            errors += 1
+
+    return {
+        "status": "Success",
+        "message": f"Re-qualified {len(universe)} companies.",
+        "qualified": qualified_count,
+        "rejected": rejected_count,
+        "errors": errors,
+    }
 
 
 @app.post("/enrich/{company_name}")

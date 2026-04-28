@@ -5,12 +5,52 @@ import Link from 'next/link';
 import { CompanyTarget } from "../types";
 import { dealApi } from "../services/api";
 
+// ── Filter helpers ──────────────────────────────────────────────────────────
+
+function isSaaSOrB2B(c: CompanyTarget): 'high' | 'medium' | 'low' {
+  const text = `${c.sector || ''} ${c.description || ''} ${c.keywords || ''} ${c.verticals || ''}`.toLowerCase();
+  const isB2B = ['b2b', 'enterprise', 'business', 'corporate', 'professional services', 'industrial', 'logistics'].some(k => text.includes(k));
+  const isSaaS = ['saas', 'software-as-a-service', 'platform-as-a-service'].some(k => text.includes(k));
+  const isSoftware = ['software', 'platform', 'cloud'].some(k => text.includes(k));
+  if (isB2B && (isSaaS || isSoftware)) return 'high';
+  if (isB2B || isSaaS || isSoftware) return 'medium';
+  return 'low';
+}
+
+function ownershipCategory(c: CompanyTarget): 'bootstrapped' | 'angel' | 'vc' | 'unknown' {
+  const text = `${c.ownership || ''} ${c.financing_status || ''} ${c.active_investors || ''}`.toLowerCase();
+  const vcSignals = ['vc-backed', 'pe-backed', 'venture capital', 'series a', 'series b', 'series c', 'series d', 'institutional'];
+  const bootstrapSignals = ['bootstrapped', 'founder-led', 'family-owned', 'management-owned', 'self-funded'];
+  const angelSignals = ['angel', 'seed', 'angel-backed', 'pre-seed'];
+  if (vcSignals.some(k => text.includes(k))) return 'vc';
+  if (bootstrapSignals.some(k => text.includes(k))) return 'bootstrapped';
+  if (angelSignals.some(k => text.includes(k))) return 'angel';
+  return 'unknown';
+}
+
+function growthCategory(c: CompanyTarget): 'fast' | 'steady' | 'unknown' {
+  const growthRate = c.revenue_growth_pct || c.pitchbook_growth_rate || 0;
+  const hasSignals = c.growth_signals;
+  const oppScore = c.opportunity_score || 0;
+  if (growthRate > 30 || (hasSignals && growthRate > 15) || oppScore > 70) return 'fast';
+  if (growthRate > 0 || hasSignals || oppScore > 30) return 'steady';
+  return 'unknown';
+}
+
+// ── Component ───────────────────────────────────────────────────────────────
+
 export default function Home() {
   const [pipeline, setPipeline] = useState<CompanyTarget[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState<string | null>(null);
-  const [stats, setStats] = useState({ total: 0, qualified: 0, avgMatch: 0 });
+  const [requalifying, setRequalifying] = useState(false);
+  const [stats, setStats] = useState({ total: 0, qualified: 0 });
+
+  // Filter states
+  const [filterSaaS, setFilterSaaS] = useState<'all' | 'high' | 'medium'>('all');
+  const [filterOwnership, setFilterOwnership] = useState<'all' | 'bootstrapped' | 'angel' | 'vc'>('all');
+  const [filterGrowth, setFilterGrowth] = useState<'all' | 'fast' | 'steady'>('all');
 
   useEffect(() => {
     loadData();
@@ -21,15 +61,12 @@ export default function Home() {
     try {
       const data = await dealApi.getPipeline();
       setPipeline(data);
-      
+
       const uni = await dealApi.getUniverse();
-      const qualified = data.filter(c => c.status === 'Qualified' || c.status === 'Under Review').length;
-      const avgMatch = data.length > 0 ? data.reduce((acc, curr) => acc + curr.match_score, 0) / data.length : 0;
-      
+
       setStats({
         total: uni.length,
-        qualified: qualified,
-        avgMatch: Math.round(avgMatch * 100)
+        qualified: data.length,
       });
     } catch (error) {
       console.error("Failed to load pipeline", error);
@@ -52,7 +89,21 @@ export default function Home() {
     }
   };
 
-  const [selectedVertical, setSelectedVertical] = useState<string>("All");
+  const handleRequalifyAll = async () => {
+    if (!confirm("This will re-evaluate ALL companies against the hard filters (UK/Ireland + Tech). Continue?")) return;
+    setRequalifying(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app'}/requalify-all`, { method: 'POST' });
+      const result = await response.json();
+      alert(`Re-qualification complete:\n${result.qualified} Qualified\n${result.rejected} Not a Fit\n${result.errors || 0} Errors`);
+      await loadData();
+    } catch (error) {
+      alert("Re-qualification failed. Check console.");
+      console.error(error);
+    } finally {
+      setRequalifying(false);
+    }
+  };
 
   const handleEnrich = async (name: string) => {
     try {
@@ -79,27 +130,49 @@ export default function Home() {
     return placeholders.includes(val) ? "" : val;
   };
 
-  const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Industrial", "E-commerce"];
-
+  // Apply filters
   const filteredPipeline = pipeline.filter(c => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = c.name.toLowerCase().includes(q) ||
       (c.sector && c.sector.toLowerCase().includes(q)) ||
       (c.description && c.description.toLowerCase().includes(q));
-    
-    const matchesVertical = selectedVertical === "All" || (c.sector && c.sector.toLowerCase().includes(selectedVertical.toLowerCase()));
-    
-    return matchesSearch && matchesVertical;
-  }).sort((a, b) => b.match_score - a.match_score);
+
+    // B2B SaaS filter
+    let matchesSaaS = true;
+    if (filterSaaS !== 'all') {
+      const level = isSaaSOrB2B(c);
+      if (filterSaaS === 'high') matchesSaaS = level === 'high';
+      else if (filterSaaS === 'medium') matchesSaaS = level === 'high' || level === 'medium';
+    }
+
+    // Ownership filter
+    let matchesOwnership = true;
+    if (filterOwnership !== 'all') {
+      matchesOwnership = ownershipCategory(c) === filterOwnership;
+    }
+
+    // Growth filter
+    let matchesGrowth = true;
+    if (filterGrowth !== 'all') {
+      const level = growthCategory(c);
+      if (filterGrowth === 'fast') matchesGrowth = level === 'fast';
+      else if (filterGrowth === 'steady') matchesGrowth = level === 'fast' || level === 'steady';
+    }
+
+    return matchesSearch && matchesSaaS && matchesOwnership && matchesGrowth;
+  });
+
+  // Count active filters
+  const activeFilterCount = [filterSaaS !== 'all', filterOwnership !== 'all', filterGrowth !== 'all'].filter(Boolean).length;
 
   return (
     <div className="layout-wrapper">
-      {/* Sidebar for Agents */}
+      {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo-section">
           <div className="logo">AVERROES<span>INTEL</span></div>
         </div>
-        
+
         <nav className="sidebar-nav">
           <div className="nav-group">
             <span className="group-label">Intelligence</span>
@@ -109,21 +182,21 @@ export default function Home() {
 
           <div className="nav-group">
             <span className="group-label">Sourcing Agents</span>
-            <button 
+            <button
               className={`agent-btn ${ingesting === 'Acquire.com' ? 'loading' : ''}`}
               onClick={() => handleIngest('marketplace', 'Acquire.com')}
               disabled={!!ingesting}
             >
               Monitor Acquire.com {ingesting === 'Acquire.com' && '...'}
             </button>
-            <button 
+            <button
               className={`agent-btn ${ingesting === 'Flippa' ? 'loading' : ''}`}
               onClick={() => handleIngest('marketplace', 'Flippa')}
               disabled={!!ingesting}
             >
               Monitor Flippa {ingesting === 'Flippa' && '...'}
             </button>
-            <button 
+            <button
               className={`agent-btn ${ingesting === 'FT 1000' ? 'loading' : ''}`}
               onClick={() => handleIngest('ranking', 'FT 1000')}
               disabled={!!ingesting}
@@ -136,6 +209,17 @@ export default function Home() {
               disabled={!!ingesting}
             >
               Scrape SaaStock {ingesting === 'SaaStock Europe' && '...'}
+            </button>
+          </div>
+
+          <div className="nav-group">
+            <span className="group-label">Actions</span>
+            <button
+              className={`agent-btn requalify-btn ${requalifying ? 'loading' : ''}`}
+              onClick={handleRequalifyAll}
+              disabled={requalifying}
+            >
+              {requalifying ? 'Re-qualifying...' : 'Re-qualify All'}
             </button>
           </div>
         </nav>
@@ -154,122 +238,168 @@ export default function Home() {
       <main className="main-content">
         <header className="page-header">
           <div className="header-left">
-            <h1>Active Deal Pipeline</h1>
-            <p className="subtitle">High-conviction targets matching Averroes philosophy.</p>
+            <h1>Deal Pipeline</h1>
+            <p className="subtitle">Qualified UK/Ireland tech companies. Use filters to narrow your focus.</p>
           </div>
           <div className="header-right">
             <div className="glass search-box">
-              <input 
-                type="text" 
-                placeholder="Filter by company, sector, or thesis..." 
+              <input
+                type="text"
+                placeholder="Search by company, sector, or keyword..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
-              <span className="search-icon">🔍</span>
+              <span className="search-icon">&#128269;</span>
             </div>
           </div>
         </header>
 
-        {/* Stats Section */}
+        {/* Stats */}
         <section className="dashboard-grid">
           <div className="stat-card glass animate-in" style={{ animationDelay: '0.1s' }}>
             <span className="label">Master Universe</span>
             <div className="value-wrap">
               <span className="value">{stats.total}</span>
-              <span className="unit">Targets</span>
+              <span className="unit">Total</span>
             </div>
           </div>
           <div className="stat-card glass animate-in" style={{ animationDelay: '0.2s' }}>
-            <span className="label">Qualified Assets</span>
+            <span className="label">Qualified (UK/IE + Tech)</span>
             <div className="value-wrap">
               <span className="value">{stats.qualified}</span>
-              <span className="unit">PE-Fit</span>
+              <span className="unit">Pipeline</span>
             </div>
           </div>
           <div className="stat-card glass animate-in" style={{ animationDelay: '0.3s' }}>
-            <span className="label">Avg Match Score</span>
+            <span className="label">Showing</span>
             <div className="value-wrap">
-              <span className="value">{stats.avgMatch}</span>
-              <span className="unit">% Fit</span>
+              <span className="value">{filteredPipeline.length}</span>
+              <span className="unit">{activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active` : 'No filters'}</span>
             </div>
           </div>
         </section>
 
-        {/* Pipeline Controls */}
-        <div className="pipeline-controls animate-in" style={{ animationDelay: '0.4s' }}>
-          <div className="vertical-tabs">
-            {verticals.map(v => (
-              <button 
-                key={v} 
-                className={`tab-btn ${selectedVertical === v ? 'active' : ''}`}
-                onClick={() => setSelectedVertical(v)}
-              >
-                {v}
-              </button>
-            ))}
+        {/* Filter Controls */}
+        <div className="filter-bar animate-in" style={{ animationDelay: '0.4s' }}>
+          <div className="filter-group">
+            <label className="filter-label">B2B SaaS Fit</label>
+            <div className="filter-options">
+              <button className={`filter-btn ${filterSaaS === 'all' ? 'active' : ''}`} onClick={() => setFilterSaaS('all')}>All</button>
+              <button className={`filter-btn ${filterSaaS === 'high' ? 'active' : ''}`} onClick={() => setFilterSaaS('high')}>B2B SaaS</button>
+              <button className={`filter-btn ${filterSaaS === 'medium' ? 'active' : ''}`} onClick={() => setFilterSaaS('medium')}>B2B + Tech</button>
+            </div>
           </div>
+
+          <div className="filter-group">
+            <label className="filter-label">Ownership</label>
+            <div className="filter-options">
+              <button className={`filter-btn ${filterOwnership === 'all' ? 'active' : ''}`} onClick={() => setFilterOwnership('all')}>All</button>
+              <button className={`filter-btn ${filterOwnership === 'bootstrapped' ? 'active' : ''}`} onClick={() => setFilterOwnership('bootstrapped')}>Bootstrapped</button>
+              <button className={`filter-btn ${filterOwnership === 'angel' ? 'active' : ''}`} onClick={() => setFilterOwnership('angel')}>Angel</button>
+              <button className={`filter-btn ${filterOwnership === 'vc' ? 'active' : ''}`} onClick={() => setFilterOwnership('vc')}>VC-backed</button>
+            </div>
+          </div>
+
+          <div className="filter-group">
+            <label className="filter-label">Growth</label>
+            <div className="filter-options">
+              <button className={`filter-btn ${filterGrowth === 'all' ? 'active' : ''}`} onClick={() => setFilterGrowth('all')}>All</button>
+              <button className={`filter-btn ${filterGrowth === 'fast' ? 'active' : ''}`} onClick={() => setFilterGrowth('fast')}>Fast Growth</button>
+              <button className={`filter-btn ${filterGrowth === 'steady' ? 'active' : ''}`} onClick={() => setFilterGrowth('steady')}>Growing</button>
+            </div>
+          </div>
+
+          {activeFilterCount > 0 && (
+            <button className="clear-filters-btn" onClick={() => { setFilterSaaS('all'); setFilterOwnership('all'); setFilterGrowth('all'); }}>
+              Clear all filters
+            </button>
+          )}
         </div>
 
-        {/* Pipeline Section */}
+        {/* Pipeline Cards */}
         <section className="pipeline-section animate-in" style={{ animationDelay: '0.5s' }}>
           <div className="section-header">
-            <h3>Top Recommendations</h3>
-            <button className="button-tiny" onClick={loadData}>Refresh Data ↻</button>
+            <h3>Qualified Companies ({filteredPipeline.length})</h3>
+            <button className="button-tiny" onClick={loadData}>Refresh Data &#8635;</button>
           </div>
-          
+
           <div className="cards-grid">
             {loading ? (
               [1, 2, 3, 4].map(i => <div key={i} className="card glass skeleton-card"></div>)
             ) : filteredPipeline.length > 0 ? (
-              filteredPipeline.map((company, i) => (
-                <div key={i} className="card glass deal-card">
-                  <div className="card-top">
-                    <span className="match-tag" style={{
-                      color: company.match_score >= 0.8 ? 'var(--green)' : 'var(--gold)',
-                      borderColor: company.match_score >= 0.8 ? 'var(--green-glow)' : 'var(--gold-muted)'
-                    }}>
-                      {Math.round(company.match_score * 100)}% Match
-                    </span>
-                    <span className="source-label">{company.source}</span>
-                  </div>
-                  
-                  <h4>{company.name}</h4>
-                  <p className="sector">{company.sector}</p>
-                  <p className="description">{company.description}</p>
-                  
-                  <div className="meta-info">
-                    <div className="info-item">
-                      <span className="label">Region</span>
-                      <span className="value">{company.region || 'UK/Europe'}</span>
+              filteredPipeline.map((company, i) => {
+                const saasLevel = isSaaSOrB2B(company);
+                const ownLevel = ownershipCategory(company);
+                const growLevel = growthCategory(company);
+                return (
+                  <div key={i} className="card glass deal-card">
+                    <div className="card-top">
+                      <div className="tag-row">
+                        <span className={`fit-tag tag-${saasLevel}`}>
+                          {saasLevel === 'high' ? 'B2B SaaS' : saasLevel === 'medium' ? 'B2B Tech' : 'Tech'}
+                        </span>
+                        <span className={`fit-tag tag-own-${ownLevel}`}>
+                          {ownLevel === 'bootstrapped' ? 'Bootstrapped' : ownLevel === 'angel' ? 'Angel' : ownLevel === 'vc' ? 'VC-backed' : '—'}
+                        </span>
+                        {growLevel !== 'unknown' && (
+                          <span className={`fit-tag tag-grow-${growLevel}`}>
+                            {growLevel === 'fast' ? 'Fast Growth' : 'Growing'}
+                          </span>
+                        )}
+                      </div>
+                      <span className="source-label">{company.source}</span>
                     </div>
-                    <div className="info-item">
-                      <span className="label">Structure</span>
-                      <span className="value">{company.ownership || 'Founder-led'}</span>
-                    </div>
-                  </div>
 
-                  <div className="founder-highlight glass">
-                    <div className="founder-header">
-                      <span className="founder-label">Leadership</span>
-                      <button className="enrich-btn" onClick={() => handleEnrich(company.name)}>Enrich Meta →</button>
-                    </div>
-                    <p className="founder-name" style={{ opacity: sanitizeContact(company.contact_name) ? 1 : 0.4 }}>
-                      {sanitizeContact(company.contact_name) || 'Contact Hidden'}
-                    </p>
-                    <p className="founder-email" style={{ opacity: sanitizeContact(company.contact_email) ? 1 : 0.4 }}>
-                      {sanitizeContact(company.contact_email) || 'Sync required for email'}
-                    </p>
-                  </div>
+                    <h4>{company.name}</h4>
+                    <p className="sector">{company.sector}</p>
+                    <p className="description">{company.description}</p>
 
-                  <div className="card-footer">
-                    <a href={company.website} target="_blank" rel="noreferrer" className="view-link">Visit Website ↗</a>
-                    <button className="button-action" onClick={() => handleDeepDive(company.name)}>Analyze Deep-Dive</button>
+                    <div className="meta-info">
+                      <div className="info-item">
+                        <span className="label">Region</span>
+                        <span className="value">{company.region || company.hq_country || 'UK/Ireland'}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="label">Structure</span>
+                        <span className="value">{company.ownership || '—'}</span>
+                      </div>
+                      {company.employees ? (
+                        <div className="info-item">
+                          <span className="label">Employees</span>
+                          <span className="value">{company.employees}</span>
+                        </div>
+                      ) : null}
+                      {company.revenue_m ? (
+                        <div className="info-item">
+                          <span className="label">Revenue</span>
+                          <span className="value">&pound;{company.revenue_m}M</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="founder-highlight glass">
+                      <div className="founder-header">
+                        <span className="founder-label">Leadership</span>
+                        <button className="enrich-btn" onClick={() => handleEnrich(company.name)}>Enrich Meta &rarr;</button>
+                      </div>
+                      <p className="founder-name" style={{ opacity: sanitizeContact(company.contact_name) ? 1 : 0.4 }}>
+                        {sanitizeContact(company.contact_name) || 'Contact Hidden'}
+                      </p>
+                      <p className="founder-email" style={{ opacity: sanitizeContact(company.contact_email) ? 1 : 0.4 }}>
+                        {sanitizeContact(company.contact_email) || 'Sync required for email'}
+                      </p>
+                    </div>
+
+                    <div className="card-footer">
+                      <a href={company.website} target="_blank" rel="noreferrer" className="view-link">Visit Website &#8599;</a>
+                      <button className="button-action" onClick={() => handleDeepDive(company.name)}>Analyze Deep-Dive</button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="empty-state glass">
-                <p>No matches found. Try running a sourcing agent from the sidebar.</p>
+                <p>{activeFilterCount > 0 ? 'No companies match your current filters. Try broadening them.' : 'No qualified companies yet. Run a sourcing agent and SmartFill from the Master Universe.'}</p>
               </div>
             )}
           </div>
@@ -367,6 +497,17 @@ export default function Home() {
           border-color: var(--gold);
         }
 
+        .requalify-btn {
+          border-color: var(--primary-blue);
+          color: var(--primary-blue);
+          font-weight: 700;
+        }
+
+        .requalify-btn:hover:not(:disabled) {
+          background: var(--primary-blue);
+          color: var(--white);
+        }
+
         .sidebar-footer {
           padding: 1.5rem;
           border-top: 1px solid var(--border-glass);
@@ -425,7 +566,7 @@ export default function Home() {
           .sidebar {
             width: 80px;
           }
-          .sidebar .logo span, 
+          .sidebar .logo span,
           .sidebar .group-label,
           .sidebar .nav-item,
           .sidebar .agent-btn,
@@ -452,6 +593,9 @@ export default function Home() {
            .search-box {
              width: 100%;
              min-width: 0;
+           }
+           .filter-bar {
+             flex-direction: column;
            }
         }
 
@@ -487,66 +631,118 @@ export default function Home() {
           outline: none;
           font-size: 1rem;
         }
-        
-        .search-box :global(svg) {
-          color: var(--text-dim);
-        }
 
-        /* Stats Row */
-        .stats-row {
+        /* Stats */
+        .dashboard-grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
           gap: 2rem;
-          margin-bottom: 4rem;
-        }
-
-        @media (max-width: 1100px) {
-          .stats-row {
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-          }
+          margin-bottom: 2rem;
         }
 
         .stat-card {
           display: flex;
           flex-direction: column;
           gap: 0.5rem;
+          padding: 1.5rem;
+          background: var(--white);
+          border: 1px solid var(--border-light);
+          border-radius: var(--radius-md);
         }
 
-        .stat-label {
-          font-size: 0.8rem;
+        .stat-card .label {
+          font-size: 0.75rem;
           text-transform: uppercase;
           letter-spacing: 0.1em;
           color: var(--text-secondary);
         }
 
-        .stat-value {
+        .value-wrap {
+          display: flex;
+          align-items: baseline;
+          gap: 0.5rem;
+        }
+
+        .value-wrap .value {
           font-size: 2.5rem;
           font-weight: 800;
           color: var(--text-primary);
         }
 
-        .stat-trend {
-          font-size: 0.75rem;
+        .value-wrap .unit {
+          font-size: 0.8rem;
           color: var(--text-dim);
         }
 
-        .stat-trend.positive {
-          color: var(--green);
+        /* Filter Bar */
+        .filter-bar {
+          display: flex;
+          gap: 2rem;
+          align-items: flex-end;
+          padding: 1.5rem 2rem;
+          background: var(--white);
+          border: 1px solid var(--border-light);
+          border-radius: var(--radius-md);
+          margin-bottom: 2rem;
+          flex-wrap: wrap;
         }
 
-        .stat-progress {
-          height: 4px;
-          background: var(--bg-tertiary);
-          border-radius: 2px;
-          margin-top: 1rem;
-          overflow: hidden;
+        .filter-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
         }
 
-        .progress-bar {
-          height: 100%;
-          background: var(--gold);
-          box-shadow: 0 0 10px var(--gold-glow);
+        .filter-label {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: var(--text-dim);
+          font-weight: 700;
+        }
+
+        .filter-options {
+          display: flex;
+          gap: 0.35rem;
+        }
+
+        .filter-btn {
+          padding: 0.4rem 0.85rem;
+          border: 1px solid var(--border-light);
+          border-radius: 20px;
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 0.78rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+          white-space: nowrap;
+        }
+
+        .filter-btn:hover {
+          border-color: var(--primary-blue);
+          color: var(--primary-blue);
+        }
+
+        .filter-btn.active {
+          background: var(--primary-blue);
+          color: var(--white);
+          border-color: var(--primary-blue);
+        }
+
+        .clear-filters-btn {
+          background: none;
+          border: none;
+          color: var(--text-dim);
+          font-size: 0.78rem;
+          cursor: pointer;
+          text-decoration: underline;
+          padding: 0.4rem 0;
+          margin-left: auto;
+        }
+
+        .clear-filters-btn:hover {
+          color: var(--text-primary);
         }
 
         /* Cards Grid */
@@ -581,24 +777,72 @@ export default function Home() {
         .card-top {
           display: flex;
           justify-content: space-between;
-          align-items: center;
+          align-items: flex-start;
           margin-bottom: 1.5rem;
+          gap: 0.5rem;
         }
 
-        .match-tag {
-          font-size: 0.75rem;
-          font-weight: 900;
+        .tag-row {
+          display: flex;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+        }
+
+        .fit-tag {
+          font-size: 0.65rem;
+          font-weight: 800;
           text-transform: uppercase;
-          border: 1px solid;
-          padding: 0.25rem 0.75rem;
+          padding: 0.2rem 0.6rem;
           border-radius: 4px;
+          letter-spacing: 0.03em;
+        }
+
+        .tag-high {
+          background: #dcfce7;
+          color: #166534;
+        }
+        .tag-medium {
+          background: #fef9c3;
+          color: #854d0e;
+        }
+        .tag-low {
+          background: #f3f4f6;
+          color: #6b7280;
+        }
+
+        .tag-own-bootstrapped {
+          background: #dbeafe;
+          color: #1e40af;
+        }
+        .tag-own-angel {
+          background: #ede9fe;
+          color: #5b21b6;
+        }
+        .tag-own-vc {
+          background: #fef3c7;
+          color: #92400e;
+        }
+        .tag-own-unknown {
+          background: #f3f4f6;
+          color: #6b7280;
+        }
+
+        .tag-grow-fast {
+          background: #d1fae5;
+          color: #065f46;
+        }
+        .tag-grow-steady {
+          background: #e0f2fe;
+          color: #0c4a6e;
         }
 
         .source-label {
-          font-size: 0.7rem;
+          font-size: 0.65rem;
           color: var(--text-dim);
           text-transform: uppercase;
           letter-spacing: 0.05em;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
 
         h4 {

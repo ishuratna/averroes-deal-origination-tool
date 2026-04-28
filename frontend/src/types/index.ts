@@ -11,6 +11,7 @@ export interface CompanyTarget {
   contact_name?: string;
   contact_email?: string;
   linkedin_url?: string;
+  growth_signals?: boolean;
   status: 'Qualified' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped' | 'Uploaded';
   ingested_at?: string;
   // Expanded PitchBook fields
