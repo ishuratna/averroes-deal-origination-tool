@@ -390,45 +390,50 @@ async def smartfill_company(company_name: str):
 
 @app.post("/requalify-all")
 async def requalify_all():
-    """Re-evaluate ALL companies in the universe against the two hard filters.
-    Updates status to Qualified or Not a Fit for every row."""
+    """Re-evaluate ALL companies against the two hard filters (UK/Ireland + Tech).
+    Uses TWO batch UPDATE queries instead of one per company — fast and safe."""
     logger.info("Re-qualifying entire universe...")
     universe = bq_handler.get_universe()
     if not universe:
         return {"status": "Complete", "message": "Universe is empty.", "qualified": 0, "rejected": 0}
 
-    qualified_count = 0
-    rejected_count = 0
-    errors = 0
+    # Classify every company in-memory first (no BQ calls)
+    qualified_names = []
+    rejected_names = []
+    for company in universe:
+        qual = qualify_company(company)
+        if qual["qualified"]:
+            qualified_names.append(company["name"])
+        else:
+            rejected_names.append(company["name"])
 
     from google.cloud import bigquery as bq_lib
 
-    for company in universe:
+    # Batch update: set all qualified companies in one query
+    if qualified_names:
         try:
-            qual = qualify_company(company)
-            new_status = qual["status"]
-
-            query = f"""UPDATE `{bq_handler.table_id}` SET status = @status WHERE name = @name"""
-            job_config = bq_lib.QueryJobConfig(query_parameters=[
-                bq_lib.ScalarQueryParameter("status", "STRING", new_status),
-                bq_lib.ScalarQueryParameter("name", "STRING", company["name"]),
-            ])
-            bq_handler.client.query(query, job_config=job_config).result()
-
-            if qual["qualified"]:
-                qualified_count += 1
-            else:
-                rejected_count += 1
+            names_list = ", ".join([f"'{n}'" for n in qualified_names])
+            query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Qualified' WHERE name IN ({names_list})"""
+            bq_handler.client.query(query).result()
+            logger.info(f"Batch-qualified {len(qualified_names)} companies.")
         except Exception as e:
-            logger.warning(f"Failed to requalify {company.get('name')}: {e}")
-            errors += 1
+            logger.error(f"Batch qualify failed: {e}")
+
+    # Batch update: set all rejected companies in one query
+    if rejected_names:
+        try:
+            names_list = ", ".join([f"'{n}'" for n in rejected_names])
+            query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit' WHERE name IN ({names_list})"""
+            bq_handler.client.query(query).result()
+            logger.info(f"Batch-rejected {len(rejected_names)} companies.")
+        except Exception as e:
+            logger.error(f"Batch reject failed: {e}")
 
     return {
         "status": "Success",
         "message": f"Re-qualified {len(universe)} companies.",
-        "qualified": qualified_count,
-        "rejected": rejected_count,
-        "errors": errors,
+        "qualified": len(qualified_names),
+        "rejected": len(rejected_names),
     }
 
 
