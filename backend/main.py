@@ -353,20 +353,22 @@ async def smartfill_company(company_name: str):
     qual = qualify_company_with_gemini(company_data)
     new_status = qual["status"]
 
-    # Step 2: Enrich with founder details
+    # Step 2: Enrich with founder details + company description
     founder_info = enrichment_agent.enrich_founder_details(company_name)
     website = founder_info.get("website", "")
+    description = founder_info.get("description", "")
 
     # Step 3: Update BQ
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url, description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("status", "STRING", new_status),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
+            bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
         bq_handler.client.query(query, job_config=job_config).result()
@@ -385,6 +387,7 @@ async def smartfill_company(company_name: str):
         "contact_name": founder_info.get("contact_name", ""),
         "contact_email": founder_info.get("contact_email", ""),
         "linkedin_url": founder_info.get("linkedin_url", ""),
+        "description": description,
     }
 
 

@@ -1,7 +1,7 @@
 """
 Outreach Service
-Generates personalised PE/growth capital outreach emails using Gemini AI,
-and sends them via Gmail SMTP.
+Generates personalised PE/growth capital outreach emails using Gemini AI.
+Uses company data already saved in BQ (from SmartFill) — no extra Google Search calls.
 """
 import os
 import json
@@ -22,8 +22,8 @@ SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 
 def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
     """
-    Use Gemini + Google Search to draft a personalised outreach email.
-    Strategy: use BQ data first, scrape website if description is sparse.
+    Use Gemini to draft a personalised outreach email.
+    Uses ONLY the company data already in BQ — no Google Search, saving AI credits.
     Returns: {"subject": "...", "body": "...", "to": "..."}
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -43,16 +43,6 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
     year_founded = company_data.get("year_founded", "")
     keywords = company_data.get("keywords", "")
     financing_status = company_data.get("financing_status", "")
-
-    # Determine if we have enough context or need website research
-    has_good_context = bool(description and len(str(description)) > 50)
-    research_instruction = ""
-    if not has_good_context and website:
-        research_instruction = f"""
-        IMPORTANT: The company description is thin. Please use Google Search to research
-        {name}'s website ({website}) and recent news to understand what they do,
-        their products, and any recent milestones. Use this research to personalise the email.
-        """
 
     # Build context block from BQ data
     context_parts = []
@@ -87,9 +77,7 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
 
     Write a SHORT, warm, personalised outreach email to {contact_name or 'the founder'} at {name}.
 
-    {research_instruction}
-
-    COMPANY INTELLIGENCE:
+    COMPANY INTELLIGENCE (from our database — use this to personalise):
     {company_context}
 
     EMAIL GUIDELINES:
@@ -113,20 +101,22 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
 
     try:
         from google import genai
-        from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+        from google.genai.types import GenerateContentConfig
 
         client = genai.Client(api_key=api_key)
 
-        # Use Google Search grounding when we need to research the company
-        tools = [Tool(google_search=GoogleSearch())] if (not has_good_context or research_instruction) else []
-
+        # No Google Search — just Gemini with the data we already have
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
-            config=GenerateContentConfig(tools=tools) if tools else None,
         )
 
-        text = response.text.strip()
+        text = response.text
+        if not text:
+            logger.warning(f"Gemini returned empty response for outreach to {name}")
+            return _fallback_template(company_data)
+
+        text = text.strip()
         # Strip markdown code fences if present
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()

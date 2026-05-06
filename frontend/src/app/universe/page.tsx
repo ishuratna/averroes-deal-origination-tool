@@ -142,6 +142,12 @@ export default function Universe() {
                     <span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.reason}</span>
                   </div>
                 )}
+                {smartFillResult.description && (
+                  <div className="result-description">
+                    <span className="result-label">Company Summary</span>
+                    <p className="description-text">{smartFillResult.description}</p>
+                  </div>
+                )}
                 <div className="result-row">
                   <span className="result-label">Website</span>
                   <span className={`result-value ${smartFillResult.website ? 'found' : 'not-found'}`}>
@@ -514,6 +520,9 @@ export default function Universe() {
         .result-value.low { color: #FF4D4D; }
         .result-value.not-found { color: #FF4D4D; font-style: italic; }
         .result-value a { color: #0A66C2; text-decoration: underline; word-break: break-all; }
+        .result-description { padding: 1rem; border-radius: 8px; background: var(--bg-secondary); margin-top: 0.5rem; }
+        .result-description .result-label { display: block; margin-bottom: 0.5rem; font-size: 0.8rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+        .description-text { font-size: 0.88rem; color: var(--text-primary); line-height: 1.65; margin: 0; white-space: pre-wrap; }
         .modal-footer { padding: 1rem 2rem 1.5rem; display: flex; justify-content: flex-end; }
         .modal-ok-btn { background: var(--primary-blue, #2563EB); color: white; border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
         .modal-ok-btn:hover { opacity: 0.9; }
