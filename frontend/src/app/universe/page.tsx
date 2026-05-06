@@ -21,7 +21,6 @@ export default function Universe() {
     vertical: "All",
     region: "All",
     status: "All",
-    minScore: 0
   });
 
   const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
@@ -65,8 +64,7 @@ export default function Universe() {
     const matchesRegion = filters.region === "All" || (c.region && c.region.toLowerCase().includes(filters.region.toLowerCase()));
     const matchesUKIE = filters.region === "UK/Ireland" && (c.region?.toLowerCase().includes("uk") || c.region?.toLowerCase().includes("ireland") || c.region?.toLowerCase().includes("united kingdom"));
     const matchesStatus = filters.status === "All" || c.status === filters.status;
-    const matchesScore = (c.match_score * 100) >= filters.minScore;
-    return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus && matchesScore;
+    return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus;
   });
 
   const formatDate = (dateStr?: string) => {
@@ -123,15 +121,27 @@ export default function Universe() {
               <div className="result-company-name">{smartFillResult.company}</div>
               <div className="result-grid">
                 <div className="result-row">
-                  <span className="result-label">AI Match Score</span>
-                  <span className={`result-value ${smartFillResult.match_score >= 0.6 ? 'found' : smartFillResult.match_score >= 0.3 ? 'partial' : 'low'}`}>
-                    {Math.round(smartFillResult.match_score * 100)}%
+                  <span className="result-label">Status</span>
+                  <span className={`result-value ${smartFillResult.new_status === 'Qualified' ? 'found' : 'low'}`}>{smartFillResult.new_status}</span>
+                </div>
+                <div className="result-row">
+                  <span className="result-label">UK/Ireland</span>
+                  <span className={`result-value ${smartFillResult.is_uk_ireland ? 'found' : 'not-found'}`}>
+                    {smartFillResult.is_uk_ireland ? 'Yes' : 'No'}
                   </span>
                 </div>
                 <div className="result-row">
-                  <span className="result-label">Status</span>
-                  <span className="result-value found">{smartFillResult.new_status}</span>
+                  <span className="result-label">Tech Company</span>
+                  <span className={`result-value ${smartFillResult.is_tech ? 'found' : 'not-found'}`}>
+                    {smartFillResult.is_tech ? 'Yes' : 'No'}
+                  </span>
                 </div>
+                {smartFillResult.reason && (
+                  <div className="result-row">
+                    <span className="result-label">Reason</span>
+                    <span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.reason}</span>
+                  </div>
+                )}
                 <div className="result-row">
                   <span className="result-label">Website</span>
                   <span className={`result-value ${smartFillResult.website ? 'found' : 'not-found'}`}>
@@ -323,12 +333,8 @@ export default function Universe() {
               {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div className="filter-group">
-            <label>Min Score ({filters.minScore}%)</label>
-            <input type="range" min="0" max="100" step="5" value={filters.minScore} onChange={(e) => setFilters({...filters, minScore: parseInt(e.target.value)})} className="score-slider" />
-          </div>
           <div className="filter-actions">
-            <button className="button-reset" onClick={() => setFilters({vertical: "All", region: "All", status: "All", minScore: 0})}>Reset Filters</button>
+            <button className="button-reset" onClick={() => setFilters({vertical: "All", region: "All", status: "All"})}>Reset Filters</button>
           </div>
         </section>
 
@@ -352,7 +358,6 @@ export default function Universe() {
                   <th>Raised</th>
                   <th>Valuation</th>
                   <th>Status</th>
-                  <th>Score</th>
                   <th>Leadership</th>
                   <th>Email</th>
                   <th>LinkedIn</th>
@@ -364,7 +369,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={15}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={14}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -382,7 +387,6 @@ export default function Universe() {
                       <td className="num-cell">{company.total_raised_m ? `\u00A3${company.total_raised_m.toFixed(1)}M` : '\u2014'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `\u00A3${company.valuation_estimate_m.toFixed(1)}M` : '\u2014'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>{company.status}</span></td>
-                      <td><span className="score-val" style={{ color: company.match_score >= 0.7 ? 'var(--green)' : 'var(--gold)' }}>{Math.round(company.match_score * 100)}%</span></td>
                       <td>{company.contact_name || '\u2014'}</td>
                       <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '\u2014'}</td>
                       <td>{company.linkedin_url ? (<a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>) : '\u2014'}</td>
@@ -407,7 +411,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={15} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
+                  <tr><td colSpan={14} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
