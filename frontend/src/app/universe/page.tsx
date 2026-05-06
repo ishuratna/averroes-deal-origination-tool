@@ -16,6 +16,7 @@ export default function Universe() {
   const [outreachDraft, setOutreachDraft] = useState<{to: string; subject: string; body: string; company: string} | null>(null);
   const [outreachLoading, setOutreachLoading] = useState(false);
   const [outreachSent, setOutreachSent] = useState(false);
+  const [descriptionPopup, setDescriptionPopup] = useState<{name: string; description: string} | null>(null);
   
   const [filters, setFilters] = useState({
     vertical: "All",
@@ -239,6 +240,23 @@ export default function Universe() {
         </div>
       )}
 
+      {descriptionPopup && (
+        <div className="modal-overlay" onClick={() => setDescriptionPopup(null)}>
+          <div className="modal-content desc-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{descriptionPopup.name}</h3>
+              <button className="modal-close" onClick={() => setDescriptionPopup(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p className="desc-popup-text">{descriptionPopup.description || 'No description available. Run SmartFill on this company first.'}</p>
+            </div>
+            <div className="modal-footer">
+              <button className="modal-ok-btn" onClick={() => setDescriptionPopup(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <aside className="sidebar">
         <div className="logo-section">
           <div className="logo">AVERROES<span>INTEL</span></div>
@@ -369,13 +387,14 @@ export default function Universe() {
                   <th>LinkedIn</th>
                   <th>Source</th>
                   <th>Date</th>
+                  <th>Description</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={14}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={15}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -399,6 +418,13 @@ export default function Universe() {
                       <td className="source-cell">{company.source}</td>
                       <td className="date-cell">{formatDate(company.ingested_at)}</td>
                       <td>
+                        {company.description ? (
+                          <button className="desc-btn" onClick={() => setDescriptionPopup({name: company.name, description: company.description})}>View</button>
+                        ) : (
+                          <span style={{color: 'var(--text-dim)', fontSize: '0.8rem'}}>—</span>
+                        )}
+                      </td>
+                      <td>
                         <div className="action-btns">
                           <button className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`} disabled={smartFilling === company.name}
                             onClick={async () => {
@@ -417,7 +443,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={14} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
+                  <tr><td colSpan={15} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
@@ -523,6 +549,10 @@ export default function Universe() {
         .result-description { padding: 1rem; border-radius: 8px; background: var(--bg-secondary); margin-top: 0.5rem; }
         .result-description .result-label { display: block; margin-bottom: 0.5rem; font-size: 0.8rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
         .description-text { font-size: 0.88rem; color: var(--text-primary); line-height: 1.65; margin: 0; white-space: pre-wrap; }
+        .desc-btn { background: transparent; border: 1px solid var(--primary-blue); color: var(--primary-blue); padding: 0.3rem 0.7rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+        .desc-btn:hover { background: var(--primary-blue); color: white; }
+        .desc-modal { width: 600px; }
+        .desc-popup-text { font-size: 0.95rem; color: var(--text-primary); line-height: 1.7; white-space: pre-wrap; margin: 0; }
         .modal-footer { padding: 1rem 2rem 1.5rem; display: flex; justify-content: flex-end; }
         .modal-ok-btn { background: var(--primary-blue, #2563EB); color: white; border: none; padding: 0.6rem 2rem; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
         .modal-ok-btn:hover { opacity: 0.9; }
