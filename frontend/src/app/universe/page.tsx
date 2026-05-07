@@ -530,12 +530,12 @@ export default function Universe() {
         .smartfill-btn.filling { opacity: 0.5; cursor: wait; border-color: var(--gold); color: var(--gold); }
         .skeleton-line { height: 12px; background: var(--bg-tertiary); width: 100%; border-radius: 2px; animation: loading-shimmer 1.5s infinite; }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); }
-        .modal-content { background: white; border-radius: 12px; width: 520px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+        .modal-content { background: white; border-radius: 12px; width: 520px; max-width: 90vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
         .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 2rem; border-bottom: 1px solid var(--border-light); }
         .modal-header h3 { font-size: 1.1rem; font-weight: 800; color: var(--text-primary); margin: 0; }
         .modal-close { background: none; border: none; font-size: 1.5rem; color: var(--text-dim); cursor: pointer; padding: 0; line-height: 1; }
         .modal-close:hover { color: var(--text-primary); }
-        .modal-body { padding: 2rem; }
+        .modal-body { padding: 2rem; overflow-y: auto; flex: 1; }
         .result-company-name { font-size: 1.3rem; font-weight: 900; color: var(--text-primary); margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--primary-blue); }
         .result-grid { display: flex; flex-direction: column; gap: 0.75rem; }
         .result-row { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-radius: 8px; background: var(--bg-secondary); }
