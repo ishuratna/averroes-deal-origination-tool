@@ -12,7 +12,7 @@ export interface CompanyTarget {
   contact_email?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
-  status: 'Qualified' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped' | 'Uploaded';
+  status: 'Qualified' | 'Contacted' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped' | 'Uploaded';
   ingested_at?: string;
   // Expanded PitchBook fields
   contact_title?: string;
@@ -63,8 +63,23 @@ export interface CompanyTarget {
   financing_note?: string;
 }
 
+export interface ActivityEntry {
+  id: string;
+  company_name: string;
+  action_type: 'status_change' | 'note' | 'outreach_sent';
+  old_status?: string;
+  new_status?: string;
+  note_text?: string;
+  created_by: string;
+  created_at: string;
+}
+
 export interface PipelineMetrics {
   totalTargets: number;
   avgMatchScore: number;
   totalEbitdaValue: number;
 }
+
+// Deal stages in pipeline order
+export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
+export type DealStage = typeof DEAL_STAGES[number];

@@ -531,6 +531,49 @@ async def send_outreach(req: OutreachSendRequest):
     return result
 
 
+# ── Deal Lifecycle Endpoints ─────────────────────────────────────────────────
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+    created_by: Optional[str] = "Ishu Ratna"
+
+class NoteRequest(BaseModel):
+    note: str
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+@app.put("/company/{company_name}/status")
+async def update_company_status(company_name: str, req: StatusUpdateRequest):
+    """Update a company's deal stage and log the change."""
+    valid_stages = bq_handler.DEAL_STAGES
+    if req.status not in valid_stages:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_stages}")
+
+    success = bq_handler.update_company_status(company_name, req.status, req.created_by)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update status.")
+    return {"status": "Success", "company": company_name, "new_status": req.status}
+
+
+@app.post("/company/{company_name}/notes")
+async def add_company_note(company_name: str, req: NoteRequest):
+    """Add a note to a company's activity log."""
+    if not req.note.strip():
+        raise HTTPException(status_code=400, detail="Note cannot be empty.")
+
+    success = bq_handler.add_activity_note(company_name, req.note, req.created_by)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save note.")
+    return {"status": "Success", "company": company_name, "note": req.note}
+
+
+@app.get("/company/{company_name}/activity")
+async def get_company_activity(company_name: str, limit: int = Query(50, description="Max entries to return")):
+    """Get the full activity timeline for a company."""
+    activity = bq_handler.get_activity_log(company_name, limit)
+    return {"company": company_name, "activity": activity, "count": len(activity)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

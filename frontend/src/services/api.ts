@@ -1,4 +1,4 @@
-import { CompanyTarget } from "../types";
+import { CompanyTarget, ActivityEntry } from "../types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
@@ -98,5 +98,37 @@ export const dealApi = {
     try { data = await response.json(); } catch (e) { throw new Error(`Send failed: ${response.statusText}`); }
     if (!response.ok) { throw new Error(data.detail || 'Email send failed'); }
     return data;
-  }
+  },
+
+  // ── Deal Lifecycle ──────────────────────────────────────────────────────────
+
+  async updateCompanyStatus(companyName: string, status: string, createdBy?: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, created_by: createdBy || 'Ishu Ratna' }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Status update failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Status update failed'); }
+    return data;
+  },
+
+  async addCompanyNote(companyName: string, note: string, createdBy?: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note, created_by: createdBy || 'Ishu Ratna' }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Note save failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Note save failed'); }
+    return data;
+  },
+
+  async getCompanyActivity(companyName: string, limit: number = 50): Promise<{ company: string; activity: ActivityEntry[]; count: number }> {
+    const response = await fetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/activity?limit=${limit}`);
+    if (!response.ok) throw new Error('Failed to fetch activity');
+    return await response.json();
+  },
 };

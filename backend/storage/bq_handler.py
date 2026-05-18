@@ -15,11 +15,13 @@ class BigQueryHandler:
         self.project_id = project_id
         self.dataset_id = dataset_id
         self.table_id = f"{self.project_id}.{self.dataset_id}.targets"
-        
+        self.activity_table_id = f"{self.project_id}.{self.dataset_id}.activity_log"
+
         self.init_error = None
         try:
             self.client = bigquery.Client(project=project_id)
             self._ensure_expanded_schema()
+            self._ensure_activity_table()
         except Exception as e:
             logger.warning(f"BigQuery Client could not be initialized: {e}")
             self.init_error = str(e)
@@ -71,6 +73,129 @@ class BigQueryHandler:
                 logger.info("BQ schema already up to date")
         except Exception as e:
             logger.warning(f"Schema expansion check failed (non-fatal): {e}")
+
+    # ── Activity log table ─────────────────────────────────────────────────────
+    def _ensure_activity_table(self):
+        """Create the activity_log table if it doesn't exist. Idempotent."""
+        if not self.client:
+            return
+        try:
+            self.client.get_table(self.activity_table_id)
+            logger.info("Activity log table already exists")
+        except Exception:
+            schema = [
+                bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("company_name", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("action_type", "STRING"),  # status_change, note, outreach_sent
+                bigquery.SchemaField("old_status", "STRING"),
+                bigquery.SchemaField("new_status", "STRING"),
+                bigquery.SchemaField("note_text", "STRING"),
+                bigquery.SchemaField("created_by", "STRING"),
+                bigquery.SchemaField("created_at", "TIMESTAMP"),
+            ]
+            table = bigquery.Table(self.activity_table_id, schema=schema)
+            self.client.create_table(table)
+            logger.info("Created activity_log table in BigQuery")
+
+    # ── Deal lifecycle: status updates ──────────────────────────────────────────
+
+    # Valid deal stages in pipeline order
+    DEAL_STAGES = ["Scraped", "Uploaded", "Not a Fit", "Qualified", "Contacted", "Meeting", "DD", "Offer", "Won", "Lost"]
+    ACTIVE_PIPELINE_STAGES = ("Qualified", "Contacted", "Meeting", "DD", "Offer")
+
+    def update_company_status(self, company_name: str, new_status: str, created_by: str = "Ishu Ratna") -> bool:
+        """Update a company's status and log the change in activity_log."""
+        if not self.client:
+            return False
+        if new_status not in self.DEAL_STAGES:
+            logger.error(f"Invalid status: {new_status}")
+            return False
+
+        try:
+            # Get current status
+            q = f"SELECT status FROM `{self.table_id}` WHERE name = @name LIMIT 1"
+            job = self.client.query(q, job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("name", "STRING", company_name)]
+            ))
+            rows = list(job.result())
+            old_status = rows[0].status if rows else "Unknown"
+
+            # Update status in targets table
+            update_q = f"UPDATE `{self.table_id}` SET status = @new_status WHERE name = @name"
+            self.client.query(update_q, job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("new_status", "STRING", new_status),
+                    bigquery.ScalarQueryParameter("name", "STRING", company_name),
+                ]
+            )).result()
+
+            # Log the status change
+            self._log_activity(company_name, "status_change", created_by,
+                               old_status=old_status, new_status=new_status,
+                               note_text=f"Status changed from {old_status} to {new_status}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update status for {company_name}: {e}")
+            return False
+
+    def add_activity_note(self, company_name: str, note_text: str, created_by: str = "Ishu Ratna") -> bool:
+        """Add a note to a company's activity log."""
+        if not self.client or not note_text.strip():
+            return False
+        return self._log_activity(company_name, "note", created_by, note_text=note_text)
+
+    def get_activity_log(self, company_name: str, limit: int = 50) -> List[Dict]:
+        """Get the activity log for a company, most recent first."""
+        if not self.client:
+            return []
+        query = f"""
+            SELECT id, company_name, action_type, old_status, new_status,
+                   note_text, created_by, created_at
+            FROM `{self.activity_table_id}`
+            WHERE company_name = @name
+            ORDER BY created_at DESC
+            LIMIT {limit}
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("name", "STRING", company_name)]
+        )
+        try:
+            job = self.client.query(query, job_config=job_config)
+            results = []
+            for row in job.result():
+                entry = dict(row)
+                if entry.get("created_at"):
+                    entry["created_at"] = entry["created_at"].isoformat()
+                results.append(entry)
+            return results
+        except Exception as e:
+            logger.error(f"Failed to get activity log for {company_name}: {e}")
+            return []
+
+    def _log_activity(self, company_name: str, action_type: str, created_by: str,
+                      old_status: str = "", new_status: str = "", note_text: str = "") -> bool:
+        """Insert a row into the activity_log table."""
+        try:
+            query = f"""
+                INSERT INTO `{self.activity_table_id}`
+                (id, company_name, action_type, old_status, new_status, note_text, created_by, created_at)
+                VALUES (@id, @company_name, @action_type, @old_status, @new_status, @note_text, @created_by, CURRENT_TIMESTAMP())
+            """
+            self.client.query(query, job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("id", "STRING", str(uuid.uuid4())),
+                    bigquery.ScalarQueryParameter("company_name", "STRING", company_name),
+                    bigquery.ScalarQueryParameter("action_type", "STRING", action_type),
+                    bigquery.ScalarQueryParameter("old_status", "STRING", old_status),
+                    bigquery.ScalarQueryParameter("new_status", "STRING", new_status),
+                    bigquery.ScalarQueryParameter("note_text", "STRING", note_text),
+                    bigquery.ScalarQueryParameter("created_by", "STRING", created_by),
+                ]
+            )).result()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log activity for {company_name}: {e}")
+            return False
 
     # Fields that should NEVER be overwritten by a merge (they're set by SmartFill or are identity fields)
     PROTECTED_FIELDS = {"company_id", "name", "ingested_at", "match_score", "status"}
@@ -445,7 +570,7 @@ class BigQueryHandler:
             return []
         query = f"""
             SELECT * FROM `{self.table_id}`
-            WHERE status IN ('Qualified', 'Engaged')
+            WHERE status IN ('Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Engaged')
             ORDER BY name ASC
         """
         return self._run_query(query)
