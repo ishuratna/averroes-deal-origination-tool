@@ -379,6 +379,7 @@ export default function Universe() {
                   <th>Region</th>
                   <th>Employees</th>
                   <th>Founded</th>
+                  <th>Age</th>
                   <th>Raised</th>
                   <th>Valuation</th>
                   <th>Status</th>
@@ -386,7 +387,7 @@ export default function Universe() {
                   <th>Email</th>
                   <th>LinkedIn</th>
                   <th>Source</th>
-                  <th>Date</th>
+                  <th>Date Added</th>
                   <th>Description</th>
                   <th>Actions</th>
                 </tr>
@@ -394,7 +395,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={15}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={16}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -409,6 +410,7 @@ export default function Universe() {
                       <td>{company.region || 'UK/Europe'}</td>
                       <td className="num-cell">{company.employees ? company.employees.toLocaleString() : '\u2014'}</td>
                       <td className="num-cell">{company.year_founded || '\u2014'}</td>
+                      <td className="num-cell">{company.year_founded ? `${new Date().getFullYear() - company.year_founded}y` : '\u2014'}</td>
                       <td className="num-cell">{company.total_raised_m ? `\u00A3${company.total_raised_m.toFixed(1)}M` : '\u2014'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `\u00A3${company.valuation_estimate_m.toFixed(1)}M` : '\u2014'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(' ', '-')}`}>{company.status}</span></td>
@@ -443,7 +445,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={15} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
+                  <tr><td colSpan={16} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
