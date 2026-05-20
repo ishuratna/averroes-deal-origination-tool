@@ -19,6 +19,7 @@ class AverroesPhilosophy(BaseModel):
     """
     Standardizes the investment thesis for Averroes Capital.
     Two hard filters: UK/Ireland geography + technology-related company.
+    Now reads from BQ config at runtime; this class provides legacy fallback.
     """
     THESIS: ClassVar[dict] = {
         "geography": ["UK", "Ireland", "United Kingdom", "Great Britain",
@@ -40,16 +41,42 @@ class AverroesPhilosophy(BaseModel):
     }
 
 
+# ── Module-level config cache ─────────────────────────────────────────────────
+# criteria.py can be called with or without a BQ handler reference.
+# When called from main.py, we pass the live criteria. When called standalone,
+# we use the hardcoded THESIS as fallback.
+
+_cached_criteria = None
+
+def set_criteria_from_bq(criteria_dict: dict):
+    """Called by main.py to inject the latest BQ criteria into this module."""
+    global _cached_criteria
+    _cached_criteria = criteria_dict
+
+def _get_geo_targets(criteria: dict = None) -> list:
+    """Get geography target list from criteria or fallback."""
+    if criteria and "geography" in criteria:
+        geo = criteria["geography"]
+        regions = [r.lower() for r in geo.get("regions", [])]
+        codes = [c.lower() for c in geo.get("country_codes", [])]
+        return regions + codes
+    # Fallback
+    thesis = AverroesPhilosophy.THESIS
+    return [g.lower() for g in thesis["geography"]] + ["uk", "gb", "ie", "england", "scotland", "wales", "northern ireland"]
+
+def _get_tech_keywords(criteria: dict = None) -> list:
+    """Get tech keywords from criteria or fallback."""
+    if criteria and "industry" in criteria:
+        return criteria["industry"].get("keywords", [])
+    return AverroesPhilosophy.THESIS["tech_keywords"]
+
+
 # ── Hard filter: Geography ──────────────────────────────────────────────────
 
-def _is_uk_ireland(company: dict) -> bool:
-    """Check if the company is based in UK or Ireland using all available location fields."""
-    thesis = AverroesPhilosophy.THESIS
-    geo_targets = [g.lower() for g in thesis["geography"]]
-    # Also accept common country codes / abbreviations
-    geo_targets += ["uk", "gb", "ie", "england", "scotland", "wales", "northern ireland"]
+def _is_uk_ireland(company: dict, criteria: dict = None) -> bool:
+    """Check if the company is based in the target geography."""
+    geo_targets = _get_geo_targets(criteria)
 
-    # Check every location-related field
     fields_to_check = [
         company.get("region", ""),
         company.get("hq_country", ""),
@@ -63,12 +90,10 @@ def _is_uk_ireland(company: dict) -> bool:
 
 # ── Hard filter: Technology ──────────────────────────────────────────────────
 
-def _is_tech_related(company: dict) -> bool:
+def _is_tech_related(company: dict, criteria: dict = None) -> bool:
     """Check if the company is technology or technology-related."""
-    thesis = AverroesPhilosophy.THESIS
-    tech_kw = thesis["tech_keywords"]
+    tech_kw = _get_tech_keywords(criteria)
 
-    # Check sector, description, keywords, verticals, industry group
     fields_to_check = [
         company.get("sector", ""),
         company.get("description", ""),
@@ -84,11 +109,11 @@ def _is_tech_related(company: dict) -> bool:
 
 # ── Main qualification function ──────────────────────────────────────────────
 
-def qualify_company(company: dict) -> Dict[str, any]:
+def qualify_company(company: dict, criteria: dict = None) -> Dict[str, any]:
     """
-    Applies two hard filters to a company:
-      1. Must be UK or Ireland based
-      2. Must be technology or tech-related
+    Applies qualification filters from BQ config (or defaults):
+      1. Geography filter
+      2. Industry/tech filter
 
     Returns dict with:
       - qualified: bool
@@ -97,18 +122,26 @@ def qualify_company(company: dict) -> Dict[str, any]:
       - is_tech: bool
       - reason: str (human-readable explanation)
     """
-    uk_ire = _is_uk_ireland(company)
-    tech = _is_tech_related(company)
+    c = criteria or _cached_criteria
+    uk_ire = _is_uk_ireland(company, c)
+    tech = _is_tech_related(company, c)
     qualified = uk_ire and tech
 
+    geo_label = "target geography"
+    if c and "geography" in c:
+        geo_label = c["geography"].get("label", "target geography")
+    industry_label = "technology-related"
+    if c and "industry" in c:
+        industry_label = c["industry"].get("label", "technology-related")
+
     if qualified:
-        reason = "UK/Ireland technology company — meets both hard filters."
+        reason = f"Meets both filters: {geo_label} and {industry_label}."
     elif not uk_ire and not tech:
-        reason = "Failed both filters: not UK/Ireland, not tech-related."
+        reason = f"Failed both filters: not in {geo_label}, not {industry_label}."
     elif not uk_ire:
-        reason = "Not UK/Ireland based."
+        reason = f"Not in {geo_label}."
     else:
-        reason = "Not a technology-related company."
+        reason = f"Not {industry_label}."
 
     return {
         "qualified": qualified,
@@ -121,16 +154,17 @@ def qualify_company(company: dict) -> Dict[str, any]:
 
 # ── Gemini-powered qualification (richer data = better filter accuracy) ──────
 
-def qualify_company_with_gemini(company: dict) -> Dict[str, any]:
+def qualify_company_with_gemini(company: dict, criteria: dict = None) -> Dict[str, any]:
     """
     Uses Gemini to determine geography and tech-relatedness when local data
     is sparse. Falls back to keyword qualification if Gemini unavailable.
     """
     api_key = os.getenv("GEMINI_API_KEY", "")
+    c = criteria or _cached_criteria
 
     if not api_key or not GEMINI_AVAILABLE:
         logger.info(f"Qualifying '{company.get('name')}' via keyword filters...")
-        return qualify_company(company)
+        return qualify_company(company, c)
 
     logger.info(f"Qualifying '{company.get('name')}' via Gemini...")
 
@@ -138,7 +172,7 @@ def qualify_company_with_gemini(company: dict) -> Dict[str, any]:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash")
 
-        prompt = _build_qualification_prompt(company)
+        prompt = _build_qualification_prompt(company, c)
 
         response = model.generate_content(
             prompt,
@@ -160,13 +194,13 @@ def qualify_company_with_gemini(company: dict) -> Dict[str, any]:
         reason = result.get("reason", "")
         if not reason:
             if qualified:
-                reason = "UK/Ireland technology company — meets both hard filters."
+                reason = "Meets both qualification filters."
             elif not is_uk_ire and not is_tech:
-                reason = "Failed both filters: not UK/Ireland, not tech-related."
+                reason = "Failed both filters."
             elif not is_uk_ire:
-                reason = "Not UK/Ireland based."
+                reason = "Not in target geography."
             else:
-                reason = "Not a technology-related company."
+                reason = "Not in target industry."
 
         return {
             "qualified": qualified,
@@ -178,12 +212,31 @@ def qualify_company_with_gemini(company: dict) -> Dict[str, any]:
 
     except Exception as e:
         logger.warning(f"Gemini qualification failed for {company.get('name')}: {e}. Falling back to keywords.")
-        return qualify_company(company)
+        return qualify_company(company, c)
 
 
-def _build_qualification_prompt(company: dict) -> str:
-    """Build a Gemini prompt that checks the two hard filters."""
+def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
+    """Build a Gemini prompt that checks the qualification filters."""
+    c = criteria or _cached_criteria
     company_json = json.dumps(company, default=str)
+
+    # Build dynamic geo list from criteria
+    geo_regions = []
+    if c and "geography" in c:
+        geo_regions = c["geography"].get("regions", [])
+    else:
+        geo_regions = AverroesPhilosophy.THESIS["geography"]
+
+    # Build dynamic tech list from criteria
+    tech_kw = []
+    if c and "industry" in c:
+        tech_kw = c["industry"].get("keywords", [])
+    else:
+        tech_kw = AverroesPhilosophy.THESIS["tech_keywords"]
+
+    geo_str = ", ".join(geo_regions)
+    tech_str = ", ".join(tech_kw[:20])
+
     return f"""
     You are an expert Private Equity analyst for Averroes Capital.
     Determine TWO things about this company:
@@ -192,18 +245,15 @@ def _build_qualification_prompt(company: dict) -> str:
     {company_json}
 
     QUESTION 1 — GEOGRAPHY:
-    Is this company headquartered in the UK or Ireland?
+    Is this company headquartered in one of these target regions?
+    Target regions: {geo_str}
     Look at region, hq_country, hq_city, hq_location, or infer from any available data.
-    UK includes: England, Scotland, Wales, Northern Ireland, and all UK cities.
-    Ireland includes: Republic of Ireland and all Irish cities.
 
-    QUESTION 2 — TECHNOLOGY:
-    Is this a technology or technology-related company?
-    This includes: software, SaaS, platforms, AI/ML, data/analytics, cloud,
-    fintech, healthtech, edtech, cybersecurity, IT services, digital services,
-    tech-enabled services, industrial tech, IoT, robotics, etc.
-    Traditional industries (pure manufacturing, retail, hospitality, construction)
-    that don't use tech as a core product do NOT count.
+    QUESTION 2 — INDUSTRY:
+    Is this a company in the target industry?
+    Target keywords: {tech_str}
+    Check sector, description, keywords, verticals, industry group.
+    Traditional industries without tech as a core product do NOT count.
 
     RETURN FORMAT — JSON only:
     {{
@@ -218,8 +268,39 @@ def _build_qualification_prompt(company: dict) -> str:
     """
 
 
+# ── Preview: count how many companies would qualify under given criteria ──────
+
+def preview_criteria(universe: list, criteria: dict) -> dict:
+    """
+    Given the full universe and proposed criteria, returns counts of
+    how many would qualify vs not, without changing anything.
+    """
+    qualified = 0
+    rejected = 0
+    sample_qualified = []
+    sample_rejected = []
+
+    for company in universe:
+        result = qualify_company(company, criteria)
+        if result["qualified"]:
+            qualified += 1
+            if len(sample_qualified) < 5:
+                sample_qualified.append(company.get("name", "Unknown"))
+        else:
+            rejected += 1
+            if len(sample_rejected) < 5:
+                sample_rejected.append({"name": company.get("name", "Unknown"), "reason": result["reason"]})
+
+    return {
+        "qualified": qualified,
+        "rejected": rejected,
+        "total": qualified + rejected,
+        "sample_qualified": sample_qualified,
+        "sample_rejected": sample_rejected,
+    }
+
+
 # ── Legacy compatibility ─────────────────────────────────────────────────────
-# These are kept so existing code that imports them doesn't break.
 
 def evaluate_target(company: dict, philosophy: AverroesPhilosophy) -> float:
     """Legacy wrapper. Returns 1.0 for Qualified, 0.0 for Not a Fit."""

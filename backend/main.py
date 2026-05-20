@@ -18,7 +18,11 @@ from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
 from services.pitchbook_service import parse_pitchbook_excel
 from services.outreach_service import draft_outreach_email, send_email
-from ai.criteria import AverroesPhilosophy, evaluate_target, generate_analysis_prompt, qualify_company, qualify_company_with_gemini
+from ai.criteria import (
+    AverroesPhilosophy, evaluate_target, generate_analysis_prompt,
+    qualify_company, qualify_company_with_gemini,
+    set_criteria_from_bq, preview_criteria,
+)
 from ai.enrichment import EnrichmentAgent
 from config.sourcing_config import SOURCING_CRITERIA
 
@@ -56,6 +60,14 @@ directory_scraper = DirectoryScraper()
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
+
+# ─── Load qualification criteria from BQ into criteria module at startup ──────
+try:
+    _startup_criteria = bq_handler.get_criteria()
+    set_criteria_from_bq(_startup_criteria)
+    logger.info(f"Loaded qualification criteria from BQ (v{_startup_criteria.get('_version', '?')})")
+except Exception as _e:
+    logger.warning(f"Could not load BQ criteria at startup, using defaults: {_e}")
 
 # --- Utilities ---
 
@@ -572,6 +584,156 @@ async def get_company_activity(company_name: str, limit: int = Query(50, descrip
     """Get the full activity timeline for a company."""
     activity = bq_handler.get_activity_log(company_name, limit)
     return {"company": company_name, "activity": activity, "count": len(activity)}
+
+
+# ── Qualification Criteria Endpoints ───────────────────────────────────────────
+
+class CriteriaChatRequest(BaseModel):
+    message: str
+
+class CriteriaApplyRequest(BaseModel):
+    criteria: dict
+    updated_by: Optional[str] = "Ishu Ratna"
+    requalify: Optional[bool] = True
+
+
+@app.get("/criteria")
+async def get_criteria():
+    """Return current qualification criteria + metadata."""
+    try:
+        meta = bq_handler.get_criteria_meta()
+        return meta
+    except Exception as e:
+        logger.error(f"Failed to load criteria: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/criteria/chat")
+async def chat_criteria(req: CriteriaChatRequest):
+    """
+    Interpret a natural-language criteria change via Gemini.
+    Returns proposed new criteria JSON + preview impact counts.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Gemini API key not configured.")
+
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        raise HTTPException(status_code=503, detail="google-generativeai not installed.")
+
+    # Get current criteria
+    current = bq_handler.get_criteria()
+
+    # Ask Gemini to interpret the change
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    prompt = f"""You are a Private Equity deal origination assistant for Averroes Capital.
+
+CURRENT QUALIFICATION CRITERIA (JSON):
+{json.dumps(current, indent=2)}
+
+The user wants to modify these criteria. Their request:
+"{req.message}"
+
+Rules:
+- The criteria has two main sections: "geography" and "industry"
+- geography contains: label, description, regions (list of region/city names), country_codes (list of 2-letter codes)
+- industry contains: label, description, keywords (list of keywords to match against company descriptions/sectors)
+- There are also top-level fields: focus (string) and target_ebitda (string)
+- Only modify what the user asks to change. Keep everything else exactly the same.
+- Return the COMPLETE updated criteria object, not just the diff.
+
+RETURN FORMAT — JSON only:
+{{
+    "proposed_criteria": {{ ... the full updated criteria object ... }},
+    "change_summary": "One sentence describing what changed"
+}}
+"""
+
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        result = json.loads(response.text)
+    except Exception as e:
+        logger.error(f"Gemini criteria chat failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AI interpretation failed: {str(e)}")
+
+    proposed = result.get("proposed_criteria", current)
+    change_summary = result.get("change_summary", "Criteria updated.")
+
+    # Run preview against universe
+    try:
+        universe = bq_handler.get_universe()
+        preview = preview_criteria(universe, proposed)
+    except Exception as e:
+        logger.warning(f"Preview failed: {e}")
+        preview = {"qualified": 0, "rejected": 0, "total": 0, "sample_qualified": [], "sample_rejected": []}
+
+    return {
+        "proposed_criteria": proposed,
+        "change_summary": change_summary,
+        "preview": preview,
+        "current_criteria": current,
+    }
+
+
+@app.post("/criteria/apply")
+async def apply_criteria(req: CriteriaApplyRequest):
+    """Commit new criteria to BQ and optionally re-qualify the universe."""
+    try:
+        bq_handler.save_criteria(req.criteria, req.updated_by)
+        # Update the in-memory cache
+        set_criteria_from_bq(req.criteria)
+        logger.info(f"Criteria updated by {req.updated_by}")
+    except Exception as e:
+        logger.error(f"Failed to save criteria: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save criteria: {str(e)}")
+
+    requalify_result = None
+    if req.requalify:
+        # Re-qualify entire universe with new criteria
+        try:
+            universe = bq_handler.get_universe()
+            qualified_names = []
+            rejected_names = []
+            for company in universe:
+                qual = qualify_company(company, req.criteria)
+                if qual["qualified"]:
+                    qualified_names.append(company["name"])
+                else:
+                    rejected_names.append(company["name"])
+
+            from google.cloud import bigquery as bq_lib
+
+            if qualified_names:
+                names_list = ", ".join([f"'{n}'" for n in qualified_names])
+                query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Qualified' WHERE name IN ({names_list})"""
+                bq_handler.client.query(query).result()
+
+            if rejected_names:
+                names_list = ", ".join([f"'{n}'" for n in rejected_names])
+                query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit' WHERE name IN ({names_list})"""
+                bq_handler.client.query(query).result()
+
+            requalify_result = {
+                "qualified": len(qualified_names),
+                "rejected": len(rejected_names),
+                "total": len(universe),
+            }
+        except Exception as e:
+            logger.error(f"Re-qualification failed: {e}")
+            requalify_result = {"error": str(e)}
+
+    return {
+        "status": "Success",
+        "message": "Criteria saved and applied.",
+        "requalify_result": requalify_result,
+    }
 
 
 if __name__ == "__main__":

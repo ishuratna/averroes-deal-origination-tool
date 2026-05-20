@@ -131,4 +131,36 @@ export const dealApi = {
     if (!response.ok) throw new Error('Failed to fetch activity');
     return await response.json();
   },
+
+  // ── Qualification Criteria ──────────────────────────────────────────────────
+
+  async getCriteria(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/criteria`);
+    if (!response.ok) throw new Error('Failed to fetch criteria');
+    return await response.json();
+  },
+
+  async chatCriteria(message: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/criteria/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Criteria chat failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Criteria chat failed'); }
+    return data;
+  },
+
+  async applyCriteria(criteria: any, updatedBy?: string, requalify?: boolean): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/criteria/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ criteria, updated_by: updatedBy || 'Ishu Ratna', requalify: requalify !== false }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Apply criteria failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Apply criteria failed'); }
+    return data;
+  },
 };

@@ -74,6 +74,16 @@ export default function Universe() {
   const [showSources, setShowSources] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
+  // Filters overlay
+  const [showFilters, setShowFilters] = useState(false);
+  const [criteriaData, setCriteriaData] = useState<any>(null);
+  const [criteriaLoading, setCriteriaLoading] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; text: string; preview?: any; proposed?: any }>>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [pendingCriteria, setPendingCriteria] = useState<any>(null);
+  const [applyingCriteria, setApplyingCriteria] = useState(false);
+
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
   const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
@@ -270,6 +280,63 @@ export default function Universe() {
     setSavedViews(updated);
     localStorage.setItem('averroes_universe_views', JSON.stringify(updated));
     if (activeViewId === id) setActiveViewId(null);
+  };
+
+  // ── Filters overlay handlers ─────────────────────────────────────────────
+  const openFiltersOverlay = async () => {
+    setShowFilters(true);
+    setCriteriaLoading(true);
+    try {
+      const data = await dealApi.getCriteria();
+      setCriteriaData(data);
+    } catch (err) {
+      console.error('Failed to load criteria:', err);
+    } finally {
+      setCriteriaLoading(false);
+    }
+  };
+
+  const handleChatSubmit = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    const msg = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', text: msg }]);
+    setChatLoading(true);
+    try {
+      const result = await dealApi.chatCriteria(msg);
+      setChatMessages(prev => [...prev, {
+        role: 'ai',
+        text: result.change_summary || 'Here are the proposed changes.',
+        preview: result.preview,
+        proposed: result.proposed_criteria,
+      }]);
+      setPendingCriteria(result.proposed_criteria);
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: 'ai', text: `Error: ${err.message}` }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleApplyCriteria = async () => {
+    if (!pendingCriteria || applyingCriteria) return;
+    setApplyingCriteria(true);
+    try {
+      await dealApi.applyCriteria(pendingCriteria);
+      setCriteriaData({ ...criteriaData, criteria: pendingCriteria });
+      setPendingCriteria(null);
+      setChatMessages(prev => [...prev, { role: 'ai', text: 'Criteria applied successfully! The universe has been re-qualified.' }]);
+      await loadData(); // Refresh universe data
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: 'ai', text: `Failed to apply: ${err.message}` }]);
+    } finally {
+      setApplyingCriteria(false);
+    }
+  };
+
+  const handleDiscardCriteria = () => {
+    setPendingCriteria(null);
+    setChatMessages(prev => [...prev, { role: 'ai', text: 'Changes discarded. Current criteria remain unchanged.' }]);
   };
 
   // Source type badge colors
@@ -595,6 +662,177 @@ export default function Universe() {
         </div>
       )}
 
+      {/* ── Filters Overlay ────────────────────────────────────────── */}
+      {showFilters && (
+        <div className="sources-overlay">
+          <div className="sources-panel filters-panel">
+            <div className="sources-header">
+              <div>
+                <h2 className="sources-title">Qualification Criteria</h2>
+                <p className="sources-subtitle">Filters that determine which companies qualify from Universe to Pipeline</p>
+              </div>
+              <button className="sources-close" onClick={() => { setShowFilters(false); setChatMessages([]); setPendingCriteria(null); }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
+            </div>
+
+            {criteriaLoading ? (
+              <div className="criteria-loading">
+                <div className="spinner"></div>
+                <p>Loading criteria...</p>
+              </div>
+            ) : criteriaData ? (
+              <div className="criteria-content">
+                {/* Current criteria cards */}
+                <div className="criteria-cards">
+                  {/* Geography card */}
+                  <div className="criteria-card">
+                    <div className="criteria-card-icon">🌍</div>
+                    <div className="criteria-card-body">
+                      <h4 className="criteria-card-title">{criteriaData.criteria?.geography?.label || 'Geography'}</h4>
+                      <p className="criteria-card-desc">{criteriaData.criteria?.geography?.description || 'Target geographic regions'}</p>
+                      <div className="criteria-tags">
+                        {(criteriaData.criteria?.geography?.regions || []).map((r: string) => (
+                          <span key={r} className="criteria-tag geo">{r}</span>
+                        ))}
+                        {(criteriaData.criteria?.geography?.country_codes || []).map((c: string) => (
+                          <span key={c} className="criteria-tag geo code">{c}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Industry card */}
+                  <div className="criteria-card">
+                    <div className="criteria-card-icon">💻</div>
+                    <div className="criteria-card-body">
+                      <h4 className="criteria-card-title">{criteriaData.criteria?.industry?.label || 'Industry'}</h4>
+                      <p className="criteria-card-desc">{criteriaData.criteria?.industry?.description || 'Target industry keywords'}</p>
+                      <div className="criteria-tags">
+                        {(criteriaData.criteria?.industry?.keywords || []).slice(0, 20).map((k: string) => (
+                          <span key={k} className="criteria-tag tech">{k}</span>
+                        ))}
+                        {(criteriaData.criteria?.industry?.keywords || []).length > 20 && (
+                          <span className="criteria-tag more">+{(criteriaData.criteria?.industry?.keywords || []).length - 20} more</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Focus & target */}
+                  {criteriaData.criteria?.focus && (
+                    <div className="criteria-meta">
+                      <span className="criteria-meta-label">Focus:</span> {criteriaData.criteria.focus}
+                    </div>
+                  )}
+                  {criteriaData.criteria?.target_ebitda && (
+                    <div className="criteria-meta">
+                      <span className="criteria-meta-label">Target EBITDA:</span> {criteriaData.criteria.target_ebitda}
+                    </div>
+                  )}
+                  {criteriaData.updated_at && (
+                    <div className="criteria-meta muted">
+                      Last updated: {formatDateTime(criteriaData.updated_at)} by {criteriaData.updated_by || 'System'} &middot; v{criteriaData.version || 1}
+                    </div>
+                  )}
+                </div>
+
+                {/* Chat section */}
+                <div className="criteria-chat-section">
+                  <h4 className="criteria-chat-title">Modify with AI</h4>
+                  <p className="criteria-chat-desc">Describe changes in plain English. Preview the impact before applying.</p>
+
+                  {/* Chat messages */}
+                  <div className="criteria-chat-messages">
+                    {chatMessages.map((m, i) => (
+                      <div key={i} className={`chat-msg ${m.role}`}>
+                        <div className="chat-msg-bubble">
+                          <p>{m.text}</p>
+                          {m.preview && (
+                            <div className="chat-preview">
+                              <div className="preview-row">
+                                <span className="preview-label">Would qualify:</span>
+                                <span className="preview-value green">{m.preview.qualified} companies</span>
+                              </div>
+                              <div className="preview-row">
+                                <span className="preview-label">Would reject:</span>
+                                <span className="preview-value red">{m.preview.rejected} companies</span>
+                              </div>
+                              <div className="preview-row">
+                                <span className="preview-label">Total evaluated:</span>
+                                <span className="preview-value">{m.preview.total}</span>
+                              </div>
+                              {m.preview.sample_qualified?.length > 0 && (
+                                <div className="preview-samples">
+                                  <span className="preview-label">Sample qualified:</span>
+                                  <span className="preview-names">{m.preview.sample_qualified.join(', ')}</span>
+                                </div>
+                              )}
+                              {m.preview.sample_rejected?.length > 0 && (
+                                <div className="preview-samples">
+                                  <span className="preview-label">Sample rejected:</span>
+                                  <span className="preview-names">{m.preview.sample_rejected.map((s: any) => typeof s === 'string' ? s : s.name).join(', ')}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {chatLoading && (
+                      <div className="chat-msg ai">
+                        <div className="chat-msg-bubble">
+                          <div className="chat-thinking">
+                            <div className="dot-pulse"></div>
+                            Analyzing changes...
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pending criteria action bar */}
+                  {pendingCriteria && !applyingCriteria && (
+                    <div className="criteria-action-bar">
+                      <span className="action-bar-text">New criteria ready to apply</span>
+                      <div className="action-bar-btns">
+                        <button className="discard-btn" onClick={handleDiscardCriteria}>Discard</button>
+                        <button className="apply-btn" onClick={handleApplyCriteria}>Apply &amp; Re-qualify</button>
+                      </div>
+                    </div>
+                  )}
+                  {applyingCriteria && (
+                    <div className="criteria-action-bar applying">
+                      <div className="spinner small"></div>
+                      <span>Applying criteria and re-qualifying universe...</span>
+                    </div>
+                  )}
+
+                  {/* Chat input */}
+                  <div className="criteria-chat-input">
+                    <input
+                      type="text"
+                      placeholder="e.g. Add Germany and France to geography, or remove edtech from keywords..."
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleChatSubmit()}
+                      disabled={chatLoading || applyingCriteria}
+                    />
+                    <button className="chat-send-btn" onClick={handleChatSubmit} disabled={!chatInput.trim() || chatLoading || applyingCriteria}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="criteria-loading">
+                <p>Failed to load criteria. Check backend connection.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo-section">
@@ -631,6 +869,10 @@ export default function Universe() {
             <p className="subtitle">{filteredUniverse.length} targets from {universe.length} total</p>
           </div>
           <div className="header-right">
+            <button className="sources-btn" onClick={openFiltersOverlay}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 2h14l-5.5 6.5V14l-3-2V8.5L1 2z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+              Filters
+            </button>
             <button className="sources-btn" onClick={() => setShowSources(true)}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 7h8M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Sources
@@ -952,6 +1194,120 @@ export default function Universe() {
         }
         .source-upload-btn:hover { background: #2563eb; color: #fff; border-style: solid; }
         .source-upload-btn.uploading { opacity: 0.5; cursor: wait; }
+
+        /* ── Filters Overlay ────────────────────────────────────── */
+        .filters-panel { max-width: 960px; }
+        .criteria-loading { text-align: center; padding: 3rem; color: #64748b; }
+        .criteria-loading .spinner { margin: 0 auto 1rem; }
+        .criteria-content { display: flex; flex-direction: column; gap: 1.75rem; }
+        .criteria-cards { display: flex; flex-direction: column; gap: 0.85rem; }
+
+        .criteria-card {
+          display: flex; gap: 1rem; padding: 1.25rem; background: #f8fafc;
+          border: 1px solid #e2e8f0; border-radius: 10px;
+        }
+        .criteria-card-icon { font-size: 1.5rem; flex-shrink: 0; margin-top: 0.1rem; }
+        .criteria-card-body { flex: 1; min-width: 0; }
+        .criteria-card-title { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0 0 0.3rem; }
+        .criteria-card-desc { font-size: 0.82rem; color: #64748b; margin: 0 0 0.65rem; line-height: 1.5; }
+        .criteria-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+        .criteria-tag {
+          font-size: 0.68rem; font-weight: 600; padding: 0.2rem 0.55rem;
+          border-radius: 4px; white-space: nowrap;
+        }
+        .criteria-tag.geo { background: #dbeafe; color: #1e40af; }
+        .criteria-tag.geo.code { background: #e0e7ff; color: #3730a3; font-family: monospace; }
+        .criteria-tag.tech { background: #dcfce7; color: #166534; }
+        .criteria-tag.more { background: #f1f5f9; color: #64748b; font-style: italic; }
+
+        .criteria-meta {
+          font-size: 0.82rem; color: #0f172a; padding: 0.5rem 0.85rem;
+          background: #f8fafc; border-radius: 6px;
+        }
+        .criteria-meta-label { font-weight: 700; color: #64748b; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.5rem; }
+        .criteria-meta.muted { color: #94a3b8; font-size: 0.75rem; }
+
+        /* Chat section */
+        .criteria-chat-section {
+          border-top: 1px solid #e2e8f0; padding-top: 1.5rem;
+        }
+        .criteria-chat-title { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0 0 0.25rem; }
+        .criteria-chat-desc { font-size: 0.82rem; color: #94a3b8; margin: 0 0 1rem; }
+
+        .criteria-chat-messages {
+          display: flex; flex-direction: column; gap: 0.75rem;
+          max-height: 340px; overflow-y: auto; margin-bottom: 0.85rem;
+          padding-right: 0.5rem;
+        }
+
+        .chat-msg { display: flex; }
+        .chat-msg.user { justify-content: flex-end; }
+        .chat-msg.ai { justify-content: flex-start; }
+        .chat-msg-bubble {
+          max-width: 80%; padding: 0.75rem 1rem; border-radius: 12px;
+          font-size: 0.85rem; line-height: 1.55;
+        }
+        .chat-msg.user .chat-msg-bubble { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
+        .chat-msg.ai .chat-msg-bubble { background: #f1f5f9; color: #0f172a; border-bottom-left-radius: 4px; }
+        .chat-msg-bubble p { margin: 0; }
+
+        .chat-preview {
+          margin-top: 0.75rem; padding-top: 0.65rem; border-top: 1px solid #e2e8f0;
+          display: flex; flex-direction: column; gap: 0.35rem;
+        }
+        .preview-row { display: flex; justify-content: space-between; align-items: center; }
+        .preview-label { font-size: 0.75rem; color: #64748b; font-weight: 600; }
+        .preview-value { font-size: 0.85rem; font-weight: 700; color: #0f172a; }
+        .preview-value.green { color: #059669; }
+        .preview-value.red { color: #dc2626; }
+        .preview-samples { margin-top: 0.25rem; }
+        .preview-names { font-size: 0.78rem; color: #475569; }
+
+        .chat-thinking {
+          display: flex; align-items: center; gap: 0.6rem;
+          font-size: 0.82rem; color: #94a3b8;
+        }
+        .dot-pulse {
+          width: 6px; height: 6px; background: #94a3b8; border-radius: 50%;
+          animation: dotPulse 1s infinite;
+        }
+        @keyframes dotPulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+        .criteria-action-bar {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 0.75rem 1rem; background: #eff6ff; border: 1.5px solid #2563eb;
+          border-radius: 10px; margin-bottom: 0.75rem;
+        }
+        .criteria-action-bar.applying { justify-content: center; gap: 0.75rem; border-color: #94a3b8; background: #f8fafc; color: #64748b; font-size: 0.85rem; }
+        .action-bar-text { font-size: 0.85rem; font-weight: 700; color: #1e40af; }
+        .action-bar-btns { display: flex; gap: 0.5rem; }
+        .discard-btn {
+          padding: 0.4rem 1rem; background: #fff; border: 1px solid #e2e8f0;
+          border-radius: 6px; font-size: 0.78rem; font-weight: 700; color: #64748b; cursor: pointer;
+        }
+        .discard-btn:hover { border-color: #dc2626; color: #dc2626; }
+        .apply-btn {
+          padding: 0.4rem 1.25rem; background: #2563eb; color: #fff;
+          border: none; border-radius: 6px; font-size: 0.78rem; font-weight: 800; cursor: pointer;
+        }
+        .apply-btn:hover { background: #1d4ed8; }
+        .spinner.small { width: 18px; height: 18px; border-width: 2px; }
+
+        .criteria-chat-input {
+          display: flex; gap: 0.5rem; align-items: center;
+        }
+        .criteria-chat-input input {
+          flex: 1; padding: 0.65rem 1rem; border: 1.5px solid #e2e8f0;
+          border-radius: 10px; font-size: 0.88rem; color: #0f172a; background: #fff; outline: none;
+        }
+        .criteria-chat-input input:focus { border-color: #2563eb; }
+        .criteria-chat-input input:disabled { opacity: 0.5; }
+        .chat-send-btn {
+          padding: 0.6rem; background: #2563eb; color: #fff; border: none;
+          border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .chat-send-btn:hover:not(:disabled) { background: #1d4ed8; }
+        .chat-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
         /* ── Filter Bar ─────────────────────────────────────────── */
         .filter-bar {
