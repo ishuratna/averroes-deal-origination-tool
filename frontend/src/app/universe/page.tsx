@@ -375,6 +375,7 @@ export default function Universe() {
               <thead>
                 <tr>
                   <th>Company</th>
+                  <th>Website</th>
                   <th>Sector</th>
                   <th>Region</th>
                   <th>Employees</th>
@@ -395,16 +396,18 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={16}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={17}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
                     <tr key={i}>
                       <td className="company-cell">
-                        <div className="name-wrap">
-                          <span className="name">{company.name}</span>
-                          {company.website && (<a href={company.website} target="_blank" rel="noreferrer" className="site-icon">&#8599;</a>)}
-                        </div>
+                        <span className="name">{company.name}</span>
+                      </td>
+                      <td className="website-cell">
+                        {company.website ? (
+                          <a href={company.website} target="_blank" rel="noreferrer" className="website-link">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a>
+                        ) : '—'}
                       </td>
                       <td className="sector-cell">{company.sector || 'TBD'}</td>
                       <td>{company.region || 'UK/Europe'}</td>
@@ -445,7 +448,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={16} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
+                  <tr><td colSpan={17} className="empty-row">No targets match your search. Try running a sourcing agent.</td></tr>
                 )}
               </tbody>
             </table>
@@ -506,10 +509,10 @@ export default function Universe() {
         .table-scroll-container::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 4px; }
         .table-scroll-container::-webkit-scrollbar-thumb:hover { background: var(--gold); }
         .crm-table tr:hover td { background: var(--primary-blue-light); }
-        .company-cell .name-wrap { display: flex; align-items: center; gap: 0.5rem; }
         .company-cell .name { color: var(--text-primary); font-weight: 700; }
-        .site-icon { font-size: 0.75rem; color: var(--primary-blue); opacity: 0.6; }
-        .site-icon:hover { opacity: 1; }
+        .website-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .website-link { color: var(--primary-blue); font-size: 0.8rem; font-weight: 600; text-decoration: none; }
+        .website-link:hover { text-decoration: underline; }
         .sector-cell { font-weight: 600; color: var(--text-primary); }
         .status-badge { font-size: 0.65rem; font-weight: 800; padding: 0.3rem 0.6rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
         .status-badge.qualified { background: var(--green-glow); color: var(--green); }
