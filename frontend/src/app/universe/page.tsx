@@ -1,10 +1,40 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from 'next/link';
 import { CompanyTarget } from "../../types";
 import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
+
+// ── Source definitions ──────────────────────────────────────────────────────
+
+interface SourceDef {
+  name: string;
+  type: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'upload';
+  label: string;
+  description: string;
+  icon: string;          // emoji
+  canRefresh: boolean;
+  refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory';
+}
+
+const ALL_SOURCES: SourceDef[] = [
+  // Marketplaces
+  { name: 'Acquire.com', type: 'marketplace', label: 'Acquire.com', description: 'Online marketplace for buying and selling startups and SaaS businesses.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
+  { name: 'Flippa', type: 'marketplace', label: 'Flippa', description: 'Marketplace for buying and selling online businesses, domains, and apps.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
+  { name: 'Microns', type: 'marketplace', label: 'Microns', description: 'Curated marketplace for profitable micro-SaaS and internet businesses.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
+  { name: 'SideProjectors', type: 'marketplace', label: 'SideProjectors', description: 'Marketplace for buying and selling side projects and small web apps.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
+  // Conferences
+  { name: 'SaaStock Europe', type: 'conference', label: 'SaaStock Europe', description: 'Europe\'s largest SaaS conference. Exhibitors and sponsors scraped for targets.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  { name: 'London Tech Week', type: 'conference', label: 'London Tech Week', description: 'UK\'s flagship tech event featuring startups and scale-ups.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  { name: 'SaaSiest', type: 'conference', label: 'SaaSiest', description: 'Nordic/European B2B SaaS conference with emerging growth companies.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  // Rankings
+  { name: 'FT 1000', type: 'ranking', label: 'FT 1000', description: 'Financial Times ranking of Europe\'s fastest-growing companies.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
+  { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'Annual ranking of the UK\'s top 100 most disruptive startups.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
+  { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'Deloitte\'s ranking of the 50 fastest-growing tech companies in the UK.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
+  // Directories
+  { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
+];
 
 // ── Saved view type ─────────────────────────────────────────────────────────
 
@@ -12,6 +42,17 @@ interface SavedView {
   id: string;
   name: string;
   filters: { vertical: string; region: string; status: string; searchQuery: string; };
+}
+
+// ── Source stats type ───────────────────────────────────────────────────────
+
+interface SourceStats {
+  companyCount: number;
+  qualifiedCount: number;
+  lastIngested: string | null;
+  firstIngested: string | null;
+  topSectors: string[];
+  topRegions: string[];
 }
 
 export default function Universe() {
@@ -28,6 +69,10 @@ export default function Universe() {
 
   // Drawer
   const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
+
+  // Sources overlay
+  const [showSources, setShowSources] = useState(false);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
@@ -56,6 +101,64 @@ export default function Universe() {
     finally { setLoading(false); }
   }
 
+  // ── Compute source stats from universe data ──────────────────────────────
+
+  const sourceStats = useMemo(() => {
+    const stats: Record<string, SourceStats> = {};
+
+    // Initialize known sources
+    ALL_SOURCES.forEach(s => {
+      stats[s.name] = { companyCount: 0, qualifiedCount: 0, lastIngested: null, firstIngested: null, topSectors: [], topRegions: [] };
+    });
+
+    // Find upload sources dynamically
+    const uploadSourceNames = new Set<string>();
+    universe.forEach(c => {
+      if (c.source?.startsWith('Upload:')) uploadSourceNames.add(c.source);
+    });
+
+    uploadSourceNames.forEach(name => {
+      stats[name] = { companyCount: 0, qualifiedCount: 0, lastIngested: null, firstIngested: null, topSectors: [], topRegions: [] };
+    });
+
+    // Tally
+    const sectorCounts: Record<string, Record<string, number>> = {};
+    const regionCounts: Record<string, Record<string, number>> = {};
+
+    universe.forEach(c => {
+      const src = c.source;
+      if (!src || !stats[src]) return;
+      const s = stats[src];
+      s.companyCount++;
+      if (c.status === 'Qualified') s.qualifiedCount++;
+      if (c.ingested_at) {
+        if (!s.lastIngested || c.ingested_at > s.lastIngested) s.lastIngested = c.ingested_at;
+        if (!s.firstIngested || c.ingested_at < s.firstIngested) s.firstIngested = c.ingested_at;
+      }
+      // Sector counts
+      if (c.sector) {
+        if (!sectorCounts[src]) sectorCounts[src] = {};
+        sectorCounts[src][c.sector] = (sectorCounts[src][c.sector] || 0) + 1;
+      }
+      if (c.region) {
+        if (!regionCounts[src]) regionCounts[src] = {};
+        regionCounts[src][c.region] = (regionCounts[src][c.region] || 0) + 1;
+      }
+    });
+
+    // Top sectors/regions
+    Object.entries(sectorCounts).forEach(([src, counts]) => {
+      stats[src].topSectors = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+    });
+    Object.entries(regionCounts).forEach(([src, counts]) => {
+      stats[src].topRegions = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+    });
+
+    return { stats, uploadSources: Array.from(uploadSourceNames) };
+  }, [universe]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
   const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking', name: string) => {
     setIngesting(name);
     try {
@@ -77,6 +180,14 @@ export default function Universe() {
     finally { setIngesting(null); }
   };
 
+  const handleRefreshSource = async (source: SourceDef) => {
+    if (source.refreshType === 'directory') {
+      await handleDirectoryScrape(source.name);
+    } else if (source.refreshType) {
+      await handleIngest(source.refreshType, source.name);
+    }
+  };
+
   const filteredUniverse = universe.filter(c => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = c.name.toLowerCase().includes(q) || (c.sector && c.sector.toLowerCase().includes(q)) || (c.description && c.description.toLowerCase().includes(q));
@@ -87,9 +198,14 @@ export default function Universe() {
     return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus;
   });
 
-  const formatDate = (dateStr?: string) => {
+  const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return '—';
     return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const formatDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return 'Never';
+    return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
   const openOutreach = async (company: any) => {
@@ -155,6 +271,22 @@ export default function Universe() {
     localStorage.setItem('averroes_universe_views', JSON.stringify(updated));
     if (activeViewId === id) setActiveViewId(null);
   };
+
+  // Source type badge colors
+  const typeColor = (type: string) => {
+    const colors: Record<string, { bg: string; fg: string }> = {
+      marketplace: { bg: '#fef3c7', fg: '#92400e' },
+      conference: { bg: '#ede9fe', fg: '#5b21b6' },
+      ranking: { bg: '#dbeafe', fg: '#1e40af' },
+      directory: { bg: '#d1fae5', fg: '#065f46' },
+      upload: { bg: '#f1f5f9', fg: '#475569' },
+    };
+    return colors[type] || colors.upload;
+  };
+
+  // Total source-level counts
+  const totalSourceCompanies = Object.values(sourceStats.stats).reduce((sum, s) => sum + s.companyCount, 0);
+  const activeSources = ALL_SOURCES.filter(s => (sourceStats.stats[s.name]?.companyCount || 0) > 0).length + sourceStats.uploadSources.length;
 
   return (
     <div className="layout-wrapper">
@@ -276,6 +408,193 @@ export default function Universe() {
         </div>
       )}
 
+      {/* ── Sources Overlay ─────────────────────────────────────────── */}
+      {showSources && (
+        <div className="sources-overlay">
+          <div className="sources-panel">
+            <div className="sources-header">
+              <div>
+                <h2 className="sources-title">Data Sources</h2>
+                <p className="sources-subtitle">{activeSources} active sources &middot; {totalSourceCompanies} companies ingested</p>
+              </div>
+              <button className="sources-close" onClick={() => { setShowSources(false); setExpandedSource(null); }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
+            </div>
+
+            {/* Source type sections */}
+            {(['marketplace', 'conference', 'ranking', 'directory'] as const).map(type => {
+              const sources = ALL_SOURCES.filter(s => s.type === type);
+              const typeLabels: Record<string, string> = {
+                marketplace: 'Marketplaces',
+                conference: 'Conferences & Events',
+                ranking: 'Rankings & Lists',
+                directory: 'Directories',
+              };
+              return (
+                <div key={type} className="source-type-section">
+                  <h3 className="source-type-label">{typeLabels[type]}</h3>
+                  <div className="source-cards-grid">
+                    {sources.map(source => {
+                      const stats = sourceStats.stats[source.name];
+                      const isExpanded = expandedSource === source.name;
+                      const isRefreshing = ingesting === source.name;
+                      return (
+                        <div key={source.name} className={`source-card ${isExpanded ? 'expanded' : ''}`}>
+                          <button className="source-card-header" onClick={() => setExpandedSource(isExpanded ? null : source.name)}>
+                            <div className="source-card-left">
+                              <span className="source-icon">{source.icon}</span>
+                              <div>
+                                <span className="source-name">{source.label}</span>
+                                <span className="source-type-badge" style={{ background: typeColor(type).bg, color: typeColor(type).fg }}>{type}</span>
+                              </div>
+                            </div>
+                            <div className="source-card-right">
+                              <span className="source-count">{stats?.companyCount || 0}</span>
+                              <svg className={`chevron ${isExpanded ? 'open' : ''}`} width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M4 6l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="source-expanded">
+                              <p className="source-desc">{source.description}</p>
+                              <div className="source-stats-grid">
+                                <div className="source-stat">
+                                  <span className="source-stat-label">Total Companies</span>
+                                  <span className="source-stat-value">{stats?.companyCount || 0}</span>
+                                </div>
+                                <div className="source-stat">
+                                  <span className="source-stat-label">Qualified</span>
+                                  <span className="source-stat-value source-stat-qualified">{stats?.qualifiedCount || 0}</span>
+                                </div>
+                                <div className="source-stat">
+                                  <span className="source-stat-label">Last Scraped</span>
+                                  <span className="source-stat-value">{formatDateTime(stats?.lastIngested)}</span>
+                                </div>
+                                <div className="source-stat">
+                                  <span className="source-stat-label">First Scraped</span>
+                                  <span className="source-stat-value">{formatDateTime(stats?.firstIngested)}</span>
+                                </div>
+                                {stats?.topSectors && stats.topSectors.length > 0 && (
+                                  <div className="source-stat full-width">
+                                    <span className="source-stat-label">Top Sectors</span>
+                                    <span className="source-stat-value">{stats.topSectors.join(', ')}</span>
+                                  </div>
+                                )}
+                                {stats?.topRegions && stats.topRegions.length > 0 && (
+                                  <div className="source-stat full-width">
+                                    <span className="source-stat-label">Top Regions</span>
+                                    <span className="source-stat-value">{stats.topRegions.join(', ')}</span>
+                                  </div>
+                                )}
+                              </div>
+                              {source.canRefresh && (
+                                <button
+                                  className={`source-refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
+                                  onClick={() => handleRefreshSource(source)}
+                                  disabled={isRefreshing || !!ingesting}
+                                >
+                                  {isRefreshing ? 'Scraping...' : 'Refresh Source'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Upload sources */}
+            {sourceStats.uploadSources.length > 0 && (
+              <div className="source-type-section">
+                <h3 className="source-type-label">Uploaded Files</h3>
+                <div className="source-cards-grid">
+                  {sourceStats.uploadSources.map(name => {
+                    const stats = sourceStats.stats[name];
+                    const isExpanded = expandedSource === name;
+                    const displayName = name.replace('Upload: ', '');
+                    return (
+                      <div key={name} className={`source-card ${isExpanded ? 'expanded' : ''}`}>
+                        <button className="source-card-header" onClick={() => setExpandedSource(isExpanded ? null : name)}>
+                          <div className="source-card-left">
+                            <span className="source-icon">📄</span>
+                            <div>
+                              <span className="source-name">{displayName}</span>
+                              <span className="source-type-badge" style={{ background: typeColor('upload').bg, color: typeColor('upload').fg }}>upload</span>
+                            </div>
+                          </div>
+                          <div className="source-card-right">
+                            <span className="source-count">{stats?.companyCount || 0}</span>
+                            <svg className={`chevron ${isExpanded ? 'open' : ''}`} width="16" height="16" viewBox="0 0 16 16" fill="none">
+                              <path d="M4 6l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="source-expanded">
+                            <div className="source-stats-grid">
+                              <div className="source-stat">
+                                <span className="source-stat-label">Total Companies</span>
+                                <span className="source-stat-value">{stats?.companyCount || 0}</span>
+                              </div>
+                              <div className="source-stat">
+                                <span className="source-stat-label">Qualified</span>
+                                <span className="source-stat-value source-stat-qualified">{stats?.qualifiedCount || 0}</span>
+                              </div>
+                              <div className="source-stat">
+                                <span className="source-stat-label">Uploaded On</span>
+                                <span className="source-stat-value">{formatDateTime(stats?.lastIngested)}</span>
+                              </div>
+                              {stats?.topSectors && stats.topSectors.length > 0 && (
+                                <div className="source-stat full-width">
+                                  <span className="source-stat-label">Top Sectors</span>
+                                  <span className="source-stat-value">{stats.topSectors.join(', ')}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Upload new file */}
+            <div className="source-upload-section">
+              <label className={`source-upload-btn ${ingesting === 'Upload' ? 'uploading' : ''}`}>
+                {ingesting === 'Upload' ? 'Uploading...' : '+ Upload New Target List'}
+                <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setIngesting('Upload');
+                      try {
+                        const res = await dealApi.uploadFile(file);
+                        alert(res.message || "Upload complete!");
+                        await loadData();
+                      } catch (err: any) {
+                        alert(`Upload Failed: ${err.message || "Unknown error"}`);
+                      } finally {
+                        setIngesting(null);
+                        if (e.target) e.target.value = '';
+                      }
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo-section">
@@ -292,51 +611,6 @@ export default function Universe() {
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" stroke="currentColor" strokeWidth="1" fill="none"/></svg>
               Master Universe
             </Link>
-          </div>
-          <div className="nav-group">
-            <span className="group-label">Sourcing</span>
-            {[
-              { label: 'Acquire.com', type: 'marketplace' as const },
-              { label: 'Flippa', type: 'marketplace' as const },
-              { label: 'FT 1000', type: 'ranking' as const },
-              { label: 'SaaStock Europe', type: 'conference' as const },
-            ].map(src => (
-              <button key={src.label} className={`agent-btn ${ingesting === src.label ? 'loading' : ''}`}
-                onClick={() => handleIngest(src.type, src.label)} disabled={!!ingesting}>
-                {src.label} {ingesting === src.label && '...'}
-              </button>
-            ))}
-          </div>
-          <div className="nav-group">
-            <span className="group-label">Directories</span>
-            <button className={`agent-btn ${ingesting === 'TheSaaSDirectory' ? 'loading' : ''}`}
-              onClick={() => handleDirectoryScrape('TheSaaSDirectory')} disabled={!!ingesting}>
-              SaaS Directory {ingesting === 'TheSaaSDirectory' && '...'}
-            </button>
-          </div>
-          <div className="nav-group border-top">
-            <span className="group-label">Proprietary Data</span>
-            <label className={`agent-btn upload-btn ${ingesting === 'Upload' ? 'loading' : ''}`}>
-              {ingesting === 'Upload' ? 'Uploading...' : 'Upload Target List'}
-              <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    setIngesting('Upload');
-                    try {
-                      const res = await dealApi.uploadFile(file);
-                      alert(res.message || "Upload complete!");
-                      await loadData();
-                    } catch (err: any) {
-                      alert(`Upload Failed: ${err.message || "Unknown error"}`);
-                    } finally {
-                      setIngesting(null);
-                      if (e.target) e.target.value = '';
-                    }
-                  }
-                }}
-              />
-            </label>
           </div>
         </nav>
         <div className="sidebar-footer">
@@ -357,6 +631,11 @@ export default function Universe() {
             <p className="subtitle">{filteredUniverse.length} targets from {universe.length} total</p>
           </div>
           <div className="header-right">
+            <button className="sources-btn" onClick={() => setShowSources(true)}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 7h8M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              Sources
+              <span className="sources-badge">{activeSources}</span>
+            </button>
             <div className="search-box">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#94a3b8" strokeWidth="1.5"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round"/></svg>
               <input type="text" placeholder="Search universe..." value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setActiveViewId(null); }} />
@@ -513,14 +792,8 @@ export default function Universe() {
 
         /* ── Sidebar ────────────────────────────────────────────── */
         .sidebar {
-          width: 260px;
-          background: #fff;
-          border-right: 1px solid #e2e8f0;
-          display: flex;
-          flex-direction: column;
-          position: fixed;
-          height: 100vh;
-          z-index: 100;
+          width: 260px; background: #fff; border-right: 1px solid #e2e8f0;
+          display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 100;
         }
         .logo-section { padding: 2rem 1.75rem 1.5rem; }
         .logo { font-size: 1.25rem; font-weight: 900; letter-spacing: 0.08em; color: #0f172a; }
@@ -535,37 +808,12 @@ export default function Universe() {
         }
         .nav-item:hover { color: #2563eb; background: #eff6ff; }
         .nav-item.active { color: #2563eb; background: #eff6ff; }
-        .agent-btn {
-          background: transparent; border: 1px solid #e2e8f0; color: #64748b;
-          padding: 0.55rem 0.75rem; border-radius: 8px; text-align: left;
-          font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
-        }
-        .agent-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
-        .agent-btn.loading { opacity: 0.5; cursor: wait; }
         .sidebar-footer { padding: 1.25rem; border-top: 1px solid #e2e8f0; }
         .user-profile { display: flex; align-items: center; gap: 0.65rem; }
         .avatar { width: 36px; height: 36px; background: #eff6ff; color: #2563eb; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.8rem; }
         .user-info { display: flex; flex-direction: column; }
         .user-name { font-size: 0.85rem; font-weight: 700; color: #0f172a; }
         .user-role { font-size: 0.68rem; color: #94a3b8; }
-        .border-top { border-top: 1px solid #e2e8f0; margin-top: 0.75rem; padding-top: 0.75rem; }
-
-        .upload-btn {
-          background: #f8fafc !important;
-          color: #2563eb !important;
-          border: 1px dashed #2563eb !important;
-          justify-content: center !important;
-          cursor: pointer;
-          display: flex !important;
-          align-items: center;
-          gap: 0.5rem;
-          font-size: 0.78rem !important;
-          font-weight: 700 !important;
-          padding: 0.65rem !important;
-          border-radius: 8px !important;
-          transition: all 0.15s ease !important;
-        }
-        .upload-btn:hover { background: #2563eb !important; color: #fff !important; border-style: solid !important; }
 
         /* ── Main ───────────────────────────────────────────────── */
         .main-content { margin-left: 260px; flex: 1; padding: 2rem 2.5rem; max-width: calc(100vw - 260px); }
@@ -573,66 +821,164 @@ export default function Universe() {
         .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
         h1 { font-size: 1.75rem; font-weight: 800; color: #0f172a; margin-bottom: 0.25rem; letter-spacing: -0.02em; }
         .subtitle { color: #94a3b8; font-size: 0.88rem; font-weight: 500; margin: 0; }
+        .header-right { display: flex; align-items: center; gap: 0.75rem; }
+
+        /* Sources button */
+        .sources-btn {
+          display: flex; align-items: center; gap: 0.5rem;
+          padding: 0.55rem 1rem; background: #fff; border: 1.5px solid #e2e8f0;
+          border-radius: 8px; font-size: 0.85rem; font-weight: 700; color: #0f172a;
+          cursor: pointer; transition: all 0.15s;
+        }
+        .sources-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .sources-badge {
+          background: #2563eb; color: #fff; font-size: 0.65rem; font-weight: 800;
+          padding: 0.1rem 0.45rem; border-radius: 10px; min-width: 20px; text-align: center;
+        }
+
         .search-box {
           display: flex; align-items: center; padding: 0.6rem 1rem; gap: 0.6rem;
           background: #fff; border: 1.5px solid #e2e8f0; border-radius: 8px; width: 280px;
         }
         .search-box input { background: transparent; border: none; color: #0f172a; width: 100%; outline: none; font-size: 0.88rem; }
 
+        /* ── Sources Overlay ─────────────────────────────────────── */
+        .sources-overlay {
+          position: fixed; inset: 0; z-index: 200;
+          background: rgba(15, 23, 42, 0.4);
+          display: flex; justify-content: center; align-items: flex-start;
+          padding: 3rem;
+          overflow-y: auto;
+          animation: fadeIn 0.15s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .sources-panel {
+          background: #fff;
+          border-radius: 16px;
+          width: 100%;
+          max-width: 900px;
+          padding: 2rem 2.5rem 2.5rem;
+          box-shadow: 0 25px 60px rgba(0,0,0,0.12);
+          animation: slideUp 0.2s ease;
+        }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+        .sources-header {
+          display: flex; justify-content: space-between; align-items: flex-start;
+          margin-bottom: 2rem; padding-bottom: 1.25rem; border-bottom: 1px solid #e2e8f0;
+        }
+        .sources-title { font-size: 1.5rem; font-weight: 800; color: #0f172a; margin: 0 0 0.25rem; }
+        .sources-subtitle { font-size: 0.85rem; color: #94a3b8; margin: 0; }
+        .sources-close {
+          background: none; border: none; color: #94a3b8; cursor: pointer; padding: 0.25rem;
+          border-radius: 6px; display: flex; align-items: center;
+        }
+        .sources-close:hover { background: #f1f5f9; color: #0f172a; }
+
+        .source-type-section { margin-bottom: 1.75rem; }
+        .source-type-label {
+          font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em;
+          color: #94a3b8; font-weight: 700; margin: 0 0 0.65rem;
+        }
+
+        .source-cards-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+
+        .source-card {
+          border: 1px solid #e2e8f0; border-radius: 10px;
+          overflow: hidden; transition: all 0.15s;
+        }
+        .source-card:hover { border-color: #cbd5e1; }
+        .source-card.expanded { border-color: #2563eb; box-shadow: 0 2px 12px rgba(37,99,235,0.08); }
+
+        .source-card-header {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 0.85rem 1.25rem; background: none; border: none;
+          width: 100%; cursor: pointer; text-align: left;
+        }
+        .source-card-header:hover { background: #f8fafc; }
+
+        .source-card-left { display: flex; align-items: center; gap: 0.75rem; }
+        .source-icon { font-size: 1.3rem; }
+        .source-name { font-size: 0.92rem; font-weight: 700; color: #0f172a; display: block; }
+        .source-type-badge {
+          font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+          padding: 0.1rem 0.4rem; border-radius: 3px; margin-top: 0.15rem; display: inline-block;
+        }
+
+        .source-card-right { display: flex; align-items: center; gap: 0.75rem; }
+        .source-count { font-size: 1.15rem; font-weight: 800; color: #0f172a; }
+        .chevron { transition: transform 0.2s; }
+        .chevron.open { transform: rotate(180deg); }
+
+        .source-expanded {
+          padding: 0 1.25rem 1.25rem;
+          border-top: 1px solid #f1f5f9;
+          animation: expandIn 0.15s ease;
+        }
+        @keyframes expandIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .source-desc { font-size: 0.85rem; color: #64748b; line-height: 1.5; margin: 1rem 0; }
+
+        .source-stats-grid {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;
+          margin-bottom: 1rem;
+        }
+
+        .source-stat {
+          padding: 0.65rem 0.85rem; background: #f8fafc; border-radius: 8px;
+          display: flex; flex-direction: column; gap: 0.2rem;
+        }
+        .source-stat.full-width { grid-column: 1 / -1; }
+        .source-stat-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; }
+        .source-stat-value { font-size: 0.92rem; font-weight: 700; color: #0f172a; }
+        .source-stat-qualified { color: #059669; }
+
+        .source-refresh-btn {
+          padding: 0.5rem 1.25rem; background: #2563eb; color: #fff;
+          border: none; border-radius: 8px; font-size: 0.82rem; font-weight: 700;
+          cursor: pointer; transition: all 0.15s; width: 100%;
+        }
+        .source-refresh-btn:hover:not(:disabled) { background: #1d4ed8; }
+        .source-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .source-refresh-btn.refreshing { background: #64748b; }
+
+        .source-upload-section { padding-top: 0.75rem; border-top: 1px solid #e2e8f0; margin-top: 0.5rem; }
+        .source-upload-btn {
+          display: flex; align-items: center; justify-content: center;
+          padding: 0.85rem; border: 1.5px dashed #2563eb; border-radius: 10px;
+          color: #2563eb; font-size: 0.88rem; font-weight: 700;
+          cursor: pointer; transition: all 0.15s; width: 100%; background: #f8fafc;
+        }
+        .source-upload-btn:hover { background: #2563eb; color: #fff; border-style: solid; }
+        .source-upload-btn.uploading { opacity: 0.5; cursor: wait; }
+
         /* ── Filter Bar ─────────────────────────────────────────── */
         .filter-bar {
-          background: #fff;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: 1.25rem 1.5rem;
-          margin-bottom: 1.5rem;
+          background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+          padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
         }
-
-        .filter-row {
-          display: flex; gap: 1.5rem; align-items: flex-end; flex-wrap: wrap;
-        }
-
+        .filter-row { display: flex; gap: 1.5rem; align-items: flex-end; flex-wrap: wrap; }
         .filter-group { display: flex; flex-direction: column; gap: 0.3rem; }
         .filter-group label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: #94a3b8; font-weight: 700; }
         .filter-group select {
           padding: 0.45rem 0.75rem; border: 1px solid #e2e8f0; border-radius: 6px;
           font-size: 0.82rem; color: #0f172a; background: #f8fafc; min-width: 140px; cursor: pointer;
         }
-
         .filter-actions { display: flex; gap: 0.5rem; align-items: center; margin-left: auto; }
-
-        .save-view-btn {
-          background: none; border: 1px solid #2563eb; color: #2563eb;
-          padding: 0.35rem 0.85rem; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer;
-        }
+        .save-view-btn { background: none; border: 1px solid #2563eb; color: #2563eb; padding: 0.35rem 0.85rem; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .save-view-btn:hover { background: #eff6ff; }
-
-        .reset-btn {
-          background: none; border: none; color: #94a3b8;
-          font-size: 0.72rem; cursor: pointer; text-decoration: underline;
-        }
+        .reset-btn { background: none; border: none; color: #94a3b8; font-size: 0.72rem; cursor: pointer; text-decoration: underline; }
         .reset-btn:hover { color: #64748b; }
-
-        .views-row {
-          border-top: 1px solid #f1f5f9;
-          padding-top: 0.75rem;
-          margin-top: 0.75rem;
-        }
+        .views-row { border-top: 1px solid #f1f5f9; padding-top: 0.75rem; margin-top: 0.75rem; }
         .saved-views { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-        .view-chip {
-          display: flex; align-items: center; border: 1px solid #e2e8f0;
-          border-radius: 6px; overflow: hidden; transition: all 0.15s;
-        }
+        .view-chip { display: flex; align-items: center; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; transition: all 0.15s; }
         .view-chip.active { border-color: #2563eb; background: #eff6ff; }
         .view-chip-btn { background: none; border: none; padding: 0.25rem 0.6rem; font-size: 0.72rem; font-weight: 600; color: #64748b; cursor: pointer; }
         .view-chip.active .view-chip-btn { color: #2563eb; }
         .view-chip-delete { background: none; border: none; border-left: 1px solid #e2e8f0; padding: 0.25rem 0.4rem; font-size: 0.8rem; color: #cbd5e1; cursor: pointer; }
         .view-chip-delete:hover { color: #ef4444; }
-
-        .save-view-form {
-          display: flex; gap: 0.5rem; align-items: center;
-          margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #f1f5f9;
-        }
+        .save-view-form { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #f1f5f9; }
         .save-view-input { flex: 1; padding: 0.4rem 0.75rem; border: 1.5px solid #e2e8f0; border-radius: 6px; font-size: 0.82rem; outline: none; }
         .save-view-input:focus { border-color: #2563eb; }
         .save-view-confirm { padding: 0.4rem 1rem; background: #2563eb; color: #fff; border: none; border-radius: 6px; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
@@ -640,67 +986,32 @@ export default function Universe() {
         .save-view-cancel { padding: 0.4rem 0.75rem; background: none; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.78rem; color: #64748b; cursor: pointer; }
 
         /* ── Table ──────────────────────────────────────────────── */
-        .table-section {
-          background: #fff;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: 1.5rem;
-        }
-
-        .section-header {
-          display: flex; justify-content: space-between; align-items: center;
-          margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid #f1f5f9;
-        }
+        .table-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.5rem; }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid #f1f5f9; }
         .section-header h3 { font-size: 1.1rem; color: #0f172a; margin: 0; }
-
-        .refresh-btn {
-          background: none; border: 1px solid #e2e8f0; color: #64748b;
-          padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer;
-        }
+        .refresh-btn { background: none; border: 1px solid #e2e8f0; color: #64748b; padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
         .refresh-btn:hover { border-color: #2563eb; color: #2563eb; }
-
         .table-scroll-container { overflow-x: auto; }
         .table-scroll-container::-webkit-scrollbar { height: 6px; }
         .table-scroll-container::-webkit-scrollbar-track { background: #f8fafc; }
         .table-scroll-container::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
-        .table-scroll-container::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-
         .crm-table { width: 100%; border-collapse: collapse; text-align: left; }
-        .crm-table th {
-          background: #f8fafc; color: #94a3b8; font-size: 0.68rem; text-transform: uppercase;
-          letter-spacing: 0.08em; font-weight: 700; padding: 0.75rem 1rem;
-          border-bottom: 1px solid #e2e8f0; white-space: nowrap;
-        }
-        .crm-table td {
-          padding: 0.85rem 1rem; border-bottom: 1px solid #f1f5f9;
-          font-size: 0.85rem; color: #475569; white-space: nowrap;
-        }
+        .crm-table th { background: #f8fafc; color: #94a3b8; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; padding: 0.75rem 1rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+        .crm-table td { padding: 0.85rem 1rem; border-bottom: 1px solid #f1f5f9; font-size: 0.85rem; color: #475569; white-space: nowrap; }
         .crm-table tr:hover td { background: #f8fafc; }
-
-        .company-cell { }
-        .company-name-btn {
-          background: none; border: none; padding: 0;
-          font-size: 0.88rem; font-weight: 700; color: #0f172a; cursor: pointer; text-align: left;
-        }
+        .company-name-btn { background: none; border: none; padding: 0; font-size: 0.88rem; font-weight: 700; color: #0f172a; cursor: pointer; text-align: left; }
         .company-name-btn:hover { color: #2563eb; }
-
         .website-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
         .website-link { color: #2563eb; font-size: 0.78rem; font-weight: 600; text-decoration: none; }
         .website-link:hover { text-decoration: underline; }
-
         .sector-cell { font-weight: 600; color: #0f172a; }
         .num-cell { font-size: 0.82rem; font-variant-numeric: tabular-nums; text-align: right; }
-
-        .status-badge {
-          font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem;
-          border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em;
-        }
+        .status-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
         .status-badge.qualified { background: #dcfce7; color: #166534; }
         .status-badge.under-review { background: #fef3c7; color: #92400e; }
         .status-badge.uploaded { background: #eff6ff; color: #2563eb; }
         .status-badge.scraped { background: #f1f5f9; color: #94a3b8; }
         .status-badge.not-a-fit { background: #fef2f2; color: #dc2626; }
-
         .email-cell { font-size: 0.78rem; }
         .email-link { color: #2563eb; text-decoration: none; }
         .email-link:hover { text-decoration: underline; }
@@ -708,41 +1019,21 @@ export default function Universe() {
         .source-cell { font-size: 0.78rem; color: #94a3b8; }
         .date-cell { font-size: 0.78rem; }
         .empty-row { text-align: center; padding: 3rem !important; color: #94a3b8; }
-
-        .desc-btn {
-          background: transparent; border: 1px solid #2563eb; color: #2563eb;
-          padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
-        }
+        .desc-btn { background: transparent; border: 1px solid #2563eb; color: #2563eb; padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
         .desc-btn:hover { background: #2563eb; color: white; }
-
         .action-btns { display: flex; gap: 0.35rem; }
-        .smartfill-btn {
-          background: transparent; border: 1px solid #2563eb; color: #2563eb;
-          padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
-        }
+        .smartfill-btn { background: transparent; border: 1px solid #2563eb; color: #2563eb; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
         .smartfill-btn:hover:not(:disabled) { background: #2563eb; color: white; }
         .smartfill-btn.filling { opacity: 0.4; cursor: wait; }
-
-        .outreach-btn {
-          background: transparent; border: 1px solid #d97706; color: #d97706;
-          padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
-        }
+        .outreach-btn { background: transparent; border: 1px solid #d97706; color: #d97706; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
         .outreach-btn:hover { background: #d97706; color: white; }
-
         .skeleton-row td { padding: 0.75rem 1rem; }
         .skeleton-line { height: 10px; background: #e2e8f0; width: 100%; border-radius: 2px; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
         /* ── Modals ────────────────────────────────────────────── */
-        .modal-overlay {
-          position: fixed; inset: 0; background: rgba(15, 23, 42, 0.3);
-          display: flex; align-items: center; justify-content: center; z-index: 1000;
-        }
-        .modal-content {
-          background: #fff; border-radius: 12px; width: 520px; max-width: 90vw;
-          max-height: 85vh; display: flex; flex-direction: column;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.12); overflow: hidden;
-        }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.3); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: #fff; border-radius: 12px; width: 520px; max-width: 90vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.12); overflow: hidden; }
         .outreach-modal { width: 640px; }
         .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0; }
         .modal-header h3 { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0; }
@@ -751,7 +1042,6 @@ export default function Universe() {
         .modal-footer { padding: 1rem 1.5rem; display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid #f1f5f9; }
         .modal-ok-btn { background: #2563eb; color: white; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
         .modal-ok-btn:hover { opacity: 0.9; }
-
         .result-company-name { font-size: 1.2rem; font-weight: 800; color: #0f172a; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 2px solid #2563eb; }
         .result-grid { display: flex; flex-direction: column; gap: 0.5rem; }
         .result-row { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.85rem; border-radius: 6px; background: #f8fafc; }
@@ -764,8 +1054,6 @@ export default function Universe() {
         .result-description { padding: 0.85rem; border-radius: 6px; background: #f8fafc; margin-top: 0.25rem; }
         .result-description .result-label { display: block; margin-bottom: 0.4rem; }
         .description-text { font-size: 0.85rem; color: #0f172a; line-height: 1.65; margin: 0; white-space: pre-wrap; }
-
-        /* Outreach modal specifics */
         .outreach-loading { text-align: center; padding: 2.5rem 1.5rem; }
         .outreach-loading p { color: #64748b; margin-top: 0.75rem; font-size: 0.95rem; }
         .outreach-loading .loading-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 0.15rem; }
@@ -797,14 +1085,16 @@ export default function Universe() {
         @media (max-width: 1024px) {
           .sidebar { width: 72px; }
           .sidebar .logo span, .sidebar .group-label, .sidebar .nav-item span:not(svg),
-          .sidebar .agent-btn, .sidebar .user-info, .sidebar .upload-btn { display: none !important; }
+          .sidebar .user-info { display: none !important; }
           .sidebar .logo { text-align: center; padding: 1.5rem 0; font-size: 0.9rem; }
           .main-content { margin-left: 72px; max-width: calc(100vw - 72px); }
         }
         @media (max-width: 768px) {
           .page-header { flex-direction: column; gap: 1rem; }
+          .header-right { flex-direction: column; width: 100%; }
           .search-box { width: 100%; }
           .filter-row { flex-direction: column; }
+          .sources-overlay { padding: 1rem; }
         }
       `}</style>
     </div>
