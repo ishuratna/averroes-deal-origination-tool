@@ -16,12 +16,14 @@ class BigQueryHandler:
         self.dataset_id = dataset_id
         self.table_id = f"{self.project_id}.{self.dataset_id}.targets"
         self.activity_table_id = f"{self.project_id}.{self.dataset_id}.activity_log"
+        self.config_table_id = f"{self.project_id}.{self.dataset_id}.qualification_config"
 
         self.init_error = None
         try:
             self.client = bigquery.Client(project=project_id)
             self._ensure_expanded_schema()
             self._ensure_activity_table()
+            self._ensure_config_table()
         except Exception as e:
             logger.warning(f"BigQuery Client could not be initialized: {e}")
             self.init_error = str(e)
@@ -96,6 +98,121 @@ class BigQueryHandler:
             table = bigquery.Table(self.activity_table_id, schema=schema)
             self.client.create_table(table)
             logger.info("Created activity_log table in BigQuery")
+
+    # ── Qualification config table ────────────────────────────────────────────────
+
+    DEFAULT_CRITERIA = {
+        "geography": {
+            "label": "Geography",
+            "description": "Company must be headquartered in one of these regions",
+            "regions": ["UK", "Ireland", "United Kingdom", "Great Britain",
+                        "London", "Dublin", "Edinburgh", "Manchester",
+                        "Birmingham", "Belfast", "Glasgow", "Bristol",
+                        "Leeds", "Cardiff", "Cork", "Galway", "Limerick"],
+            "country_codes": ["uk", "gb", "ie", "england", "scotland", "wales", "northern ireland"],
+        },
+        "industry": {
+            "label": "Industry / Sector",
+            "description": "Company must be technology or tech-related",
+            "keywords": [
+                "software", "saas", "platform", "cloud", "paas", "iaas",
+                "tech", "technology", "digital", "ai", "artificial intelligence",
+                "machine learning", "data", "analytics", "automation",
+                "cyber", "fintech", "healthtech", "edtech", "insurtech",
+                "proptech", "regtech", "legaltech", "martech", "adtech",
+                "devops", "api", "iot", "blockchain", "robotics",
+                "it services", "managed services", "hosting",
+                "e-commerce platform", "marketplace platform",
+            ],
+        },
+        "focus": "B2B SaaS / Software / High-Margin Tech-Enabled Services / Industrial Tech",
+        "target_ebitda": "£1M - £10M (Revenue approx £2M - £20M)",
+    }
+
+    def _ensure_config_table(self):
+        """Create the qualification_config table if it doesn't exist. Seed with defaults."""
+        if not self.client:
+            return
+        try:
+            self.client.get_table(self.config_table_id)
+            logger.info("Qualification config table already exists")
+        except Exception:
+            schema = [
+                bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("criteria_json", "STRING"),
+                bigquery.SchemaField("updated_by", "STRING"),
+                bigquery.SchemaField("updated_at", "TIMESTAMP"),
+                bigquery.SchemaField("version", "INT64"),
+            ]
+            table = bigquery.Table(self.config_table_id, schema=schema)
+            self.client.create_table(table)
+            logger.info("Created qualification_config table in BigQuery")
+            # Seed with default criteria
+            self._save_criteria(self.DEFAULT_CRITERIA, "System (initial seed)", version=1)
+
+    def get_criteria(self) -> dict:
+        """Get the latest qualification criteria from BQ. Falls back to defaults."""
+        if not self.client:
+            return self.DEFAULT_CRITERIA
+        try:
+            query = f"SELECT criteria_json, updated_by, updated_at, version FROM `{self.config_table_id}` ORDER BY version DESC LIMIT 1"
+            rows = list(self.client.query(query).result())
+            if rows:
+                import json
+                return json.loads(rows[0].criteria_json)
+            return self.DEFAULT_CRITERIA
+        except Exception as e:
+            logger.warning(f"Failed to read criteria from BQ: {e}")
+            return self.DEFAULT_CRITERIA
+
+    def get_criteria_meta(self) -> dict:
+        """Get criteria + metadata (who updated, when, version)."""
+        if not self.client:
+            return {"criteria": self.DEFAULT_CRITERIA, "updated_by": "System", "updated_at": None, "version": 0}
+        try:
+            query = f"SELECT criteria_json, updated_by, updated_at, version FROM `{self.config_table_id}` ORDER BY version DESC LIMIT 1"
+            rows = list(self.client.query(query).result())
+            if rows:
+                import json
+                row = rows[0]
+                return {
+                    "criteria": json.loads(row.criteria_json),
+                    "updated_by": row.updated_by,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                    "version": row.version,
+                }
+            return {"criteria": self.DEFAULT_CRITERIA, "updated_by": "System", "updated_at": None, "version": 0}
+        except Exception as e:
+            logger.warning(f"Failed to read criteria meta: {e}")
+            return {"criteria": self.DEFAULT_CRITERIA, "updated_by": "System", "updated_at": None, "version": 0}
+
+    def save_criteria(self, criteria: dict, updated_by: str = "Ishu Ratna") -> bool:
+        """Save new criteria to BQ as a new version."""
+        meta = self.get_criteria_meta()
+        new_version = meta.get("version", 0) + 1
+        return self._save_criteria(criteria, updated_by, new_version)
+
+    def _save_criteria(self, criteria: dict, updated_by: str, version: int) -> bool:
+        if not self.client:
+            return False
+        try:
+            import json
+            query = f"""
+                INSERT INTO `{self.config_table_id}` (id, criteria_json, updated_by, updated_at, version)
+                VALUES (@id, @criteria_json, @updated_by, CURRENT_TIMESTAMP(), @version)
+            """
+            self.client.query(query, job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("id", "STRING", str(uuid.uuid4())),
+                    bigquery.ScalarQueryParameter("criteria_json", "STRING", json.dumps(criteria)),
+                    bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
+                    bigquery.ScalarQueryParameter("version", "INT64", version),
+                ]
+            )).result()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save criteria: {e}")
+            return False
 
     # ── Deal lifecycle: status updates ──────────────────────────────────────────
 
