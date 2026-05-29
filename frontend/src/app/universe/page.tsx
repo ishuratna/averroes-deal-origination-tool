@@ -394,6 +394,53 @@ export default function Universe() {
                     <span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.size_reason}</span>
                   </div>
                 )}
+                {/* Companies House Financials */}
+                {smartFillResult.ch_company_number && (
+                  <>
+                    <div className="result-ch-header">
+                      <span className="result-ch-badge">Companies House</span>
+                      {smartFillResult.ch_match_confidence && (
+                        <span className={`result-ch-conf result-ch-conf-${smartFillResult.ch_match_confidence}`}>{smartFillResult.ch_match_confidence} match</span>
+                      )}
+                    </div>
+                    <div className="result-row">
+                      <span className="result-label">Official Name</span>
+                      <span className="result-value found">{smartFillResult.ch_official_name}</span>
+                    </div>
+                    <div className="result-row">
+                      <span className="result-label">Company #</span>
+                      <span className="result-value found">{smartFillResult.ch_company_number}</span>
+                    </div>
+                    <div className="result-row">
+                      <span className="result-label">Filing Type</span>
+                      <span className="result-value">{smartFillResult.filing_type || '—'}</span>
+                    </div>
+                    {smartFillResult.revenue_y1 != null && (
+                      <div className="result-row">
+                        <span className="result-label">Revenue (Latest)</span>
+                        <span className="result-value found">£{(smartFillResult.revenue_y1 / 1e6).toFixed(2)}M {smartFillResult.revenue_y1_date ? `(${smartFillResult.revenue_y1_date})` : ''}</span>
+                      </div>
+                    )}
+                    {smartFillResult.profit_y1 != null && (
+                      <div className="result-row">
+                        <span className="result-label">Profit (Latest)</span>
+                        <span className="result-value found">£{(smartFillResult.profit_y1 / 1e6).toFixed(2)}M</span>
+                      </div>
+                    )}
+                    {smartFillResult.total_assets_y1 != null && (
+                      <div className="result-row">
+                        <span className="result-label">Total Assets</span>
+                        <span className="result-value found">£{(smartFillResult.total_assets_y1 / 1e6).toFixed(2)}M</span>
+                      </div>
+                    )}
+                    {smartFillResult.ch_notes && (
+                      <div className="result-row">
+                        <span className="result-label">CH Notes</span>
+                        <span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.ch_notes}</span>
+                      </div>
+                    )}
+                  </>
+                )}
                 {smartFillResult.reason && (
                   <div className="result-row"><span className="result-label">Reason</span><span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.reason}</span></div>
                 )}
@@ -1450,6 +1497,12 @@ export default function Universe() {
         .result-description { padding: 0.85rem; border-radius: 6px; background: #f8fafc; margin-top: 0.25rem; }
         .result-description .result-label { display: block; margin-bottom: 0.4rem; }
         .description-text { font-size: 0.85rem; color: #0f172a; line-height: 1.65; margin: 0; white-space: pre-wrap; }
+        .result-ch-header { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0 0.25rem; padding: 0.4rem 0.85rem; }
+        .result-ch-badge { font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.2rem 0.55rem; background: #0f172a; color: #fff; border-radius: 4px; }
+        .result-ch-conf { font-size: 0.65rem; font-weight: 700; padding: 0.15rem 0.45rem; border-radius: 4px; text-transform: capitalize; }
+        .result-ch-conf-high { background: #dcfce7; color: #166534; }
+        .result-ch-conf-medium { background: #fef9c3; color: #854d0e; }
+        .result-ch-conf-low { background: #fee2e2; color: #991b1b; }
         .outreach-loading { text-align: center; padding: 2.5rem 1.5rem; }
         .outreach-loading p { color: #64748b; margin-top: 0.75rem; font-size: 0.95rem; }
         .outreach-loading .loading-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 0.15rem; }

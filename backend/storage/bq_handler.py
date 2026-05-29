@@ -55,6 +55,24 @@ class BigQueryHandler:
         ("legal_name", "STRING"), ("registration_number", "STRING"),
         ("financing_note", "STRING"),
         ("size_bucket", "STRING"),
+        # Companies House financial data
+        ("ch_company_number", "STRING"),
+        ("ch_official_name", "STRING"),
+        ("ch_status", "STRING"),
+        ("ch_incorporated_date", "STRING"),
+        ("ch_sic_codes", "STRING"),
+        ("revenue_y1", "FLOAT64"), ("revenue_y1_date", "STRING"),
+        ("revenue_y2", "FLOAT64"), ("revenue_y2_date", "STRING"),
+        ("revenue_y3", "FLOAT64"), ("revenue_y3_date", "STRING"),
+        ("profit_y1", "FLOAT64"), ("profit_y1_date", "STRING"),
+        ("profit_y2", "FLOAT64"), ("profit_y3", "FLOAT64"),
+        ("total_assets_y1", "FLOAT64"),
+        ("net_assets_y1", "FLOAT64"),
+        ("cash_y1", "FLOAT64"),
+        ("employees_ch", "INT64"),
+        ("filing_type", "STRING"),
+        ("ch_match_confidence", "STRING"),
+        ("ch_notes", "STRING"),
     ]
 
     def _ensure_expanded_schema(self):

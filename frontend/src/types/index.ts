@@ -62,6 +62,29 @@ export interface CompanyTarget {
   registration_number?: string;
   financing_note?: string;
   size_bucket?: string;
+  // Companies House financial data
+  ch_company_number?: string;
+  ch_official_name?: string;
+  ch_status?: string;
+  ch_incorporated_date?: string;
+  ch_sic_codes?: string;
+  revenue_y1?: number;
+  revenue_y1_date?: string;
+  revenue_y2?: number;
+  revenue_y2_date?: string;
+  revenue_y3?: number;
+  revenue_y3_date?: string;
+  profit_y1?: number;
+  profit_y1_date?: string;
+  profit_y2?: number;
+  profit_y3?: number;
+  total_assets_y1?: number;
+  net_assets_y1?: number;
+  cash_y1?: number;
+  employees_ch?: number;
+  filing_type?: string;
+  ch_match_confidence?: string;
+  ch_notes?: string;
 }
 
 export interface ActivityEntry {

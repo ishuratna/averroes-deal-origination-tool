@@ -24,6 +24,7 @@ from ai.criteria import (
     set_criteria_from_bq, preview_criteria,
 )
 from ai.enrichment import EnrichmentAgent
+from services.companies_house_service import extract_ch_financials
 from config.sourcing_config import SOURCING_CRITERIA
 
 # Load .env for local development; Cloud Run injects env vars directly
@@ -375,10 +376,60 @@ async def smartfill_company(company_name: str):
     size_confidence = qual.get("size_confidence", "")
     size_reason = qual.get("size_reason", "")
 
-    # Step 3: Update BQ (including size_bucket)
+    # Step 3: Companies House financials (UK/Ireland only)
+    ch_data = {}
+    if qual.get("is_uk_ireland"):
+        logger.info(f"UK/Ireland company — extracting Companies House financials for '{company_name}'")
+        try:
+            ch_data = extract_ch_financials(
+                company_name,
+                sector=company_data.get("sector", ""),
+                region=company_data.get("region", ""),
+                description=description or company_data.get("description", ""),
+            )
+            if ch_data.get("error"):
+                logger.warning(f"CH extraction returned error for {company_name}: {ch_data['error']}")
+                ch_data = {}  # Clear so we don't save error data
+            else:
+                logger.info(f"CH financials found for '{company_name}': {ch_data.get('ch_official_name')} "
+                            f"(revenue_y1={ch_data.get('revenue_y1')})")
+        except Exception as e:
+            logger.error(f"CH extraction failed for {company_name}: {e}")
+
+    # Step 4: Update BQ (including size_bucket + CH financials)
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url, size_bucket = @size_bucket, description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET
+            status = @status,
+            website = @website,
+            contact_name = @contact_name,
+            contact_email = @contact_email,
+            linkedin_url = @linkedin_url,
+            size_bucket = @size_bucket,
+            ch_company_number = @ch_company_number,
+            ch_official_name = @ch_official_name,
+            ch_status = @ch_status,
+            ch_incorporated_date = @ch_incorporated_date,
+            ch_sic_codes = @ch_sic_codes,
+            revenue_y1 = @revenue_y1,
+            revenue_y1_date = @revenue_y1_date,
+            revenue_y2 = @revenue_y2,
+            revenue_y2_date = @revenue_y2_date,
+            revenue_y3 = @revenue_y3,
+            revenue_y3_date = @revenue_y3_date,
+            profit_y1 = @profit_y1,
+            profit_y1_date = @profit_y1_date,
+            profit_y2 = @profit_y2,
+            profit_y3 = @profit_y3,
+            total_assets_y1 = @total_assets_y1,
+            net_assets_y1 = @net_assets_y1,
+            cash_y1 = @cash_y1,
+            employees_ch = @employees_ch,
+            filing_type = @filing_type,
+            ch_match_confidence = @ch_match_confidence,
+            ch_notes = @ch_notes,
+            description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END
+            WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("status", "STRING", new_status),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
@@ -386,6 +437,28 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
             bq_lib.ScalarQueryParameter("size_bucket", "STRING", size_bucket or ""),
+            bq_lib.ScalarQueryParameter("ch_company_number", "STRING", ch_data.get("ch_company_number") or ""),
+            bq_lib.ScalarQueryParameter("ch_official_name", "STRING", ch_data.get("ch_official_name") or ""),
+            bq_lib.ScalarQueryParameter("ch_status", "STRING", ch_data.get("ch_status") or ""),
+            bq_lib.ScalarQueryParameter("ch_incorporated_date", "STRING", ch_data.get("ch_incorporated_date") or ""),
+            bq_lib.ScalarQueryParameter("ch_sic_codes", "STRING", ch_data.get("ch_sic_codes") or ""),
+            bq_lib.ScalarQueryParameter("revenue_y1", "FLOAT64", ch_data.get("revenue_y1")),
+            bq_lib.ScalarQueryParameter("revenue_y1_date", "STRING", ch_data.get("revenue_y1_date") or ""),
+            bq_lib.ScalarQueryParameter("revenue_y2", "FLOAT64", ch_data.get("revenue_y2")),
+            bq_lib.ScalarQueryParameter("revenue_y2_date", "STRING", ch_data.get("revenue_y2_date") or ""),
+            bq_lib.ScalarQueryParameter("revenue_y3", "FLOAT64", ch_data.get("revenue_y3")),
+            bq_lib.ScalarQueryParameter("revenue_y3_date", "STRING", ch_data.get("revenue_y3_date") or ""),
+            bq_lib.ScalarQueryParameter("profit_y1", "FLOAT64", ch_data.get("profit_y1")),
+            bq_lib.ScalarQueryParameter("profit_y1_date", "STRING", ch_data.get("profit_y1_date") or ""),
+            bq_lib.ScalarQueryParameter("profit_y2", "FLOAT64", ch_data.get("profit_y2")),
+            bq_lib.ScalarQueryParameter("profit_y3", "FLOAT64", ch_data.get("profit_y3")),
+            bq_lib.ScalarQueryParameter("total_assets_y1", "FLOAT64", ch_data.get("total_assets_y1")),
+            bq_lib.ScalarQueryParameter("net_assets_y1", "FLOAT64", ch_data.get("net_assets_y1")),
+            bq_lib.ScalarQueryParameter("cash_y1", "FLOAT64", ch_data.get("cash_y1")),
+            bq_lib.ScalarQueryParameter("employees_ch", "INT64", ch_data.get("employees_ch")),
+            bq_lib.ScalarQueryParameter("filing_type", "STRING", ch_data.get("filing_type") or ""),
+            bq_lib.ScalarQueryParameter("ch_match_confidence", "STRING", ch_data.get("ch_match_confidence") or ""),
+            bq_lib.ScalarQueryParameter("ch_notes", "STRING", ch_data.get("notes") or ""),
             bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -410,6 +483,28 @@ async def smartfill_company(company_name: str):
         "contact_email": founder_info.get("contact_email", ""),
         "linkedin_url": founder_info.get("linkedin_url", ""),
         "description": description,
+        # Companies House data
+        "ch_company_number": ch_data.get("ch_company_number"),
+        "ch_official_name": ch_data.get("ch_official_name"),
+        "ch_status": ch_data.get("ch_status"),
+        "ch_incorporated_date": ch_data.get("ch_incorporated_date"),
+        "ch_sic_codes": ch_data.get("ch_sic_codes"),
+        "revenue_y1": ch_data.get("revenue_y1"),
+        "revenue_y1_date": ch_data.get("revenue_y1_date"),
+        "revenue_y2": ch_data.get("revenue_y2"),
+        "revenue_y2_date": ch_data.get("revenue_y2_date"),
+        "revenue_y3": ch_data.get("revenue_y3"),
+        "revenue_y3_date": ch_data.get("revenue_y3_date"),
+        "profit_y1": ch_data.get("profit_y1"),
+        "profit_y2": ch_data.get("profit_y2"),
+        "profit_y3": ch_data.get("profit_y3"),
+        "total_assets_y1": ch_data.get("total_assets_y1"),
+        "net_assets_y1": ch_data.get("net_assets_y1"),
+        "cash_y1": ch_data.get("cash_y1"),
+        "employees_ch": ch_data.get("employees_ch"),
+        "filing_type": ch_data.get("filing_type"),
+        "ch_match_confidence": ch_data.get("ch_match_confidence"),
+        "ch_notes": ch_data.get("notes"),
     }
 
 

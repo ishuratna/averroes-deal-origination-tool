@@ -137,6 +137,57 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
 
           {activeTab === 'financials' && (
             <div className="drawer-section">
+              {/* Companies House Filing Data */}
+              {company.ch_company_number && (
+                <>
+                  <div className="ch-header">
+                    <span className="ch-badge">Companies House</span>
+                    {company.ch_match_confidence && (
+                      <span className={`ch-confidence ch-conf-${company.ch_match_confidence}`}>
+                        {company.ch_match_confidence} match
+                      </span>
+                    )}
+                  </div>
+                  <div className="detail-grid">
+                    <DetailRow label="Official Name" value={company.ch_official_name} />
+                    <DetailRow label="Company #" value={company.ch_company_number} />
+                    <DetailRow label="Status" value={company.ch_status} />
+                    <DetailRow label="Incorporated" value={company.ch_incorporated_date} />
+                    <DetailRow label="SIC Codes" value={company.ch_sic_codes} />
+                    <DetailRow label="Filing Type" value={company.filing_type} />
+                    <DetailRow label="Employees (CH)" value={company.employees_ch?.toLocaleString()} />
+                  </div>
+
+                  <h4 className="ch-sub-heading">Revenue (3-Year)</h4>
+                  <div className="detail-grid">
+                    <DetailRow label={company.revenue_y1_date || 'Year 1'} value={company.revenue_y1 != null ? `£${(company.revenue_y1 / 1e6).toFixed(2)}M` : undefined} highlight />
+                    <DetailRow label={company.revenue_y2_date || 'Year 2'} value={company.revenue_y2 != null ? `£${(company.revenue_y2 / 1e6).toFixed(2)}M` : undefined} />
+                    <DetailRow label={company.revenue_y3_date || 'Year 3'} value={company.revenue_y3 != null ? `£${(company.revenue_y3 / 1e6).toFixed(2)}M` : undefined} />
+                  </div>
+
+                  <h4 className="ch-sub-heading">Profit Before Tax (3-Year)</h4>
+                  <div className="detail-grid">
+                    <DetailRow label={company.profit_y1_date || company.revenue_y1_date || 'Year 1'} value={company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(2)}M` : undefined} highlight />
+                    <DetailRow label={company.revenue_y2_date || 'Year 2'} value={company.profit_y2 != null ? `£${(company.profit_y2 / 1e6).toFixed(2)}M` : undefined} />
+                    <DetailRow label={company.revenue_y3_date || 'Year 3'} value={company.profit_y3 != null ? `£${(company.profit_y3 / 1e6).toFixed(2)}M` : undefined} />
+                  </div>
+
+                  <h4 className="ch-sub-heading">Balance Sheet (Latest)</h4>
+                  <div className="detail-grid">
+                    <DetailRow label="Total Assets" value={company.total_assets_y1 != null ? `£${(company.total_assets_y1 / 1e6).toFixed(2)}M` : undefined} highlight />
+                    <DetailRow label="Net Assets" value={company.net_assets_y1 != null ? `£${(company.net_assets_y1 / 1e6).toFixed(2)}M` : undefined} />
+                    <DetailRow label="Cash" value={company.cash_y1 != null ? `£${(company.cash_y1 / 1e6).toFixed(2)}M` : undefined} />
+                  </div>
+
+                  {company.ch_notes && (
+                    <p className="ch-filing-note">{company.ch_notes}</p>
+                  )}
+
+                  <div className="ch-divider" />
+                </>
+              )}
+
+              {/* Existing PitchBook / enrichment financials */}
               <div className="detail-grid">
                 <DetailRow label="Revenue" value={formatCurrency(company.revenue_m)} highlight />
                 <DetailRow label="Net Income" value={formatCurrency(company.net_income_m)} />
@@ -536,6 +587,63 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
         .activity-by {
           font-size: 0.68rem;
           color: #94a3b8;
+        }
+
+        /* Companies House styles */
+        .ch-header {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          margin-bottom: 1rem;
+        }
+
+        .ch-badge {
+          font-size: 0.68rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          padding: 0.25rem 0.65rem;
+          background: #0f172a;
+          color: #fff;
+          border-radius: 4px;
+        }
+
+        .ch-confidence {
+          font-size: 0.68rem;
+          font-weight: 700;
+          padding: 0.2rem 0.5rem;
+          border-radius: 4px;
+          text-transform: capitalize;
+        }
+
+        .ch-conf-high { background: #dcfce7; color: #166534; }
+        .ch-conf-medium { background: #fef9c3; color: #854d0e; }
+        .ch-conf-low { background: #fee2e2; color: #991b1b; }
+
+        .ch-sub-heading {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #475569;
+          margin: 1.2rem 0 0.4rem;
+        }
+
+        .ch-filing-note {
+          font-size: 0.8rem;
+          color: #64748b;
+          background: #f8fafc;
+          padding: 0.65rem 0.85rem;
+          border-radius: 6px;
+          border: 1px solid #e2e8f0;
+          margin: 1rem 0 0;
+          line-height: 1.5;
+        }
+
+        .ch-divider {
+          height: 1px;
+          background: #e2e8f0;
+          margin: 1.5rem 0;
         }
       `}</style>
     </>
