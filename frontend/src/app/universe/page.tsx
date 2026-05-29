@@ -380,6 +380,20 @@ export default function Universe() {
                   <span className="result-label">Tech Company</span>
                   <span className={`result-value ${smartFillResult.is_tech ? 'found' : 'not-found'}`}>{smartFillResult.is_tech ? 'Yes' : 'No'}</span>
                 </div>
+                {smartFillResult.size_bucket && (
+                  <div className="result-row">
+                    <span className="result-label">Company Size</span>
+                    <span className={`result-value ${smartFillResult.size_qualified !== false ? 'found' : 'not-found'}`}>
+                      {smartFillResult.size_bucket}{smartFillResult.size_confidence ? ` (${smartFillResult.size_confidence} confidence)` : ''}
+                    </span>
+                  </div>
+                )}
+                {smartFillResult.size_reason && (
+                  <div className="result-row">
+                    <span className="result-label">Size Basis</span>
+                    <span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.size_reason}</span>
+                  </div>
+                )}
                 {smartFillResult.reason && (
                   <div className="result-row"><span className="result-label">Reason</span><span className="result-value" style={{fontSize: '0.8rem', whiteSpace: 'normal'}}>{smartFillResult.reason}</span></div>
                 )}
@@ -719,6 +733,21 @@ export default function Universe() {
                     </div>
                   </div>
 
+                  {/* Size card */}
+                  <div className="criteria-card">
+                    <div className="criteria-card-icon">📏</div>
+                    <div className="criteria-card-body">
+                      <h4 className="criteria-card-title">Company Size</h4>
+                      <p className="criteria-card-desc">AI estimates company size from revenue, employees, funding, and other signals. Only Micro, Small, and Mid-size companies qualify (revenue under £50M).</p>
+                      <div className="criteria-tags">
+                        <span className="criteria-tag size-micro">Micro &lt;£5M</span>
+                        <span className="criteria-tag size-small">Small £5-15M</span>
+                        <span className="criteria-tag size-mid">Mid £15-50M</span>
+                        <span className="criteria-tag size-large">Large &gt;£50M ✗</span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Focus & target */}
                   {criteriaData.criteria?.focus && (
                     <div className="criteria-meta">
@@ -956,6 +985,7 @@ export default function Universe() {
                   <th>Age</th>
                   <th>Raised</th>
                   <th>Valuation</th>
+                  <th>Size</th>
                   <th>Status</th>
                   <th>Leadership</th>
                   <th>Email</th>
@@ -969,7 +999,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={17}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={18}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -989,6 +1019,7 @@ export default function Universe() {
                       <td className="num-cell">{company.year_founded ? `${new Date().getFullYear() - company.year_founded}y` : '—'}</td>
                       <td className="num-cell">{company.total_raised_m ? `£${company.total_raised_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `£${company.valuation_estimate_m.toFixed(1)}M` : '—'}</td>
+                      <td>{company.size_bucket ? <span className={`size-badge size-${company.size_bucket.toLowerCase()}`}>{company.size_bucket}</span> : '—'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span></td>
                       <td>{company.contact_name || '—'}</td>
                       <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '—'}</td>
@@ -1017,7 +1048,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={17} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={18} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1219,6 +1250,10 @@ export default function Universe() {
         .criteria-tag.geo.code { background: #e0e7ff; color: #3730a3; font-family: monospace; }
         .criteria-tag.tech { background: #dcfce7; color: #166534; }
         .criteria-tag.more { background: #f1f5f9; color: #64748b; font-style: italic; }
+        .criteria-tag.size-micro { background: #f0fdf4; color: #166534; }
+        .criteria-tag.size-small { background: #dcfce7; color: #166534; }
+        .criteria-tag.size-mid { background: #fef3c7; color: #92400e; }
+        .criteria-tag.size-large { background: #fef2f2; color: #dc2626; text-decoration: line-through; }
 
         .criteria-meta {
           font-size: 0.82rem; color: #0f172a; padding: 0.5rem 0.85rem;
@@ -1368,6 +1403,11 @@ export default function Universe() {
         .status-badge.uploaded { background: #eff6ff; color: #2563eb; }
         .status-badge.scraped { background: #f1f5f9; color: #94a3b8; }
         .status-badge.not-a-fit { background: #fef2f2; color: #dc2626; }
+        .size-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .size-badge.size-micro { background: #f0fdf4; color: #166534; }
+        .size-badge.size-small { background: #dcfce7; color: #166534; }
+        .size-badge.size-mid { background: #fef3c7; color: #92400e; }
+        .size-badge.size-large { background: #fef2f2; color: #dc2626; }
         .email-cell { font-size: 0.78rem; }
         .email-link { color: #2563eb; text-decoration: none; }
         .email-link:hover { text-decoration: underline; }

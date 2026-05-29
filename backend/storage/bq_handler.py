@@ -54,6 +54,7 @@ class BigQueryHandler:
         ("competitors", "STRING"), ("also_known_as", "STRING"),
         ("legal_name", "STRING"), ("registration_number", "STRING"),
         ("financing_note", "STRING"),
+        ("size_bucket", "STRING"),
     ]
 
     def _ensure_expanded_schema(self):

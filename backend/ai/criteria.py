@@ -71,6 +71,62 @@ def _get_tech_keywords(criteria: dict = None) -> list:
     return AverroesPhilosophy.THESIS["tech_keywords"]
 
 
+# ── Size buckets ────────────────────────────────────────────────────────────
+
+SIZE_BUCKETS = {
+    "Micro":  {"label": "Micro",  "max_revenue_m": 5,   "qualifies": True},
+    "Small":  {"label": "Small",  "max_revenue_m": 15,  "qualifies": True},
+    "Mid":    {"label": "Mid",    "max_revenue_m": 50,  "qualifies": True},
+    "Large":  {"label": "Large",  "max_revenue_m": None, "qualifies": False},
+}
+
+def _get_size_config(criteria: dict = None) -> dict:
+    """Get size filter config from criteria or defaults."""
+    if criteria and "size" in criteria:
+        return criteria["size"]
+    return {
+        "label": "Company Size (Revenue-based)",
+        "description": "Micro (<£5M), Small (£5-15M), Mid (£15-50M) qualify. Large (>£50M) rejected.",
+        "buckets": SIZE_BUCKETS,
+        "max_revenue_m": 50,
+    }
+
+
+def size_company_rule_based(company: dict) -> Dict[str, any]:
+    """
+    Determine company size bucket from available financial data.
+    Returns {bucket, confidence, reason} or None if insufficient data.
+    """
+    revenue = company.get("revenue_m")
+    # Try parsing string revenue values
+    if revenue is not None:
+        try:
+            revenue = float(revenue)
+        except (ValueError, TypeError):
+            revenue = None
+
+    if revenue is not None and revenue > 0:
+        if revenue < 5:
+            return {"size_bucket": "Micro", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M < £5M"}
+        elif revenue < 15:
+            return {"size_bucket": "Small", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M (£5-15M range)"}
+        elif revenue <= 50:
+            return {"size_bucket": "Mid", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M (£15-50M range)"}
+        else:
+            return {"size_bucket": "Large", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M exceeds £50M threshold"}
+
+    # No revenue data — return None so Gemini can assess
+    return None
+
+
+def is_size_qualified(size_bucket: str, criteria: dict = None) -> bool:
+    """Check if a size bucket qualifies (Micro, Small, Mid = yes; Large = no)."""
+    cfg = _get_size_config(criteria)
+    buckets = cfg.get("buckets", SIZE_BUCKETS)
+    bucket_info = buckets.get(size_bucket, {})
+    return bucket_info.get("qualifies", False)
+
+
 # ── Hard filter: Geography ──────────────────────────────────────────────────
 
 def _is_uk_ireland(company: dict, criteria: dict = None) -> bool:
@@ -114,18 +170,36 @@ def qualify_company(company: dict, criteria: dict = None) -> Dict[str, any]:
     Applies qualification filters from BQ config (or defaults):
       1. Geography filter
       2. Industry/tech filter
+      3. Size filter (when size_bucket is available on the company)
 
     Returns dict with:
       - qualified: bool
       - status: 'Qualified' or 'Not a Fit'
       - is_uk_ireland: bool
       - is_tech: bool
+      - size_bucket: str or None
+      - size_qualified: bool or None
       - reason: str (human-readable explanation)
     """
     c = criteria or _cached_criteria
     uk_ire = _is_uk_ireland(company, c)
     tech = _is_tech_related(company, c)
+
+    # Size check — use stored bucket if available, else try rule-based
+    size_bucket = company.get("size_bucket")
+    size_qualified = None
+    if size_bucket:
+        size_qualified = is_size_qualified(size_bucket, c)
+    else:
+        rule_result = size_company_rule_based(company)
+        if rule_result:
+            size_bucket = rule_result["size_bucket"]
+            size_qualified = is_size_qualified(size_bucket, c)
+
+    # Qualified = passes all available filters
     qualified = uk_ire and tech
+    if size_qualified is not None:
+        qualified = qualified and size_qualified
 
     geo_label = "target geography"
     if c and "geography" in c:
@@ -134,20 +208,30 @@ def qualify_company(company: dict, criteria: dict = None) -> Dict[str, any]:
     if c and "industry" in c:
         industry_label = c["industry"].get("label", "technology-related")
 
+    # Build reason
+    failures = []
+    if not uk_ire:
+        failures.append(f"not in {geo_label}")
+    if not tech:
+        failures.append(f"not {industry_label}")
+    if size_qualified is False:
+        failures.append(f"too large (size: {size_bucket})")
+
     if qualified:
-        reason = f"Meets both filters: {geo_label} and {industry_label}."
-    elif not uk_ire and not tech:
-        reason = f"Failed both filters: not in {geo_label}, not {industry_label}."
-    elif not uk_ire:
-        reason = f"Not in {geo_label}."
+        parts = [geo_label, industry_label]
+        if size_qualified is True:
+            parts.append(f"size OK ({size_bucket})")
+        reason = f"Meets all filters: {', '.join(parts)}."
     else:
-        reason = f"Not {industry_label}."
+        reason = f"Failed: {', '.join(failures)}."
 
     return {
         "qualified": qualified,
         "status": "Qualified" if qualified else "Not a Fit",
         "is_uk_ireland": uk_ire,
         "is_tech": tech,
+        "size_bucket": size_bucket,
+        "size_qualified": size_qualified,
         "reason": reason,
     }
 
@@ -156,8 +240,9 @@ def qualify_company(company: dict, criteria: dict = None) -> Dict[str, any]:
 
 def qualify_company_with_gemini(company: dict, criteria: dict = None) -> Dict[str, any]:
     """
-    Uses Gemini to determine geography and tech-relatedness when local data
-    is sparse. Falls back to keyword qualification if Gemini unavailable.
+    Uses Gemini to determine geography, tech-relatedness, AND company size
+    when local data is sparse. Falls back to keyword qualification if
+    Gemini unavailable.
     """
     api_key = os.getenv("GEMINI_API_KEY", "")
     c = criteria or _cached_criteria
@@ -184,29 +269,54 @@ def qualify_company_with_gemini(company: dict, criteria: dict = None) -> Dict[st
         # Extract Gemini's assessment
         is_uk_ire = bool(result.get("is_uk_ireland", False))
         is_tech = bool(result.get("is_tech_related", False))
-        qualified = is_uk_ire and is_tech
+
+        # Size assessment — prefer rule-based if revenue exists, else use Gemini's judgment
+        rule_size = size_company_rule_based(company)
+        if rule_size:
+            size_bucket = rule_size["size_bucket"]
+            size_confidence = rule_size["size_confidence"]
+            size_reason = rule_size["size_reason"]
+        else:
+            # Use Gemini's AI judgment
+            size_bucket = result.get("size_bucket", "Small")  # default conservative
+            size_confidence = result.get("size_confidence", "low")
+            size_reason = result.get("size_reason", "AI estimate based on available signals")
+
+        size_ok = is_size_qualified(size_bucket, c)
+        qualified = is_uk_ire and is_tech and size_ok
 
         # Pull in any enriched fields Gemini found
         for field in ["sector", "region", "ownership", "description"]:
             if field in result and result[field] and not company.get(field):
                 company[field] = result[field]
 
+        # Store size data on the company dict so it gets saved to BQ
+        company["size_bucket"] = size_bucket
+
+        # Build reason
+        failures = []
+        if not is_uk_ire:
+            failures.append("not in target geography")
+        if not is_tech:
+            failures.append("not in target industry")
+        if not size_ok:
+            failures.append(f"too large ({size_bucket}, {size_reason})")
+
         reason = result.get("reason", "")
-        if not reason:
-            if qualified:
-                reason = "Meets both qualification filters."
-            elif not is_uk_ire and not is_tech:
-                reason = "Failed both filters."
-            elif not is_uk_ire:
-                reason = "Not in target geography."
-            else:
-                reason = "Not in target industry."
+        if qualified:
+            reason = f"Qualified: geography OK, tech OK, size {size_bucket} ({size_reason})."
+        elif failures:
+            reason = f"Not a Fit: {', '.join(failures)}."
 
         return {
             "qualified": qualified,
             "status": "Qualified" if qualified else "Not a Fit",
             "is_uk_ireland": is_uk_ire,
             "is_tech": is_tech,
+            "size_bucket": size_bucket,
+            "size_qualified": size_ok,
+            "size_confidence": size_confidence,
+            "size_reason": size_reason,
             "reason": reason,
         }
 
@@ -239,7 +349,7 @@ def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
 
     return f"""
     You are an expert Private Equity analyst for Averroes Capital.
-    Determine TWO things about this company:
+    Determine THREE things about this company:
 
     COMPANY DATA:
     {company_json}
@@ -255,11 +365,35 @@ def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
     Check sector, description, keywords, verticals, industry group.
     Traditional industries without tech as a core product do NOT count.
 
+    QUESTION 3 — COMPANY SIZE:
+    Estimate the company's size bucket based on ALL available signals.
+    We are a lower-mid-market PE fund and only want companies with revenue under £50M.
+
+    Size buckets:
+    - "Micro": Revenue under £5M (typically <30 employees, early-stage, seed/angel funded)
+    - "Small": Revenue £5M-£15M (typically 30-100 employees, Series A/B or bootstrapped profitable)
+    - "Mid": Revenue £15M-£50M (typically 100-500 employees, growth stage, established product)
+    - "Large": Revenue over £50M (typically 500+ employees, late-stage or enterprise — TOO BIG for us)
+
+    Use these proxy signals to estimate when revenue is not available:
+    - Employee count (strongest signal)
+    - Total funding raised (high funding = likely larger)
+    - Valuation estimates
+    - Years since founding + growth trajectory
+    - Company description / market positioning
+    - Enterprise value if available
+
+    Be conservative: if signals are mixed, lean toward a smaller bucket rather than larger.
+    Only classify as "Large" if there are strong indicators the company exceeds £50M revenue.
+
     RETURN FORMAT — JSON only:
     {{
         "is_uk_ireland": true or false,
         "is_tech_related": true or false,
-        "reason": "One sentence explaining your assessment",
+        "size_bucket": "Micro" or "Small" or "Mid" or "Large",
+        "size_confidence": "high" or "medium" or "low",
+        "size_reason": "Brief explanation of how you estimated the size, citing the signals you used",
+        "reason": "One sentence overall assessment",
         "sector": "string — the company's sector if you can determine it",
         "region": "string — the company's HQ region/country if you can determine it",
         "ownership": "string — ownership structure if you can determine it",

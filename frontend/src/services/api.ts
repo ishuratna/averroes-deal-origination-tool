@@ -132,6 +132,18 @@ export const dealApi = {
     return await response.json();
   },
 
+  async removeFromPipeline(companyName: string, createdBy?: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ created_by: createdBy || 'Ishu Ratna' }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Remove failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Remove failed'); }
+    return data;
+  },
+
   // ── Qualification Criteria ──────────────────────────────────────────────────
 
   async getCriteria(): Promise<any> {

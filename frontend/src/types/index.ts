@@ -61,6 +61,7 @@ export interface CompanyTarget {
   legal_name?: string;
   registration_number?: string;
   financing_note?: string;
+  size_bucket?: string;
 }
 
 export interface ActivityEntry {

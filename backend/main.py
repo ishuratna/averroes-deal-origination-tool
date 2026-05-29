@@ -370,16 +370,22 @@ async def smartfill_company(company_name: str):
     website = founder_info.get("website", "")
     description = founder_info.get("description", "")
 
-    # Step 3: Update BQ
+    # Extract size info
+    size_bucket = qual.get("size_bucket", "")
+    size_confidence = qual.get("size_confidence", "")
+    size_reason = qual.get("size_reason", "")
+
+    # Step 3: Update BQ (including size_bucket)
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url, description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET status = @status, website = @website, contact_name = @contact_name, contact_email = @contact_email, linkedin_url = @linkedin_url, size_bucket = @size_bucket, description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("status", "STRING", new_status),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
+            bq_lib.ScalarQueryParameter("size_bucket", "STRING", size_bucket or ""),
             bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -394,6 +400,10 @@ async def smartfill_company(company_name: str):
         "new_status": new_status,
         "is_uk_ireland": qual["is_uk_ireland"],
         "is_tech": qual["is_tech"],
+        "size_bucket": size_bucket,
+        "size_qualified": qual.get("size_qualified"),
+        "size_confidence": size_confidence,
+        "size_reason": size_reason,
         "reason": qual["reason"],
         "website": website,
         "contact_name": founder_info.get("contact_name", ""),
@@ -565,6 +575,34 @@ async def update_company_status(company_name: str, req: StatusUpdateRequest):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update status.")
     return {"status": "Success", "company": company_name, "new_status": req.status}
+
+
+class RemoveRequest(BaseModel):
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+@app.post("/company/{company_name}/remove")
+async def remove_from_pipeline(company_name: str, req: RemoveRequest):
+    """Remove a company from the pipeline — sets status to 'Not a Fit' and score to 0."""
+    logger.info(f"Removing '{company_name}' from pipeline by {req.created_by}")
+    try:
+        from google.cloud import bigquery as bq_lib
+        query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit', match_score = 0.0 WHERE name = @name"""
+        job_config = bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ])
+        bq_handler.client.query(query, job_config=job_config).result()
+    except Exception as e:
+        logger.error(f"Remove failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to remove: {str(e)}")
+
+    # Log the removal as activity
+    try:
+        bq_handler.add_activity_note(company_name, f"Removed from pipeline by {req.created_by}", req.created_by)
+    except Exception:
+        pass
+
+    return {"status": "Success", "company": company_name, "new_status": "Not a Fit"}
 
 
 @app.post("/company/{company_name}/notes")

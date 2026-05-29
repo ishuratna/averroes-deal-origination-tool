@@ -183,6 +183,19 @@ export default function Home() {
     await handleAdvanceStage(companyName, 'Lost');
   };
 
+  const handleRemoveFromPipeline = async (companyName: string) => {
+    if (!confirm(`Remove ${companyName} from pipeline? It will be set to "Not a Fit" with score 0 in the Master Universe.`)) return;
+    setUpdatingStatus(companyName);
+    try {
+      await dealApi.removeFromPipeline(companyName);
+      await loadData();
+    } catch (err: any) {
+      alert(`Failed to remove: ${err.message}`);
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
   const handleSaveNote = async () => {
     if (!noteModal || !noteText.trim()) return;
     setSavingNote(true);
@@ -577,6 +590,9 @@ export default function Home() {
                               <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating}>
                                 &times;
                               </button>
+                              <button className="kc-remove" onClick={() => handleRemoveFromPipeline(company.name)} disabled={isUpdating} title="Remove from pipeline">
+                                &#128465;
+                              </button>
                             </div>
                           </div>
                         );
@@ -667,6 +683,7 @@ export default function Home() {
                           <button className="won-btn" onClick={() => handleMarkWon(company.name)} disabled={isUpdating}>Mark Won</button>
                         )}
                         <button className="lost-btn" onClick={() => handleMarkLost(company.name)} disabled={isUpdating}>Lost</button>
+                        <button className="remove-btn" onClick={() => handleRemoveFromPipeline(company.name)} disabled={isUpdating}>Remove</button>
                       </div>
 
                       <div className="card-footer">
@@ -1151,6 +1168,11 @@ export default function Home() {
           line-height: 1;
         }
         .kc-lost:hover { border-color: #ef4444; color: #ef4444; }
+        .kc-remove {
+          background: none; border: 1px solid #e2e8f0; color: #cbd5e1;
+          border-radius: 4px; padding: 0.2rem 0.35rem; font-size: 0.7rem; cursor: pointer;
+        }
+        .kc-remove:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
 
         .kanban-empty {
           text-align: center;
@@ -1266,6 +1288,18 @@ export default function Home() {
           cursor: pointer;
         }
         .lost-btn:hover:not(:disabled) { border-color: #ef4444; color: #ef4444; }
+
+        .remove-btn {
+          padding: 0.5rem 0.65rem;
+          background: transparent;
+          border: 1px solid #e2e8f0;
+          border-radius: 6px;
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: #94a3b8;
+          cursor: pointer;
+        }
+        .remove-btn:hover:not(:disabled) { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
 
         .card-footer {
           display: flex;

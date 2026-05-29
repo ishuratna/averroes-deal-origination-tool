@@ -117,6 +117,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                 <DetailRow label="Region" value={company.region || company.hq_location || company.hq_country} />
                 <DetailRow label="HQ City" value={company.hq_city} />
                 <DetailRow label="Employees" value={formatNum(company.employees)} />
+                <DetailRow label="Company Size" value={company.size_bucket} />
                 <DetailRow label="Founded" value={company.year_founded?.toString()} />
                 <DetailRow label="Age" value={company.year_founded ? `${new Date().getFullYear() - company.year_founded} years` : undefined} />
                 <DetailRow label="Ownership" value={company.ownership} />
