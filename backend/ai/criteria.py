@@ -96,6 +96,8 @@ def size_company_rule_based(company: dict) -> Dict[str, any]:
     """
     Determine company size bucket from available financial data.
     Returns {bucket, confidence, reason} or None if insufficient data.
+    Checks: 1) revenue_m (PitchBook), 2) revenue_y1 from CH filings (raw GBP).
+    If neither exists, returns None so Gemini can assess using assets as proxy.
     """
     revenue = company.get("revenue_m")
     # Try parsing string revenue values
@@ -105,17 +107,27 @@ def size_company_rule_based(company: dict) -> Dict[str, any]:
         except (ValueError, TypeError):
             revenue = None
 
-    if revenue is not None and revenue > 0:
-        if revenue < 5:
-            return {"size_bucket": "Micro", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M < £5M"}
-        elif revenue < 15:
-            return {"size_bucket": "Small", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M (£5-15M range)"}
-        elif revenue <= 50:
-            return {"size_bucket": "Mid", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M (£15-50M range)"}
-        else:
-            return {"size_bucket": "Large", "size_confidence": "high", "size_reason": f"Revenue £{revenue:.1f}M exceeds £50M threshold"}
+    # Fallback: try CH revenue_y1 (stored in raw GBP, convert to millions)
+    if (revenue is None or revenue <= 0) and company.get("revenue_y1"):
+        try:
+            rev_raw = float(company["revenue_y1"])
+            if rev_raw > 0:
+                revenue = rev_raw / 1_000_000  # Convert GBP to £M
+        except (ValueError, TypeError):
+            pass
 
-    # No revenue data — return None so Gemini can assess
+    if revenue is not None and revenue > 0:
+        source = "CH filings" if company.get("revenue_y1") and not company.get("revenue_m") else "Revenue"
+        if revenue < 5:
+            return {"size_bucket": "Micro", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M < £5M"}
+        elif revenue < 15:
+            return {"size_bucket": "Small", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M (£5-15M range)"}
+        elif revenue <= 50:
+            return {"size_bucket": "Mid", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M (£15-50M range)"}
+        else:
+            return {"size_bucket": "Large", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M exceeds £50M threshold"}
+
+    # No revenue data — return None so Gemini can assess using assets/proxies
     return None
 
 
@@ -376,12 +388,23 @@ def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
     - "Large": Revenue over £50M (typically 500+ employees, late-stage or enterprise — TOO BIG for us)
 
     Use these proxy signals to estimate when revenue is not available:
-    - Employee count (strongest signal)
+    - **Total assets from Companies House filings** (STRONGEST proxy when revenue not disclosed):
+      Most UK SMEs filing micro-entity/abbreviated accounts don't disclose turnover but DO disclose
+      total assets and net assets. Use total_assets_y1 and net_assets_y1 as primary sizing signals.
+      For tech/services companies, revenue is typically 2-4x total assets. For capital-heavy businesses,
+      revenue may be closer to 1-1.5x assets. Factor in the sector when interpreting.
+    - Employee count (strong signal — correlates well with revenue)
     - Total funding raised (high funding = likely larger)
     - Valuation estimates
     - Years since founding + growth trajectory
     - Company description / market positioning
     - Enterprise value if available
+    - Cash position from CH filings (cash_y1)
+
+    IMPORTANT: Many UK companies file micro-entity or abbreviated accounts where turnover is NOT disclosed.
+    When you see total_assets_y1 or net_assets_y1 but no revenue, use the asset figures as your primary
+    proxy. Be thoughtful about the sector — a SaaS company with £2M assets likely has £5-10M revenue,
+    while a property company with £2M assets might only have £200K revenue.
 
     Be conservative: if signals are mixed, lean toward a smaller bucket rather than larger.
     Only classify as "Large" if there are strong indicators the company exceeds £50M revenue.
