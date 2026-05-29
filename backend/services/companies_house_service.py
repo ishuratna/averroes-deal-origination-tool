@@ -1,151 +1,547 @@
 """
 Companies House Financial Extraction Service
 
-Uses Gemini with Google Search grounding to:
-1. Find the company's official Companies House record
-2. Verify it's the correct company
-3. Extract latest 3 years of financial data from public filings
+Robust 4-step pipeline:
+1. Search CH API for the company → verify correct match
+2. Get filing history → find latest accounts filing
+3. Download the actual accounts PDF from Companies House
+4. Feed PDF to Gemini → extract structured financial data from the real document
 
-No API key needed — all data is public and found via Google Search.
+Requires: COMPANIES_HOUSE_API_KEY (free — register at developer.company-information.service.gov.uk)
+          GEMINI_API_KEY (for PDF parsing)
 """
 
 import os
+import io
 import json
 import logging
-from typing import Dict, Optional
+import base64
+import requests
+from typing import Dict, Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Companies House API base URLs
+CH_API_BASE = "https://api.company-information.service.gov.uk"
+CH_DOC_API = "https://document-api.company-information.service.gov.uk"
 
-def extract_ch_financials(company_name: str, sector: str = "", region: str = "", description: str = "") -> Dict:
-    """
-    Search Companies House for a UK/Ireland company and extract financial data.
 
-    Returns dict with:
-      - ch_company_number: str (Companies House number)
-      - ch_official_name: str (official registered name)
-      - ch_status: str (Active, Dissolved, etc.)
-      - ch_incorporated_date: str
-      - ch_sic_codes: str (SIC codes description)
-      - revenue_y1, revenue_y2, revenue_y3: float or None (most recent 3 years, £)
-      - revenue_y1_date, revenue_y2_date, revenue_y3_date: str (filing period end dates)
-      - profit_y1, profit_y2, profit_y3: float or None
-      - total_assets_y1: float or None (most recent year)
-      - net_assets_y1: float or None
-      - cash_y1: float or None
-      - employees_ch: int or None (from CH filings)
-      - filing_type: str (e.g. "full", "micro-entity", "small", "medium", "dormant")
-      - ch_match_confidence: str ("high", "medium", "low")
-      - error: str or None
+def _ch_auth() -> Tuple[str, str]:
+    """Return HTTP Basic auth tuple for CH API (key as username, blank password)."""
+    key = os.getenv("COMPANIES_HOUSE_API_KEY", "")
+    return (key, "")
+
+
+# ── Step 1: Search for company ──────────────────────────────────────────────
+
+def _search_company(company_name: str) -> List[dict]:
+    """Search Companies House for a company by name. Returns top results."""
+    auth = _ch_auth()
+    if not auth[0]:
+        return []
+
+    try:
+        resp = requests.get(
+            f"{CH_API_BASE}/search/companies",
+            params={"q": company_name, "items_per_page": 10},
+            auth=auth,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("items", [])
+    except Exception as e:
+        logger.error(f"CH search failed for '{company_name}': {e}")
+        return []
+
+
+def _pick_best_match(
+    results: List[dict],
+    company_name: str,
+    sector: str = "",
+    description: str = "",
+) -> Optional[dict]:
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    Pick the best matching company from CH search results.
+    Prefers: active companies, name similarity, matching SIC codes.
+    """
+    if not results:
+        return None
+
+    company_name_lower = company_name.lower().strip()
+    context_lower = f"{sector} {description}".lower()
+
+    scored = []
+    for item in results:
+        score = 0
+        title = (item.get("title") or "").lower()
+
+        # Exact or near-exact name match
+        if title == company_name_lower:
+            score += 100
+        elif company_name_lower in title or title in company_name_lower:
+            score += 60
+        else:
+            # Partial word overlap
+            name_words = set(company_name_lower.split())
+            title_words = set(title.split())
+            overlap = name_words & title_words
+            score += len(overlap) * 15
+
+        # Active companies preferred
+        status = (item.get("company_status") or "").lower()
+        if status == "active":
+            score += 30
+        elif status == "dissolved":
+            score -= 20
+
+        # SIC code / sector alignment
+        sic_codes = item.get("sic_codes") or []
+        snippet = (item.get("snippet") or "").lower()
+        if any(kw in snippet or kw in " ".join(sic_codes) for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
+            if any(kw in context_lower for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
+                score += 20
+
+        # UK address preferred (some results might be foreign)
+        address = item.get("address", {})
+        country = (address.get("country") or "").lower()
+        if "united kingdom" in country or "england" in country or "wales" in country or "scotland" in country:
+            score += 10
+
+        scored.append((score, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    best_score, best = scored[0]
+    if best_score < 15:
+        logger.warning(f"Best CH match for '{company_name}' has low score ({best_score}): {best.get('title')}")
+        return None
+
+    return best
+
+
+# ── Step 2: Get company profile + filing history ─────────────────────────────
+
+def _get_company_profile(company_number: str) -> Optional[dict]:
+    """Fetch the full company profile from CH API."""
+    auth = _ch_auth()
+    try:
+        resp = requests.get(
+            f"{CH_API_BASE}/company/{company_number}",
+            auth=auth,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.error(f"CH profile fetch failed for {company_number}: {e}")
+        return None
+
+
+def _get_accounts_filings(company_number: str, max_items: int = 10) -> List[dict]:
+    """Fetch recent accounts filings from CH filing history."""
+    auth = _ch_auth()
+    try:
+        resp = requests.get(
+            f"{CH_API_BASE}/company/{company_number}/filing-history",
+            params={"category": "accounts", "items_per_page": max_items},
+            auth=auth,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+        # Filter to just accounts
+        accounts = [
+            item for item in items
+            if item.get("category") == "accounts"
+        ]
+        return accounts
+    except Exception as e:
+        logger.error(f"CH filing history failed for {company_number}: {e}")
+        return []
+
+
+# ── Step 3: Download the accounts PDF ────────────────────────────────────────
+
+def _download_accounts_pdf(filing: dict) -> Optional[bytes]:
+    """
+    Download the actual PDF document for an accounts filing.
+    The filing dict contains links.document_metadata which gives us the doc ID.
+    """
+    auth = _ch_auth()
+
+    # Get document metadata link
+    links = filing.get("links", {})
+    doc_meta_url = links.get("document_metadata")
+
+    if not doc_meta_url:
+        # Try constructing from self link
+        self_link = links.get("self", "")
+        # Filing self link looks like /company/12345678/filing-history/MzM1NTY4...
+        # We need the transaction ID which is the last part
+        logger.warning(f"No document_metadata link in filing: {filing.get('description', 'unknown')}")
+        return None
+
+    try:
+        # Ensure we have the full URL
+        if doc_meta_url.startswith("/"):
+            doc_meta_url = f"{CH_API_BASE}{doc_meta_url}"
+
+        # Step 1: Get document metadata
+        meta_resp = requests.get(doc_meta_url, auth=auth, timeout=15)
+        meta_resp.raise_for_status()
+        meta = meta_resp.json()
+
+        # The metadata contains links.document which points to the actual document content
+        doc_links = meta.get("links", {})
+        doc_url = doc_links.get("document")
+
+        if not doc_url:
+            logger.warning(f"No document download link in metadata: {doc_meta_url}")
+            return None
+
+        # Ensure full URL
+        if doc_url.startswith("/"):
+            doc_url = f"{CH_DOC_API}{doc_url}"
+
+        # Step 2: Download the PDF (request PDF content type)
+        pdf_resp = requests.get(
+            doc_url,
+            auth=auth,
+            headers={"Accept": "application/pdf"},
+            timeout=30,
+            allow_redirects=True,
+        )
+        pdf_resp.raise_for_status()
+
+        content_type = pdf_resp.headers.get("Content-Type", "")
+        if "pdf" in content_type or len(pdf_resp.content) > 1000:
+            logger.info(f"Downloaded accounts PDF: {len(pdf_resp.content)} bytes")
+            return pdf_resp.content
+        else:
+            logger.warning(f"Document response was not PDF (content-type: {content_type})")
+            return None
+
+    except Exception as e:
+        logger.error(f"PDF download failed: {e}")
+        return None
+
+
+# ── Step 4: Parse PDF with Gemini ─────────────────────────────────────────────
+
+def _parse_accounts_pdf_with_gemini(
+    pdf_bytes: bytes,
+    company_name: str,
+    company_number: str,
+    filing_date: str = "",
+) -> Dict:
+    """
+    Send the actual accounts PDF to Gemini and extract structured financial data.
+    This is the key step — we're parsing the REAL document, not asking Gemini to guess.
+    """
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
         return {"error": "GEMINI_API_KEY not set"}
 
     try:
-        from google import genai
-        from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+        import google.generativeai as genai
 
-        client = genai.Client(api_key=api_key)
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
-        # Step 1: Find the company on Companies House and extract financials
-        context_parts = [f"Company name: {company_name}"]
-        if sector:
-            context_parts.append(f"Sector: {sector}")
-        if region:
-            context_parts.append(f"Region: {region}")
-        if description:
-            context_parts.append(f"Description: {description[:200]}")
-        context = "\n".join(context_parts)
+        # Encode PDF as base64 for Gemini
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-        prompt = f"""
-You are a UK financial research analyst. I need you to find a specific company's
-official Companies House record and extract their latest filed financial data.
+        prompt = f"""You are a UK chartered accountant. I am giving you the ACTUAL filed accounts PDF
+for company "{company_name}" (Companies House #{company_number}, filing date: {filing_date}).
 
-COMPANY TO RESEARCH:
-{context}
+Extract ALL available financial data from this document. This is a real UK statutory filing.
 
-STEP 1 — FIND THE COMPANY ON COMPANIES HOUSE:
-- Search for this company on Companies House (find.and" update.company-information.service.gov.uk)
-- Find the correct company — match by name, sector, and any available description
-- Get the company number, official registered name, incorporation date, SIC codes, and status
-- If multiple matches exist, pick the one that best matches the sector/description
+EXTRACT THE FOLLOWING (set to null if not present in the document):
 
-STEP 2 — EXTRACT FINANCIAL DATA FROM LATEST FILINGS:
-- Look up the company's latest filed accounts on Companies House
-- Extract revenue/turnover, profit/loss before tax, total assets, net assets, and cash for up to 3 years
-- Revenue = "Turnover" or "Revenue" in UK accounts terminology
-- If the company files micro-entity or abbreviated accounts, they may not include turnover — note this
-- Financial figures should be in GBP (£). Convert if shown in other currencies.
-- For each year, note the financial period end date (e.g., "2024-03-31")
+1. REVENUE / TURNOVER — Look for "Turnover", "Revenue", "Total revenue", "Net revenue"
+   - Many micro-entity and abbreviated accounts do NOT include turnover — that's OK, set to null
+   - If a Profit & Loss / Income Statement exists, turnover is usually the top line
 
-STEP 3 — VERIFY:
-- Make sure the Companies House record matches the company we're looking for
-- Rate your confidence: "high" if name and sector clearly match, "medium" if plausible, "low" if uncertain
+2. PROFIT / LOSS BEFORE TAX — Look for "Profit/(loss) before taxation", "Profit before tax"
 
-IMPORTANT:
-- Many small UK companies file abbreviated or micro-entity accounts that do NOT include revenue/turnover.
-  In that case, still return whatever financial data IS available (total assets, net assets, etc.) and set
-  revenue fields to null.
-- If the company is Irish, search the CRO (Companies Registration Office Ireland) instead.
-- All monetary values should be in raw numbers (e.g., 5000000 for £5M), NOT formatted strings.
-- Return null for any field you cannot find — do NOT make up numbers.
+3. TOTAL ASSETS — Look in the Balance Sheet for "Total assets"
 
-Return ONLY valid JSON, no markdown, no explanation:
+4. NET ASSETS — "Net assets", "Total net assets", or "Total assets less current liabilities" minus long-term liabilities
+
+5. CASH — "Cash at bank and in hand", "Cash and cash equivalents"
+
+6. EMPLOYEES — "Average number of employees", "Employee information"
+
+7. FILING TYPE — Is this: "full" accounts, "small" company accounts, "micro-entity" accounts,
+   "abbreviated" accounts, "medium" accounts, "filleted" accounts, or "dormant" accounts?
+
+8. PERIOD DATES — What financial period does this cover? (period start and end dates)
+
+9. COMPARATIVE FIGURES — Many UK accounts show current year AND prior year side by side.
+   Extract BOTH if available. Label clearly which is current vs prior year.
+
+IMPORTANT RULES:
+- Only extract numbers that ACTUALLY appear in the document. Do NOT estimate or calculate.
+- All monetary values in raw GBP (e.g., 5000000 for £5M). Do NOT format as strings.
+- If the accounts are micro-entity or abbreviated with no P&L, just extract the Balance Sheet figures.
+- Negative numbers should be negative (e.g., -250000 for a £250K loss).
+- Look for notes to accounts that might contain additional financial data.
+
+Return ONLY valid JSON:
 {{
-    "ch_company_number": "string or null",
-    "ch_official_name": "string or null",
-    "ch_status": "Active or Dissolved or null",
-    "ch_incorporated_date": "YYYY-MM-DD or null",
-    "ch_sic_codes": "string description of SIC codes or null",
-    "revenue_y1": null or number in GBP,
-    "revenue_y1_date": "YYYY-MM-DD period end or null",
-    "revenue_y2": null or number in GBP,
-    "revenue_y2_date": "YYYY-MM-DD period end or null",
-    "revenue_y3": null or number in GBP,
-    "revenue_y3_date": "YYYY-MM-DD period end or null",
-    "profit_y1": null or number in GBP,
-    "profit_y1_date": "YYYY-MM-DD or null",
-    "profit_y2": null or number in GBP,
-    "profit_y3": null or number in GBP,
-    "total_assets_y1": null or number in GBP,
-    "net_assets_y1": null or number in GBP,
-    "cash_y1": null or number in GBP,
-    "employees_ch": null or integer,
-    "filing_type": "full or small or micro-entity or medium or abbreviated or dormant or null",
-    "ch_match_confidence": "high or medium or low",
-    "notes": "Any important context about the filings, e.g. 'Files micro-entity accounts, turnover not disclosed'"
-}}
-"""
+    "revenue_current": null or number,
+    "revenue_prior": null or number,
+    "profit_current": null or number,
+    "profit_prior": null or number,
+    "total_assets_current": null or number,
+    "total_assets_prior": null or number,
+    "net_assets_current": null or number,
+    "net_assets_prior": null or number,
+    "cash_current": null or number,
+    "cash_prior": null or number,
+    "employees": null or integer,
+    "period_end_current": "YYYY-MM-DD or null",
+    "period_end_prior": "YYYY-MM-DD or null",
+    "filing_type": "full or small or micro-entity or abbreviated or medium or filleted or dormant",
+    "currency": "GBP or other",
+    "notes": "Brief summary of what's in the accounts, e.g. 'Micro-entity accounts, Balance Sheet only, no P&L'"
+}}"""
 
-        logger.info(f"Searching Companies House for '{company_name}'...")
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=GenerateContentConfig(
-                tools=[Tool(google_search=GoogleSearch())]
-            )
+        # Send PDF as file data to Gemini
+        response = model.generate_content(
+            [
+                {"mime_type": "application/pdf", "data": pdf_b64},
+                prompt,
+            ],
+            generation_config={"response_mime_type": "application/json"},
         )
 
         text = response.text
         if not text:
-            logger.warning(f"Gemini returned empty response for CH lookup: {company_name}")
-            return {"error": "Empty response from AI"}
+            return {"error": "Gemini returned empty response for PDF parsing"}
 
         text = text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
         result = json.loads(text)
-        result["error"] = None
-        logger.info(f"CH lookup for '{company_name}': found '{result.get('ch_official_name')}' "
-                     f"(#{result.get('ch_company_number')}, confidence={result.get('ch_match_confidence')})")
+        logger.info(f"Gemini extracted financials from PDF for {company_name}: "
+                     f"revenue={result.get('revenue_current')}, assets={result.get('total_assets_current')}")
         return result
 
     except json.JSONDecodeError as e:
-        logger.error(f"CH financials JSON parse failed for {company_name}: {e}")
-        return {"error": f"Failed to parse AI response: {str(e)}"}
+        logger.error(f"Gemini PDF parse JSON error for {company_name}: {e}")
+        return {"error": f"Failed to parse Gemini response: {str(e)}"}
     except Exception as e:
-        logger.error(f"CH financials extraction failed for {company_name}: {e}")
+        logger.error(f"Gemini PDF parsing failed for {company_name}: {e}")
         return {"error": str(e)}
+
+
+# ── Main orchestrator ─────────────────────────────────────────────────────────
+
+def extract_ch_financials(
+    company_name: str,
+    sector: str = "",
+    region: str = "",
+    description: str = "",
+) -> Dict:
+    """
+    Full pipeline: Search CH → Find company → Download accounts PDF → Parse with Gemini.
+
+    Returns structured dict with CH company info + extracted financial data.
+    """
+    ch_key = os.getenv("COMPANIES_HOUSE_API_KEY", "")
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+
+    if not ch_key:
+        return {"error": "COMPANIES_HOUSE_API_KEY not set — register free at developer.company-information.service.gov.uk"}
+    if not gemini_key:
+        return {"error": "GEMINI_API_KEY not set"}
+
+    # ── Step 1: Search Companies House ──
+    logger.info(f"[CH] Step 1: Searching Companies House for '{company_name}'...")
+    results = _search_company(company_name)
+    if not results:
+        return {"error": f"No results found on Companies House for '{company_name}'"}
+
+    # Pick best match
+    best = _pick_best_match(results, company_name, sector, description)
+    if not best:
+        return {"error": f"No confident match found on Companies House for '{company_name}'"}
+
+    company_number = best.get("company_number", "")
+    official_name = best.get("title", "")
+    logger.info(f"[CH] Step 1 result: '{official_name}' (#{company_number})")
+
+    # Determine match confidence
+    name_lower = company_name.lower().strip()
+    title_lower = official_name.lower().strip()
+    if name_lower == title_lower or name_lower in title_lower or title_lower in name_lower:
+        match_confidence = "high"
+    elif any(w in title_lower for w in name_lower.split() if len(w) > 3):
+        match_confidence = "medium"
+    else:
+        match_confidence = "low"
+
+    # ── Step 2: Get company profile ──
+    logger.info(f"[CH] Step 2: Fetching profile for #{company_number}...")
+    profile = _get_company_profile(company_number)
+
+    ch_status = "Unknown"
+    ch_incorporated = None
+    ch_sic_codes = None
+
+    if profile:
+        ch_status = profile.get("company_status", "unknown").replace("_", " ").title()
+        date_of_creation = profile.get("date_of_creation")
+        ch_incorporated = date_of_creation
+        sic = profile.get("sic_codes", [])
+        ch_sic_codes = ", ".join(sic) if sic else None
+
+    # ── Step 3: Get filing history (accounts only) ──
+    logger.info(f"[CH] Step 3: Fetching accounts filing history for #{company_number}...")
+    filings = _get_accounts_filings(company_number, max_items=5)
+
+    if not filings:
+        logger.warning(f"[CH] No accounts filings found for #{company_number}")
+        return {
+            "ch_company_number": company_number,
+            "ch_official_name": official_name,
+            "ch_status": ch_status,
+            "ch_incorporated_date": ch_incorporated,
+            "ch_sic_codes": ch_sic_codes,
+            "ch_match_confidence": match_confidence,
+            "filing_type": None,
+            "notes": "No accounts filings found on Companies House",
+            "error": None,
+        }
+
+    # Try to download PDFs for up to the latest 3 filings
+    logger.info(f"[CH] Found {len(filings)} accounts filings. Attempting PDF downloads...")
+
+    all_financials = []
+    filing_type = None
+
+    for i, filing in enumerate(filings[:3]):
+        filing_date = filing.get("date", "")
+        filing_desc = filing.get("description", "")
+        logger.info(f"[CH] Step 4: Downloading PDF for filing {i+1}: {filing_desc} ({filing_date})...")
+
+        # Detect filing type from description
+        desc_lower = filing_desc.lower()
+        if "micro" in desc_lower:
+            filing_type = filing_type or "micro-entity"
+        elif "small" in desc_lower:
+            filing_type = filing_type or "small"
+        elif "medium" in desc_lower:
+            filing_type = filing_type or "medium"
+        elif "abbreviated" in desc_lower:
+            filing_type = filing_type or "abbreviated"
+        elif "dormant" in desc_lower:
+            filing_type = filing_type or "dormant"
+        elif "full" in desc_lower or "group" in desc_lower:
+            filing_type = filing_type or "full"
+        elif "filleted" in desc_lower:
+            filing_type = filing_type or "filleted"
+
+        pdf_bytes = _download_accounts_pdf(filing)
+        if not pdf_bytes:
+            logger.warning(f"[CH] Could not download PDF for filing {i+1}")
+            continue
+
+        # Parse the PDF with Gemini
+        parsed = _parse_accounts_pdf_with_gemini(
+            pdf_bytes, company_name, company_number, filing_date
+        )
+
+        if parsed.get("error"):
+            logger.warning(f"[CH] Gemini parse failed for filing {i+1}: {parsed['error']}")
+            continue
+
+        parsed["_filing_date"] = filing_date
+        all_financials.append(parsed)
+        logger.info(f"[CH] Successfully parsed filing {i+1} ({filing_date})")
+
+    # ── Step 5: Assemble final result ──
+    result = {
+        "ch_company_number": company_number,
+        "ch_official_name": official_name,
+        "ch_status": ch_status,
+        "ch_incorporated_date": ch_incorporated,
+        "ch_sic_codes": ch_sic_codes,
+        "ch_match_confidence": match_confidence,
+        "filing_type": filing_type,
+        "error": None,
+    }
+
+    if not all_financials:
+        result["notes"] = "Accounts filings exist but could not download/parse PDFs"
+        return result
+
+    # Map parsed financials into y1 (most recent), y2, y3
+    # Each parsed filing may have current + prior year data
+    year_data = []  # List of (period_end_date, {revenue, profit, assets, ...})
+
+    for parsed in all_financials:
+        # Current year from this filing
+        period_end = parsed.get("period_end_current")
+        if period_end:
+            year_data.append((period_end, {
+                "revenue": parsed.get("revenue_current"),
+                "profit": parsed.get("profit_current"),
+                "total_assets": parsed.get("total_assets_current"),
+                "net_assets": parsed.get("net_assets_current"),
+                "cash": parsed.get("cash_current"),
+            }))
+
+        # Prior year from this filing (comparative figures)
+        period_end_prior = parsed.get("period_end_prior")
+        if period_end_prior:
+            year_data.append((period_end_prior, {
+                "revenue": parsed.get("revenue_prior"),
+                "profit": parsed.get("profit_prior"),
+                "total_assets": parsed.get("total_assets_prior"),
+                "net_assets": parsed.get("net_assets_prior"),
+                "cash": parsed.get("cash_prior"),
+            }))
+
+    # Deduplicate by period end date (prefer the current-year extraction)
+    seen_dates = {}
+    for date, data in year_data:
+        if date and date not in seen_dates:
+            seen_dates[date] = data
+
+    # Sort by date descending (most recent first)
+    sorted_years = sorted(seen_dates.items(), key=lambda x: x[0], reverse=True)
+
+    # Map to y1 (most recent), y2, y3
+    for i, (date, data) in enumerate(sorted_years[:3]):
+        suffix = f"y{i+1}"
+        result[f"revenue_{suffix}"] = data.get("revenue")
+        result[f"revenue_{suffix}_date"] = date
+        result[f"profit_{suffix}"] = data.get("profit")
+        if i == 0:
+            result["profit_y1_date"] = date
+            result["total_assets_y1"] = data.get("total_assets")
+            result["net_assets_y1"] = data.get("net_assets")
+            result["cash_y1"] = data.get("cash")
+
+    # Employees from most recent filing
+    if all_financials:
+        result["employees_ch"] = all_financials[0].get("employees")
+
+    # Filing type from most recent
+    if all_financials and all_financials[0].get("filing_type"):
+        result["filing_type"] = all_financials[0]["filing_type"]
+
+    # Notes
+    notes_parts = []
+    if all_financials[0].get("notes"):
+        notes_parts.append(all_financials[0]["notes"])
+    notes_parts.append(f"Extracted from {len(all_financials)} filing PDF(s), covering {len(sorted_years)} financial periods")
+    result["notes"] = ". ".join(notes_parts)
+
+    logger.info(f"[CH] Complete for '{company_name}': {len(sorted_years)} years of data extracted from actual filings")
+    return result

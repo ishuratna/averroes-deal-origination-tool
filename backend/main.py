@@ -140,7 +140,8 @@ async def root():
         "project": GCP_PROJECT,
         "bucket": GCS_BUCKET,
         "bq_dataset": BQ_DATASET,
-        "gemini_enabled": bool(os.getenv("GEMINI_API_KEY"))
+        "gemini_enabled": bool(os.getenv("GEMINI_API_KEY")),
+        "companies_house_enabled": bool(os.getenv("COMPANIES_HOUSE_API_KEY"))
     }
 
 @app.post("/ingest/enrich-universe")
