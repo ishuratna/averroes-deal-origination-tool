@@ -25,6 +25,7 @@ from ai.criteria import (
 )
 from ai.enrichment import EnrichmentAgent
 from services.companies_house_service import extract_ch_financials
+from ai.scoring import score_company
 from config.sourcing_config import SOURCING_CRITERIA
 
 # Load .env for local development; Cloud Run injects env vars directly
@@ -397,7 +398,23 @@ async def smartfill_company(company_name: str):
         except Exception as e:
             logger.error(f"CH extraction failed for {company_name}: {e}")
 
-    # Step 4: Update BQ (including size_bucket + CH financials)
+    # Step 4: Averroes Fit Scoring (only for qualified companies)
+    scoring_result = {}
+    if new_status == "Qualified":
+        logger.info(f"Company qualified — running Averroes fit scoring for '{company_name}'...")
+        # Build a merged company dict with all data for the scorer
+        scoring_input = {**company_data, **ch_data}
+        scoring_input["description"] = description or company_data.get("description", "")
+        scoring_input["website"] = website or company_data.get("website", "")
+        scoring_input["size_bucket"] = size_bucket
+        try:
+            scoring_result = score_company(scoring_input)
+            if scoring_result.get("error"):
+                logger.warning(f"Scoring incomplete for {company_name}: {scoring_result['error']}")
+        except Exception as e:
+            logger.error(f"Scoring failed for {company_name}: {e}")
+
+    # Step 5: Update BQ (size + CH financials + scoring)
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
@@ -429,6 +446,13 @@ async def smartfill_company(company_name: str):
             filing_type = @filing_type,
             ch_match_confidence = @ch_match_confidence,
             ch_notes = @ch_notes,
+            averroes_fit_score = @averroes_fit_score,
+            score_employee_growth = @score_employee_growth,
+            score_revenue_growth = @score_revenue_growth,
+            score_revenue_size = @score_revenue_size,
+            score_business_fit = @score_business_fit,
+            score_market_sentiment = @score_market_sentiment,
+            score_details = @score_details,
             description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END
             WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
@@ -460,6 +484,13 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("filing_type", "STRING", ch_data.get("filing_type") or ""),
             bq_lib.ScalarQueryParameter("ch_match_confidence", "STRING", ch_data.get("ch_match_confidence") or ""),
             bq_lib.ScalarQueryParameter("ch_notes", "STRING", ch_data.get("notes") or ""),
+            bq_lib.ScalarQueryParameter("averroes_fit_score", "FLOAT64", scoring_result.get("averroes_fit_score")),
+            bq_lib.ScalarQueryParameter("score_employee_growth", "FLOAT64", scoring_result.get("score_employee_growth")),
+            bq_lib.ScalarQueryParameter("score_revenue_growth", "FLOAT64", scoring_result.get("score_revenue_growth")),
+            bq_lib.ScalarQueryParameter("score_revenue_size", "FLOAT64", scoring_result.get("score_revenue_size")),
+            bq_lib.ScalarQueryParameter("score_business_fit", "FLOAT64", scoring_result.get("score_business_fit")),
+            bq_lib.ScalarQueryParameter("score_market_sentiment", "FLOAT64", scoring_result.get("score_market_sentiment")),
+            bq_lib.ScalarQueryParameter("score_details", "STRING", scoring_result.get("score_details") or ""),
             bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -506,6 +537,15 @@ async def smartfill_company(company_name: str):
         "filing_type": ch_data.get("filing_type"),
         "ch_match_confidence": ch_data.get("ch_match_confidence"),
         "ch_notes": ch_data.get("notes"),
+        # Averroes Fit Scoring
+        "averroes_fit_score": scoring_result.get("averroes_fit_score"),
+        "score_employee_growth": scoring_result.get("score_employee_growth"),
+        "score_revenue_growth": scoring_result.get("score_revenue_growth"),
+        "score_revenue_size": scoring_result.get("score_revenue_size"),
+        "score_business_fit": scoring_result.get("score_business_fit"),
+        "score_market_sentiment": scoring_result.get("score_market_sentiment"),
+        "score_details": scoring_result.get("score_details"),
+        "metrics_available": scoring_result.get("metrics_available"),
     }
 
 

@@ -470,6 +470,47 @@ export default function Universe() {
                     {smartFillResult.linkedin_url ? (<a href={smartFillResult.linkedin_url} target="_blank" rel="noreferrer">{smartFillResult.linkedin_url}</a>) : 'Not Found'}
                   </span>
                 </div>
+                {/* Averroes Fit Score */}
+                {smartFillResult.averroes_fit_score != null && (
+                  <>
+                    <div className="result-ch-header">
+                      <span className="result-ch-badge" style={{ background: smartFillResult.averroes_fit_score >= 0.7 ? '#16a34a' : smartFillResult.averroes_fit_score >= 0.4 ? '#d97706' : '#dc2626' }}>
+                        Fit Score: {Math.round(smartFillResult.averroes_fit_score * 100)}
+                      </span>
+                      <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{smartFillResult.metrics_available}/5 metrics</span>
+                    </div>
+                    {smartFillResult.score_employee_growth != null && (
+                      <div className="result-row">
+                        <span className="result-label">Employee Growth</span>
+                        <span className="result-value found">{Math.round(smartFillResult.score_employee_growth * 100)}/100</span>
+                      </div>
+                    )}
+                    {smartFillResult.score_revenue_growth != null && (
+                      <div className="result-row">
+                        <span className="result-label">Revenue Growth</span>
+                        <span className="result-value found">{Math.round(smartFillResult.score_revenue_growth * 100)}/100</span>
+                      </div>
+                    )}
+                    {smartFillResult.score_revenue_size != null && (
+                      <div className="result-row">
+                        <span className="result-label">Revenue Size</span>
+                        <span className="result-value found">{Math.round(smartFillResult.score_revenue_size * 100)}/100</span>
+                      </div>
+                    )}
+                    {smartFillResult.score_business_fit != null && (
+                      <div className="result-row">
+                        <span className="result-label">Business Fit</span>
+                        <span className="result-value found">{Math.round(smartFillResult.score_business_fit * 100)}/100</span>
+                      </div>
+                    )}
+                    {smartFillResult.score_market_sentiment != null && (
+                      <div className="result-row">
+                        <span className="result-label">Market Sentiment</span>
+                        <span className="result-value found">{Math.round(smartFillResult.score_market_sentiment * 100)}/100</span>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
             <div className="modal-footer">

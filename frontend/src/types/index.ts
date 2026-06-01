@@ -85,6 +85,14 @@ export interface CompanyTarget {
   filing_type?: string;
   ch_match_confidence?: string;
   ch_notes?: string;
+  // Averroes fit scoring
+  averroes_fit_score?: number;
+  score_employee_growth?: number;
+  score_revenue_growth?: number;
+  score_revenue_size?: number;
+  score_business_fit?: number;
+  score_market_sentiment?: number;
+  score_details?: string;
 }
 
 export interface ActivityEntry {

@@ -74,6 +74,12 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
   const hasChBalance = company?.total_assets_y1 != null || company?.net_assets_y1 != null || company?.cash_y1 != null;
   const hasFunding = !!(company?.total_raised_m || company?.last_financing_size_m || company?.financing_status || company?.active_investors);
 
+  // Parse score details JSON
+  const scoreDetails = (() => {
+    if (!company?.score_details) return null;
+    try { return JSON.parse(company.score_details); } catch { return null; }
+  })();
+
   if (!company) return null;
 
   return (
@@ -126,8 +132,10 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
               {/* Quick Stats Row */}
               <div className="stats-row">
                 <div className="stat-card">
-                  <span className="stat-label">Score</span>
-                  <span className="stat-value">{company.match_score ? `${(company.match_score * 100).toFixed(0)}%` : '—'}</span>
+                  <span className="stat-label">Fit Score</span>
+                  <span className={`stat-value ${company.averroes_fit_score != null ? (company.averroes_fit_score >= 0.7 ? 'score-high' : company.averroes_fit_score >= 0.4 ? 'score-mid' : 'score-low') : ''}`}>
+                    {company.averroes_fit_score != null ? `${(company.averroes_fit_score * 100).toFixed(0)}` : '—'}
+                  </span>
                 </div>
                 <div className="stat-card">
                   <span className="stat-label">Size</span>
@@ -142,6 +150,20 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                   <span className="stat-value">{company.year_founded || '—'}</span>
                 </div>
               </div>
+
+              {/* Averroes Fit Score Breakdown */}
+              {company.averroes_fit_score != null && (
+                <>
+                  <SectionHeading title="Averroes Fit Score" />
+                  <div className="score-breakdown">
+                    <ScoreBar label="Employee Growth" score={company.score_employee_growth} details={scoreDetails?.employee_growth} />
+                    <ScoreBar label="Revenue Growth" score={company.score_revenue_growth} details={scoreDetails?.revenue_growth} />
+                    <ScoreBar label="Revenue Size" score={company.score_revenue_size} details={scoreDetails?.revenue_size} />
+                    <ScoreBar label="Business Model Fit" score={company.score_business_fit} details={scoreDetails?.business_fit} />
+                    <ScoreBar label="Market Sentiment" score={company.score_market_sentiment} details={scoreDetails?.market_sentiment} />
+                  </div>
+                </>
+              )}
 
               {/* Company Info */}
               <SectionHeading title="Company Info" />
@@ -665,6 +687,17 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
           color: #0f172a;
         }
 
+        .stat-value.score-high { color: #16a34a; }
+        .stat-value.score-mid { color: #d97706; }
+        .stat-value.score-low { color: #dc2626; }
+
+        /* ── Score Breakdown ── */
+        .score-breakdown {
+          display: flex;
+          flex-direction: column;
+          gap: 0.6rem;
+        }
+
         /* ── Detail Grid ── */
         .detail-grid {
           display: flex;
@@ -1112,6 +1145,75 @@ function DetailRow({ label, value, highlight, isLink }: { label: string; value?:
           text-decoration: none;
         }
         .detail-link:hover { text-decoration: underline; }
+      `}</style>
+    </div>
+  );
+}
+
+
+/* ── Score Bar Component ── */
+function ScoreBar({ label, score, details }: { label: string; score?: number | null; details?: { value?: string; explanation?: string } }) {
+  if (score == null) return null;
+
+  const pct = Math.round(score * 100);
+  const color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#d97706' : '#dc2626';
+  const bgColor = pct >= 70 ? '#dcfce7' : pct >= 40 ? '#fef9c3' : '#fee2e2';
+
+  return (
+    <div className="score-bar-item">
+      <div className="score-bar-header">
+        <span className="score-bar-label">{label}</span>
+        <span className="score-bar-pct" style={{ color }}>{pct}</span>
+      </div>
+      <div className="score-bar-track">
+        <div className="score-bar-fill" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      {details?.explanation && (
+        <p className="score-bar-detail">{details.explanation}</p>
+      )}
+
+      <style jsx>{`
+        .score-bar-item {
+          padding: 0.45rem 0;
+        }
+
+        .score-bar-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 0.25rem;
+        }
+
+        .score-bar-label {
+          font-size: 0.74rem;
+          font-weight: 600;
+          color: #475569;
+        }
+
+        .score-bar-pct {
+          font-size: 0.78rem;
+          font-weight: 800;
+        }
+
+        .score-bar-track {
+          height: 6px;
+          background: #f1f5f9;
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .score-bar-fill {
+          height: 100%;
+          border-radius: 3px;
+          transition: width 0.4s ease;
+        }
+
+        .score-bar-detail {
+          font-size: 0.7rem;
+          color: #94a3b8;
+          margin: 0.2rem 0 0;
+          line-height: 1.4;
+        }
       `}</style>
     </div>
   );

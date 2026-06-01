@@ -129,6 +129,8 @@ export default function Home() {
     setLoading(true);
     try {
       const data = await dealApi.getPipeline();
+      // Sort by Averroes Fit Score descending (scored companies first, then by score)
+      data.sort((a, b) => (b.averroes_fit_score ?? -1) - (a.averroes_fit_score ?? -1));
       setPipeline(data);
       const uni = await dealApi.getUniverse();
       setStats({ total: uni.length, qualified: data.length });
@@ -547,7 +549,14 @@ export default function Home() {
                                 <span className="kc-days">{daysInStage}d</span>
                               )}
                             </div>
-                            <p className="kc-sector">{company.sector || 'Tech'}</p>
+                            <div className="kc-sector-row">
+                              <p className="kc-sector">{company.sector || 'Tech'}</p>
+                              {company.averroes_fit_score != null && (
+                                <span className={`kc-fit-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}>
+                                  {Math.round(company.averroes_fit_score * 100)}
+                                </span>
+                              )}
+                            </div>
 
                             <div className="kc-metrics">
                               {company.estimated_ebitda ? (
@@ -1122,7 +1131,12 @@ export default function Home() {
         .kc-name:hover { color: #2563eb; }
         .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 600; background: #f8fafc; padding: 0.1rem 0.4rem; border-radius: 4px; flex-shrink: 0; }
 
-        .kc-sector { font-size: 0.72rem; color: #64748b; font-weight: 600; margin: 0 0 0.5rem; text-transform: uppercase; }
+        .kc-sector-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+        .kc-sector { font-size: 0.72rem; color: #64748b; font-weight: 600; margin: 0; text-transform: uppercase; }
+        .kc-fit-badge { font-size: 0.65rem; font-weight: 800; padding: 0.1rem 0.4rem; border-radius: 4px; color: white; }
+        .kc-fit-badge.high { background: #16a34a; }
+        .kc-fit-badge.mid { background: #d97706; }
+        .kc-fit-badge.low { background: #dc2626; }
 
         .kc-metrics { display: flex; gap: 0.75rem; margin-bottom: 0.5rem; }
         .kc-metric { display: flex; flex-direction: column; }

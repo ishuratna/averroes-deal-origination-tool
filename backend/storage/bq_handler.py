@@ -73,6 +73,14 @@ class BigQueryHandler:
         ("filing_type", "STRING"),
         ("ch_match_confidence", "STRING"),
         ("ch_notes", "STRING"),
+        # Averroes fit scoring
+        ("averroes_fit_score", "FLOAT64"),
+        ("score_employee_growth", "FLOAT64"),
+        ("score_revenue_growth", "FLOAT64"),
+        ("score_revenue_size", "FLOAT64"),
+        ("score_business_fit", "FLOAT64"),
+        ("score_market_sentiment", "FLOAT64"),
+        ("score_details", "STRING"),
     ]
 
     def _ensure_expanded_schema(self):
