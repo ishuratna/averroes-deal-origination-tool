@@ -74,16 +74,6 @@ export default function Universe() {
   const [showSources, setShowSources] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
-  // Filters overlay
-  const [showFilters, setShowFilters] = useState(false);
-  const [criteriaData, setCriteriaData] = useState<any>(null);
-  const [criteriaLoading, setCriteriaLoading] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; text: string; preview?: any; proposed?: any }>>([]);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [pendingCriteria, setPendingCriteria] = useState<any>(null);
-  const [applyingCriteria, setApplyingCriteria] = useState(false);
-
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
   const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
@@ -280,63 +270,6 @@ export default function Universe() {
     setSavedViews(updated);
     localStorage.setItem('averroes_universe_views', JSON.stringify(updated));
     if (activeViewId === id) setActiveViewId(null);
-  };
-
-  // ── Filters overlay handlers ─────────────────────────────────────────────
-  const openFiltersOverlay = async () => {
-    setShowFilters(true);
-    setCriteriaLoading(true);
-    try {
-      const data = await dealApi.getCriteria();
-      setCriteriaData(data);
-    } catch (err) {
-      console.error('Failed to load criteria:', err);
-    } finally {
-      setCriteriaLoading(false);
-    }
-  };
-
-  const handleChatSubmit = async () => {
-    if (!chatInput.trim() || chatLoading) return;
-    const msg = chatInput.trim();
-    setChatInput('');
-    setChatMessages(prev => [...prev, { role: 'user', text: msg }]);
-    setChatLoading(true);
-    try {
-      const result = await dealApi.chatCriteria(msg);
-      setChatMessages(prev => [...prev, {
-        role: 'ai',
-        text: result.change_summary || 'Here are the proposed changes.',
-        preview: result.preview,
-        proposed: result.proposed_criteria,
-      }]);
-      setPendingCriteria(result.proposed_criteria);
-    } catch (err: any) {
-      setChatMessages(prev => [...prev, { role: 'ai', text: `Error: ${err.message}` }]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const handleApplyCriteria = async () => {
-    if (!pendingCriteria || applyingCriteria) return;
-    setApplyingCriteria(true);
-    try {
-      await dealApi.applyCriteria(pendingCriteria);
-      setCriteriaData({ ...criteriaData, criteria: pendingCriteria });
-      setPendingCriteria(null);
-      setChatMessages(prev => [...prev, { role: 'ai', text: 'Criteria applied successfully! The universe has been re-qualified.' }]);
-      await loadData(); // Refresh universe data
-    } catch (err: any) {
-      setChatMessages(prev => [...prev, { role: 'ai', text: `Failed to apply: ${err.message}` }]);
-    } finally {
-      setApplyingCriteria(false);
-    }
-  };
-
-  const handleDiscardCriteria = () => {
-    setPendingCriteria(null);
-    setChatMessages(prev => [...prev, { role: 'ai', text: 'Changes discarded. Current criteria remain unchanged.' }]);
   };
 
   // Source type badge colors
@@ -764,8 +697,8 @@ export default function Universe() {
         </div>
       )}
 
-      {/* ── Filters Overlay ────────────────────────────────────────── */}
-      {showFilters && (
+      {/* Filters overlay removed — criteria are hardcoded: UK/Ireland + Tech + Size <£50M */}
+      {false && (
         <div className="sources-overlay">
           <div className="sources-panel filters-panel">
             <div className="sources-header">
@@ -986,10 +919,6 @@ export default function Universe() {
             <p className="subtitle">{filteredUniverse.length} targets from {universe.length} total</p>
           </div>
           <div className="header-right">
-            <button className="sources-btn" onClick={openFiltersOverlay}>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 2h14l-5.5 6.5V14l-3-2V8.5L1 2z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
-              Filters
-            </button>
             <button className="sources-btn" onClick={() => setShowSources(true)}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 7h8M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Sources
@@ -1065,6 +994,7 @@ export default function Universe() {
               <thead>
                 <tr>
                   <th>Company</th>
+                  <th>Fit</th>
                   <th>Website</th>
                   <th>Sector</th>
                   <th>Region</th>
@@ -1087,13 +1017,20 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={18}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={19}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
                     <tr key={i}>
                       <td className="company-cell">
                         <button className="company-name-btn" onClick={() => setDrawerCompany(company)}>{company.name}</button>
+                      </td>
+                      <td className="score-cell">
+                        {company.averroes_fit_score != null ? (
+                          <span className={`fit-score-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}>
+                            {Math.round(company.averroes_fit_score * 100)}
+                          </span>
+                        ) : '—'}
                       </td>
                       <td className="website-cell">
                         {company.website ? (
@@ -1136,7 +1073,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={18} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={19} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1480,6 +1417,11 @@ export default function Universe() {
         .crm-table tr:hover td { background: #f8fafc; }
         .company-name-btn { background: none; border: none; padding: 0; font-size: 0.88rem; font-weight: 700; color: #0f172a; cursor: pointer; text-align: left; }
         .company-name-btn:hover { color: #2563eb; }
+        .score-cell { text-align: center; }
+        .fit-score-badge { font-size: 0.72rem; font-weight: 800; padding: 0.15rem 0.45rem; border-radius: 4px; color: white; }
+        .fit-score-badge.high { background: #16a34a; }
+        .fit-score-badge.mid { background: #d97706; }
+        .fit-score-badge.low { background: #dc2626; }
         .website-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
         .website-link { color: #2563eb; font-size: 0.78rem; font-weight: 600; text-decoration: none; }
         .website-link:hover { text-decoration: underline; }
