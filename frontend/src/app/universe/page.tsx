@@ -1003,6 +1003,10 @@ export default function Universe() {
                   <th>Age</th>
                   <th>Raised</th>
                   <th>Valuation</th>
+                  <th>Revenue</th>
+                  <th>EBITDA</th>
+                  <th>Profit</th>
+                  <th>Assets</th>
                   <th>Size</th>
                   <th>Status</th>
                   <th>Leadership</th>
@@ -1017,7 +1021,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={19}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={23}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -1044,6 +1048,10 @@ export default function Universe() {
                       <td className="num-cell">{company.year_founded ? `${new Date().getFullYear() - company.year_founded}y` : '—'}</td>
                       <td className="num-cell">{company.total_raised_m ? `£${company.total_raised_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `£${company.valuation_estimate_m.toFixed(1)}M` : '—'}</td>
+                      <td className="num-cell">{company.revenue_y1 ? `£${(company.revenue_y1 / 1e6).toFixed(1)}M` : company.revenue_m ? `£${company.revenue_m.toFixed(1)}M` : '—'}</td>
+                      <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
+                      <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
+                      <td className="num-cell">{company.total_assets_y1 ? `£${(company.total_assets_y1 / 1e6).toFixed(1)}M` : '—'}</td>
                       <td>{company.size_bucket ? <span className={`size-badge size-${company.size_bucket.toLowerCase()}`}>{company.size_bucket}</span> : '—'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span></td>
                       <td>{company.contact_name || '—'}</td>
@@ -1073,7 +1081,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={19} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={23} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
