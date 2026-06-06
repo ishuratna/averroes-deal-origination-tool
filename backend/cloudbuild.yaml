@@ -17,7 +17,7 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET=averroes-deal-intelligence,BIGQUERY_DATASET=averroes_deal_flow,GEMINI_API_KEY=${_GEMINI_API_KEY}'
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET=averroes-deal-intelligence,BIGQUERY_DATASET=averroes_deal_flow,GEMINI_API_KEY=${_GEMINI_API_KEY},COMPANIES_HOUSE_API_KEY=${_COMPANIES_HOUSE_API_KEY}'
       - '--memory'
       - '512Mi'
       - '--cpu'
@@ -30,5 +30,6 @@ images:
   - 'gcr.io/$PROJECT_ID/averroes-deal-backend'
 substitutions:
   _GEMINI_API_KEY: ''
+  _COMPANIES_HOUSE_API_KEY: ''
 options:
   logging: CLOUD_LOGGING_ONLY
