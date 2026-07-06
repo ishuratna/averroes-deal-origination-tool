@@ -388,6 +388,7 @@ async def smartfill_company(company_name: str):
                 sector=company_data.get("sector", ""),
                 region=company_data.get("region", ""),
                 description=description or company_data.get("description", ""),
+                gcs_handler=gcs_handler,
             )
             if ch_data.get("error"):
                 logger.warning(f"CH extraction returned error for {company_name}: {ch_data['error']}")
@@ -409,10 +410,14 @@ async def smartfill_company(company_name: str):
         scoring_input["size_bucket"] = size_bucket
         try:
             scoring_result = score_company(scoring_input)
+            logger.info(f"[SmartFill] Scoring result for '{company_name}': "
+                        f"fit_score={scoring_result.get('averroes_fit_score')}, "
+                        f"metrics_available={scoring_result.get('metrics_available')}, "
+                        f"error={scoring_result.get('error')}")
             if scoring_result.get("error"):
                 logger.warning(f"Scoring incomplete for {company_name}: {scoring_result['error']}")
         except Exception as e:
-            logger.error(f"Scoring failed for {company_name}: {e}")
+            logger.error(f"Scoring failed for {company_name}: {e}", exc_info=True)
 
     # Step 5: Update BQ (size + CH financials + scoring)
     try:
@@ -446,6 +451,7 @@ async def smartfill_company(company_name: str):
             filing_type = @filing_type,
             ch_match_confidence = @ch_match_confidence,
             ch_notes = @ch_notes,
+            ch_pdf_path = @ch_pdf_path,
             averroes_fit_score = @averroes_fit_score,
             score_employee_growth = @score_employee_growth,
             score_revenue_growth = @score_revenue_growth,
@@ -484,6 +490,7 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("filing_type", "STRING", ch_data.get("filing_type") or ""),
             bq_lib.ScalarQueryParameter("ch_match_confidence", "STRING", ch_data.get("ch_match_confidence") or ""),
             bq_lib.ScalarQueryParameter("ch_notes", "STRING", ch_data.get("notes") or ""),
+            bq_lib.ScalarQueryParameter("ch_pdf_path", "STRING", ch_data.get("ch_pdf_path") or ""),
             bq_lib.ScalarQueryParameter("averroes_fit_score", "FLOAT64", scoring_result.get("averroes_fit_score")),
             bq_lib.ScalarQueryParameter("score_employee_growth", "FLOAT64", scoring_result.get("score_employee_growth")),
             bq_lib.ScalarQueryParameter("score_revenue_growth", "FLOAT64", scoring_result.get("score_revenue_growth")),
@@ -537,6 +544,7 @@ async def smartfill_company(company_name: str):
         "filing_type": ch_data.get("filing_type"),
         "ch_match_confidence": ch_data.get("ch_match_confidence"),
         "ch_notes": ch_data.get("notes"),
+        "ch_pdf_path": ch_data.get("ch_pdf_path"),
         # Averroes Fit Scoring
         "averroes_fit_score": scoring_result.get("averroes_fit_score"),
         "score_employee_growth": scoring_result.get("score_employee_growth"),
@@ -547,6 +555,48 @@ async def smartfill_company(company_name: str):
         "score_details": scoring_result.get("score_details"),
         "metrics_available": scoring_result.get("metrics_available"),
     }
+
+
+@app.get("/ch-pdf/{company_name}")
+async def get_ch_pdf(company_name: str):
+    """Serve the Companies House filing PDF from GCS for a given company."""
+    from fastapi.responses import Response
+    # Look up the company's ch_pdf_path from BQ
+    try:
+        universe = bq_handler.get_universe()
+        company = None
+        for c in universe:
+            if c.get("name") == company_name:
+                company = c
+                break
+        if not company:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        pdf_path = company.get("ch_pdf_path")
+        if not pdf_path:
+            raise HTTPException(status_code=404, detail="No CH filing PDF available for this company")
+
+        # Download from GCS
+        if not gcs_handler.storage_client:
+            raise HTTPException(status_code=500, detail="GCS not available")
+
+        bucket = gcs_handler.storage_client.bucket(gcs_handler.bucket_name)
+        blob = bucket.blob(pdf_path)
+        if not blob.exists():
+            raise HTTPException(status_code=404, detail="PDF file not found in storage")
+
+        pdf_bytes = blob.download_as_bytes()
+        safe_name = company_name.replace(" ", "_")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{safe_name}_CH_Filing.pdf"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve CH PDF for {company_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/requalify-all")

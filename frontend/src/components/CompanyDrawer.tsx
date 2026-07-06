@@ -188,6 +188,19 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.ch_incorporated_date && <DetailRow label="Incorporated" value={company.ch_incorporated_date} />}
                     {company.ch_sic_codes && <DetailRow label="SIC Codes" value={company.ch_sic_codes} />}
                     {company.filing_type && <DetailRow label="Filing Type" value={company.filing_type} />}
+                    {company.ch_pdf_path && (
+                      <div className="detail-row">
+                        <span className="detail-label">Filed Accounts</span>
+                        <a
+                          href={`${process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app'}/ch-pdf/${encodeURIComponent(company.name)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ch-pdf-link"
+                        >
+                          View CH Filing PDF
+                        </a>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -1145,6 +1158,24 @@ function DetailRow({ label, value, highlight, isLink }: { label: string; value?:
           text-decoration: none;
         }
         .detail-link:hover { text-decoration: underline; }
+
+        .ch-pdf-link {
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #2563eb;
+          text-decoration: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          padding: 0.25rem 0.6rem;
+          border-radius: 6px;
+          background: #eff6ff;
+          transition: all 0.15s;
+        }
+        .ch-pdf-link:hover {
+          background: #dbeafe;
+          text-decoration: none;
+        }
       `}</style>
     </div>
   );

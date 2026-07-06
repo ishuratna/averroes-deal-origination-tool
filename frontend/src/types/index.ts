@@ -85,6 +85,7 @@ export interface CompanyTarget {
   filing_type?: string;
   ch_match_confidence?: string;
   ch_notes?: string;
+  ch_pdf_path?: string;
   // Averroes fit scoring
   averroes_fit_score?: number;
   score_employee_growth?: number;

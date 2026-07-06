@@ -135,6 +135,13 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
         except (ValueError, TypeError):
             pass
 
+    # Fallback: Gemini + Google Search estimation (last resort)
+    if rev_m is None:
+        gemini_estimate = _gemini_revenue_estimate(company)
+        if gemini_estimate is not None:
+            rev_m = gemini_estimate
+            source = "estimated via Gemini + web search"
+
     if rev_m is None or rev_m <= 0:
         return None
 
@@ -215,6 +222,7 @@ def score_company(company: dict) -> Dict:
 
     # ── Compute composite ──
     available = len(scores)
+    logger.info(f"[Scoring] '{company_name}' has {available}/5 metrics: {list(scores.keys())}")
     if available < 4:
         logger.warning(f"[Scoring] Only {available}/5 metrics for '{company_name}' — insufficient (need 4+)")
         return {
@@ -406,3 +414,80 @@ Return ONLY valid JSON:
     except Exception as e:
         logger.error(f"[Scoring] Gemini qualitative scoring failed: {e}")
         return {"error": str(e)}
+
+
+def _gemini_revenue_estimate(company: dict) -> Optional[float]:
+    """
+    Last-resort revenue estimation using Gemini + Google Search.
+    Returns estimated revenue in £ millions, or None.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
+
+    name = company.get("name", "")
+    if not name:
+        return None
+
+    try:
+        from google import genai
+        from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+
+        client = genai.Client(api_key=api_key)
+
+        website = company.get("website", "")
+        sector = company.get("sector", "")
+        employees = company.get("employees") or company.get("employees_ch")
+        ch_name = company.get("ch_official_name", "")
+        description = company.get("description", "")[:200]
+        total_assets = company.get("total_assets_y1")
+
+        prompt = f"""Search the web for the company "{name}" (also known as "{ch_name or name}").
+Website: {website or 'N/A'}
+Sector: {sector or 'Unknown'}
+Description: {description or 'N/A'}
+Employees: {employees or 'Unknown'}
+Total Assets: {'£' + str(round(total_assets/1e6, 2)) + 'M' if total_assets else 'Unknown'}
+
+Estimate this company's ANNUAL REVENUE in GBP millions (£M).
+
+Use any available information: company filings, press releases, industry reports,
+employee count heuristics (e.g., £100-200K revenue per employee for SaaS),
+asset-based estimates, or comparable companies.
+
+Return ONLY a JSON object:
+{{"revenue_estimate_m": <number or null>, "confidence": "high" | "medium" | "low", "reasoning": "<brief explanation>"}}
+
+If you truly cannot estimate even a rough range, set revenue_estimate_m to null."""
+
+        google_search_tool = Tool(google_search=GoogleSearch())
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=GenerateContentConfig(
+                tools=[google_search_tool],
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        import json
+        result = json.loads(text)
+        estimate = result.get("revenue_estimate_m")
+        confidence = result.get("confidence", "low")
+        reasoning = result.get("reasoning", "")
+
+        if estimate is not None and estimate > 0:
+            logger.info(f"[Scoring] Gemini revenue estimate for '{name}': £{estimate}M ({confidence}) — {reasoning}")
+            return float(estimate)
+        else:
+            logger.info(f"[Scoring] Gemini could not estimate revenue for '{name}'")
+            return None
+
+    except Exception as e:
+        logger.warning(f"[Scoring] Gemini revenue estimation failed for '{name}': {e}")
+        return None

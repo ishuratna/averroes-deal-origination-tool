@@ -73,6 +73,7 @@ class BigQueryHandler:
         ("filing_type", "STRING"),
         ("ch_match_confidence", "STRING"),
         ("ch_notes", "STRING"),
+        ("ch_pdf_path", "STRING"),
         # Averroes fit scoring
         ("averroes_fit_score", "FLOAT64"),
         ("score_employee_growth", "FLOAT64"),

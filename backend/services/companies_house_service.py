@@ -346,6 +346,7 @@ def extract_ch_financials(
     sector: str = "",
     region: str = "",
     description: str = "",
+    gcs_handler=None,
 ) -> Dict:
     """
     Full pipeline: Search CH → Find company → Download accounts PDF → Parse with Gemini.
@@ -424,6 +425,8 @@ def extract_ch_financials(
     all_financials = []
     filing_type = None
 
+    saved_pdf_path = None
+
     for i, filing in enumerate(filings[:3]):
         filing_date = filing.get("date", "")
         filing_desc = filing.get("description", "")
@@ -451,6 +454,20 @@ def extract_ch_financials(
             logger.warning(f"[CH] Could not download PDF for filing {i+1}")
             continue
 
+        # Save first PDF to GCS for later review
+        if gcs_handler and pdf_bytes and not saved_pdf_path:
+            try:
+                safe_name = company_name.replace(" ", "_").replace("/", "_")[:50]
+                gcs_path = f"ch-filings/{company_number}/{safe_name}_{filing_date}.pdf"
+                if gcs_handler.storage_client:
+                    bucket = gcs_handler.storage_client.bucket(gcs_handler.bucket_name)
+                    blob = bucket.blob(gcs_path)
+                    blob.upload_from_string(data=pdf_bytes, content_type="application/pdf")
+                    saved_pdf_path = gcs_path
+                    logger.info(f"[CH] Saved accounts PDF to GCS: {gcs_path}")
+            except Exception as e:
+                logger.warning(f"[CH] Could not save PDF to GCS: {e}")
+
         # Parse the PDF with Gemini
         parsed = _parse_accounts_pdf_with_gemini(
             pdf_bytes, company_name, company_number, filing_date
@@ -474,6 +491,7 @@ def extract_ch_financials(
         "ch_match_confidence": match_confidence,
         "filing_type": filing_type,
         "error": None,
+        "ch_pdf_path": saved_pdf_path,
     }
 
     if not all_financials:
