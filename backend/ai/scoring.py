@@ -74,73 +74,106 @@ def _compute_revenue_growth(company: dict) -> Optional[Dict]:
     }
 
 
+def _safe_float(val) -> Optional[float]:
+    """Parse a value to float, returning None on failure or non-positive."""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if f > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dict]:
+    """
+    Estimate annual revenue in £M.
+
+    Rules:
+      1. Filed/reported revenue always wins outright (CH filings, then PitchBook)
+         → confidence "high", no proxies consulted.
+      2. Otherwise compute ALL available local proxies and take the MEDIAN:
+           - employees × £100K/head (conservative UK B2B SaaS rate)
+           - total assets × 2.5 (tech multiplier)
+           - EBITDA × 6.5
+           - valuation ÷ 6
+           - last financing round × 3
+         Confidence: "medium" if 2+ proxies agree within 2x of each other,
+         otherwise "low".
+      3. If no local signal at all and allow_gemini: Gemini + web search
+         estimate → confidence "low".
+
+    Returns {"rev_m", "source", "confidence", "is_estimate"} or None.
+    """
+    # 1. Actual revenue — CH filings (raw GBP → £M), then PitchBook
+    rev = _safe_float(company.get("revenue_y1"))
+    if rev is not None:
+        return {"rev_m": rev / 1_000_000, "source": "CH filings", "confidence": "high", "is_estimate": False}
+
+    rev = _safe_float(company.get("revenue_m"))
+    if rev is not None:
+        return {"rev_m": rev, "source": "PitchBook", "confidence": "high", "is_estimate": False}
+
+    # 2. Local proxies — compute everything we have, take the median
+    proxies = []  # (estimate_m, label)
+
+    employees = _safe_float(company.get("employees")) or _safe_float(company.get("employees_ch"))
+    if employees is not None:
+        proxies.append((employees * 0.1, f"employees ({int(employees)} × £100K)"))
+
+    assets = _safe_float(company.get("total_assets_y1"))
+    if assets is not None:
+        proxies.append((assets / 1_000_000 * 2.5, "total assets × 2.5"))
+
+    ebitda = _safe_float(company.get("estimated_ebitda"))
+    if ebitda is not None:
+        proxies.append((ebitda * 6.5, "EBITDA × 6.5"))
+
+    valuation = _safe_float(company.get("valuation_estimate_m"))
+    if valuation is not None:
+        proxies.append((valuation / 6, "valuation ÷ 6"))
+
+    last_round = _safe_float(company.get("last_financing_size_m"))
+    if last_round is not None:
+        proxies.append((last_round * 3, "last round × 3"))
+
+    if proxies:
+        values = sorted(p[0] for p in proxies)
+        n = len(values)
+        median = values[n // 2] if n % 2 == 1 else (values[n // 2 - 1] + values[n // 2]) / 2
+
+        # Confidence: medium if 2+ proxies agree within 2x, else low
+        confidence = "low"
+        if n >= 2 and values[-1] <= values[0] * 2:
+            confidence = "medium"
+
+        labels = ", ".join(p[1] for p in proxies)
+        source = f"median of {n} prox{'ies' if n > 1 else 'y'} ({labels})"
+        logger.info(f"[Revenue] '{company.get('name')}' estimated £{median:.1f}M ({confidence}) from: {labels}")
+        return {"rev_m": median, "source": source, "confidence": confidence, "is_estimate": True}
+
+    # 3. Last resort: Gemini + web search
+    if allow_gemini:
+        gemini_estimate = _gemini_revenue_estimate(company)
+        if gemini_estimate is not None:
+            return {"rev_m": gemini_estimate, "source": "Gemini + web search", "confidence": "low", "is_estimate": True}
+
+    return None
+
+
 def _compute_revenue_size(company: dict) -> Optional[Dict]:
     """
     Score revenue size — how well it fits the Averroes sweet spot.
-    Uses CH revenue, PitchBook revenue, or proxies (assets, EBITDA, valuation, funding).
-    Returns {score, value, explanation} or None.
+    Revenue comes from estimate_revenue_m (actual filed revenue, or
+    median-of-proxies estimate, or Gemini as last resort).
+    Returns {score, value, revenue_band, explanation, ...} or None.
     """
-    # Try CH revenue first (raw GBP → millions)
-    rev_m = None
-    source = ""
+    est = estimate_revenue_m(company)
+    if est is None:
+        return None
 
-    if company.get("revenue_y1") is not None:
-        try:
-            rev_m = float(company["revenue_y1"]) / 1_000_000
-            source = "CH filings"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: PitchBook revenue_m
-    if rev_m is None and company.get("revenue_m") is not None:
-        try:
-            rev_m = float(company["revenue_m"])
-            source = "PitchBook"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: estimate from total assets (tech companies: revenue ≈ 2-3x assets)
-    if rev_m is None and company.get("total_assets_y1") is not None:
-        try:
-            assets_m = float(company["total_assets_y1"]) / 1_000_000
-            rev_m = assets_m * 2.5  # conservative multiplier for tech
-            source = "estimated from total assets"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: estimate from EBITDA (revenue ≈ 5-8x EBITDA for SaaS)
-    if rev_m is None and company.get("estimated_ebitda") is not None:
-        try:
-            ebitda = float(company["estimated_ebitda"])
-            rev_m = ebitda * 6.5
-            source = "estimated from EBITDA"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: estimate from valuation (revenue ≈ valuation / 5-8x for SaaS)
-    if rev_m is None and company.get("valuation_estimate_m") is not None:
-        try:
-            val = float(company["valuation_estimate_m"])
-            rev_m = val / 6
-            source = "estimated from valuation"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: estimate from last financing round
-    if rev_m is None and company.get("last_financing_size_m") is not None:
-        try:
-            last_round = float(company["last_financing_size_m"])
-            rev_m = last_round * 3  # rough heuristic
-            source = "estimated from last funding round"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: Gemini + Google Search estimation (last resort)
-    if rev_m is None:
-        gemini_estimate = _gemini_revenue_estimate(company)
-        if gemini_estimate is not None:
-            rev_m = gemini_estimate
-            source = "estimated via Gemini + web search"
+    rev_m = est["rev_m"]
+    source = est["source"]
 
     if rev_m is None or rev_m <= 0:
         return None
@@ -170,7 +203,10 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
         "score": round(score, 3),
         "value": round(rev_m, 2),
         "revenue_band": compute_revenue_band(rev_m),
-        "explanation": f"Revenue ~£{rev_m:.1f}M ({source})",
+        "is_estimate": est["is_estimate"],
+        "confidence": est["confidence"],
+        "source": source,
+        "explanation": f"Revenue {'~' if est['is_estimate'] else ''}£{rev_m:.1f}M ({source}, {est['confidence']} confidence)",
     }
 
 
@@ -237,8 +273,12 @@ def score_company(company: dict) -> Dict:
                 scores[metric] = gemini_scores[metric]["score"]
                 details[metric] = gemini_scores[metric]
 
-    # Revenue band (informational — from whatever revenue the cascade found)
-    revenue_band = details.get("revenue_size", {}).get("revenue_band")
+    # Revenue band + estimate details (informational — from whatever revenue was found)
+    rev_details = details.get("revenue_size", {})
+    revenue_band = rev_details.get("revenue_band")
+    revenue_estimate_m = rev_details.get("value") if rev_details.get("is_estimate") else None
+    revenue_source = rev_details.get("source")
+    revenue_confidence = rev_details.get("confidence")
 
     # ── Compute composite ──
     available = len(scores)
@@ -254,6 +294,9 @@ def score_company(company: dict) -> Dict:
             "score_market_sentiment": scores.get("market_sentiment"),
             "score_details": json.dumps(details),
             "revenue_band": revenue_band,
+            "revenue_estimate_m": revenue_estimate_m,
+            "revenue_source": revenue_source,
+            "revenue_confidence": revenue_confidence,
             "metrics_available": available,
             "error": f"Insufficient data: only {available}/5 metrics available (need 4+)",
         }
@@ -270,6 +313,9 @@ def score_company(company: dict) -> Dict:
         "score_market_sentiment": scores.get("market_sentiment"),
         "score_details": json.dumps(details),
         "revenue_band": revenue_band,
+        "revenue_estimate_m": revenue_estimate_m,
+        "revenue_source": revenue_source,
+        "revenue_confidence": revenue_confidence,
         "metrics_available": available,
         "error": None,
     }

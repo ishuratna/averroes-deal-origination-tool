@@ -83,6 +83,9 @@ class BigQueryHandler:
         ("score_market_sentiment", "FLOAT64"),
         ("score_details", "STRING"),
         ("revenue_band", "STRING"),
+        ("revenue_estimate_m", "FLOAT64"),
+        ("revenue_source", "STRING"),
+        ("revenue_confidence", "STRING"),
     ]
 
     def _ensure_expanded_schema(self):

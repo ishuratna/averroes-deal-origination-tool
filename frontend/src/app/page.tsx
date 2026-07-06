@@ -551,6 +551,11 @@ export default function Home() {
                                   <span className="kc-metric-label">Revenue</span>
                                   <span className="kc-metric-value">&pound;{company.revenue_m}M</span>
                                 </span>
+                              ) : company.revenue_estimate_m ? (
+                                <span className="kc-metric">
+                                  <span className="kc-metric-label">Revenue</span>
+                                  <span className="kc-metric-value">~&pound;{company.revenue_estimate_m.toFixed(1)}M (est.)</span>
+                                </span>
                               ) : null}
                               {company.employees ? (
                                 <span className="kc-metric">

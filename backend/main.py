@@ -25,7 +25,7 @@ from ai.criteria import (
 )
 from ai.enrichment import EnrichmentAgent
 from services.companies_house_service import extract_ch_financials
-from ai.scoring import score_company, compute_revenue_band
+from ai.scoring import score_company, compute_revenue_band, estimate_revenue_m
 from config.sourcing_config import SOURCING_CRITERIA
 
 # Load .env for local development; Cloud Run injects env vars directly
@@ -419,19 +419,21 @@ async def smartfill_company(company_name: str):
         except Exception as e:
             logger.error(f"Scoring failed for {company_name}: {e}", exc_info=True)
 
-    # Revenue band — from scoring if available, else derived from raw revenue data
-    # (so even Not-a-Fit companies with CH/PitchBook revenue get banded)
+    # Revenue band + estimate — from scoring if it ran, else estimated here from
+    # local proxies (no Gemini spend for unscored/Not-a-Fit companies).
     revenue_band = scoring_result.get("revenue_band")
+    revenue_estimate_m = scoring_result.get("revenue_estimate_m")
+    revenue_source = scoring_result.get("revenue_source")
+    revenue_confidence = scoring_result.get("revenue_confidence")
     if not revenue_band:
-        rev_m = None
-        try:
-            if ch_data.get("revenue_y1"):
-                rev_m = float(ch_data["revenue_y1"]) / 1_000_000
-            elif company_data.get("revenue_m"):
-                rev_m = float(company_data["revenue_m"])
-        except (ValueError, TypeError):
-            pass
-        revenue_band = compute_revenue_band(rev_m)
+        est_input = {**company_data, **ch_data}
+        est = estimate_revenue_m(est_input, allow_gemini=False)
+        if est:
+            revenue_band = compute_revenue_band(est["rev_m"])
+            revenue_source = est["source"]
+            revenue_confidence = est["confidence"]
+            if est["is_estimate"]:
+                revenue_estimate_m = round(est["rev_m"], 2)
 
     # Step 5: Update BQ (size + CH financials + scoring)
     try:
@@ -474,6 +476,9 @@ async def smartfill_company(company_name: str):
             score_market_sentiment = @score_market_sentiment,
             score_details = @score_details,
             revenue_band = @revenue_band,
+            revenue_estimate_m = @revenue_estimate_m,
+            revenue_source = @revenue_source,
+            revenue_confidence = @revenue_confidence,
             description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END
             WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
@@ -514,6 +519,9 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("score_market_sentiment", "FLOAT64", scoring_result.get("score_market_sentiment")),
             bq_lib.ScalarQueryParameter("score_details", "STRING", scoring_result.get("score_details") or ""),
             bq_lib.ScalarQueryParameter("revenue_band", "STRING", revenue_band or ""),
+            bq_lib.ScalarQueryParameter("revenue_estimate_m", "FLOAT64", revenue_estimate_m),
+            bq_lib.ScalarQueryParameter("revenue_source", "STRING", revenue_source or ""),
+            bq_lib.ScalarQueryParameter("revenue_confidence", "STRING", revenue_confidence or ""),
             bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -570,6 +578,9 @@ async def smartfill_company(company_name: str):
         "score_market_sentiment": scoring_result.get("score_market_sentiment"),
         "score_details": scoring_result.get("score_details"),
         "revenue_band": revenue_band,
+        "revenue_estimate_m": revenue_estimate_m,
+        "revenue_source": revenue_source,
+        "revenue_confidence": revenue_confidence,
         "metrics_available": scoring_result.get("metrics_available"),
     }
 

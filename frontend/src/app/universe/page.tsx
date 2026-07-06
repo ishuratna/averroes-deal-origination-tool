@@ -863,7 +863,15 @@ export default function Universe() {
                       <td className="num-cell">{company.year_founded ? `${new Date().getFullYear() - company.year_founded}y` : '—'}</td>
                       <td className="num-cell">{company.total_raised_m ? `£${company.total_raised_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `£${company.valuation_estimate_m.toFixed(1)}M` : '—'}</td>
-                      <td className="num-cell">{company.revenue_y1 ? `£${(company.revenue_y1 / 1e6).toFixed(1)}M` : company.revenue_m ? `£${company.revenue_m.toFixed(1)}M` : '—'}</td>
+                      <td className="num-cell">
+                        {company.revenue_y1 ? `£${(company.revenue_y1 / 1e6).toFixed(1)}M`
+                          : company.revenue_m ? `£${company.revenue_m.toFixed(1)}M`
+                          : company.revenue_estimate_m ? (
+                            <span className="rev-estimate" title={`Estimated: ${company.revenue_source || 'proxy-based'} (${company.revenue_confidence || 'low'} confidence)`}>
+                              ~£{company.revenue_estimate_m.toFixed(1)}M <span className="est-tag">(est.)</span>
+                            </span>
+                          ) : '—'}
+                      </td>
                       <td>{(() => { const band = getRevenueBand(company); return band ? <span className={`band-badge band-${band.toLowerCase().replace(/\s+/g, '-')}`}>{band}</span> : '—'; })()}</td>
                       <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
@@ -1266,6 +1274,8 @@ export default function Universe() {
         .band-badge.band-target-band { background: #dcfce7; color: #166534; }
         .band-badge.band-too-early { background: #fef3c7; color: #92400e; }
         .band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
+        .rev-estimate { color: #64748b; font-style: italic; cursor: help; }
+        .est-tag { font-size: 0.62rem; color: #94a3b8; font-style: normal; }
         .email-cell { font-size: 0.78rem; }
         .email-link { color: #2563eb; text-decoration: none; }
         .email-link:hover { text-decoration: underline; }
