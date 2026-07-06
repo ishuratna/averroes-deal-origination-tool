@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Link from 'next/link';
 import { CompanyTarget, getRevenueBand } from "../../types";
 import { dealApi } from "../../services/api";
@@ -77,6 +77,13 @@ export default function Universe() {
   // Sources overlay
   const [showSources, setShowSources] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+
+  // Bulk SmartFill
+  const [bulkEligibility, setBulkEligibility] = useState<any | null>(null);
+  const [bulkLoadingEligibility, setBulkLoadingEligibility] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string; ok: number; failed: number } | null>(null);
+  const bulkCancelRef = useRef(false);
 
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
@@ -186,6 +193,53 @@ export default function Universe() {
       await loadData();
     } catch (error) { alert(`Scraping failed for ${sourceName}`); }
     finally { setIngesting(null); }
+  };
+
+  // ── Bulk SmartFill ────────────────────────────────────────────────────────
+
+  const openBulkSmartFill = async () => {
+    setBulkLoadingEligibility(true);
+    try {
+      const data = await dealApi.getSmartFillEligible();
+      setBulkEligibility(data);
+    } catch (e) {
+      alert('Failed to load eligibility — is the backend deployed?');
+    } finally {
+      setBulkLoadingEligibility(false);
+    }
+  };
+
+  const runBulkSmartFill = async () => {
+    if (!bulkEligibility?.eligible_names?.length) return;
+    const names: string[] = bulkEligibility.eligible_names;
+    bulkCancelRef.current = false;
+    setBulkRunning(true);
+    let ok = 0, failed = 0;
+    for (let i = 0; i < names.length; i++) {
+      if (bulkCancelRef.current) break;
+      setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
+      try {
+        await dealApi.smartFill(names[i]);
+        ok++;
+      } catch (e) {
+        failed++;
+        console.error(`Bulk SmartFill failed for ${names[i]}`, e);
+      }
+      // Rate limiting between companies (each SmartFill already takes 20-60s server-side)
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    setBulkProgress({ done: ok + failed, total: names.length, current: '', ok, failed });
+    setBulkRunning(false);
+    await loadData();
+  };
+
+  const closeBulkModal = () => {
+    if (bulkRunning) {
+      if (!confirm('A bulk run is in progress. Cancel it?')) return;
+      bulkCancelRef.current = true;
+    }
+    setBulkEligibility(null);
+    setBulkProgress(null);
   };
 
   const handleRefreshSource = async (source: SourceDef) => {
@@ -518,6 +572,67 @@ export default function Universe() {
         </div>
       )}
 
+      {/* ── Bulk SmartFill Modal ────────────────────────────────────── */}
+      {bulkEligibility && (
+        <div className="modal-overlay" onClick={closeBulkModal}>
+          <div className="bulk-modal" onClick={e => e.stopPropagation()}>
+            <div className="bulk-modal-header">
+              <h3>Bulk SmartFill</h3>
+              <button className="modal-close" onClick={closeBulkModal}>&times;</button>
+            </div>
+
+            {!bulkRunning && !bulkProgress && (
+              <>
+                <div className="bulk-funnel">
+                  <div className="bulk-funnel-row"><span>Total universe</span><b>{bulkEligibility.total_universe}</b></div>
+                  <div className="bulk-funnel-row excluded"><span>Excluded — not UK/Ireland</span><b>−{bulkEligibility.excluded_non_uk_ie}</b></div>
+                  <div className="bulk-funnel-row excluded"><span>Excluded — not tech/software</span><b>−{bulkEligibility.excluded_non_tech}</b></div>
+                  <div className="bulk-funnel-row excluded"><span>Skipped — already SmartFilled</span><b>−{bulkEligibility.skipped_already_processed}</b></div>
+                  <div className="bulk-funnel-row eligible"><span>Eligible for SmartFill</span><b>{bulkEligibility.eligible_count}</b></div>
+                </div>
+
+                <div className="bulk-estimate">
+                  <h4>Gemini credit estimate</h4>
+                  <p>{bulkEligibility.estimate.gemini_calls_per_company.min}–{bulkEligibility.estimate.gemini_calls_per_company.max} API calls per company (typically {bulkEligibility.estimate.gemini_calls_per_company.typical}) → <b>~{bulkEligibility.estimate.total_gemini_calls.typical} total calls</b> ({bulkEligibility.estimate.total_gemini_calls.min}–{bulkEligibility.estimate.total_gemini_calls.max} range).</p>
+                  <p>Token cost ≈ <b>${bulkEligibility.estimate.token_cost_usd_typical}</b> · Grounded search calls: ~{bulkEligibility.estimate.total_grounded_calls_typical}.</p>
+                  <p className="bulk-note">{bulkEligibility.estimate.grounding_note}</p>
+                  <p className="bulk-note">Filters use keyword matching on stored data (no AI). Companies with missing region/sector data are excluded — enrich key targets individually if needed.</p>
+                </div>
+
+                <div className="bulk-actions">
+                  <button className="bulk-cancel" onClick={closeBulkModal}>Cancel</button>
+                  <button className="bulk-start" onClick={runBulkSmartFill} disabled={bulkEligibility.eligible_count === 0}>
+                    Start — {bulkEligibility.eligible_count} companies
+                  </button>
+                </div>
+              </>
+            )}
+
+            {(bulkRunning || bulkProgress) && (
+              <div className="bulk-run">
+                {bulkProgress && (
+                  <>
+                    <div className="bulk-bar-track">
+                      <div className="bulk-bar-fill" style={{ width: `${bulkProgress.total ? Math.round((bulkProgress.done / bulkProgress.total) * 100) : 0}%` }} />
+                    </div>
+                    <p className="bulk-run-status">
+                      {bulkRunning
+                        ? <>Processing <b>{bulkProgress.current}</b> ({bulkProgress.done + 1}/{bulkProgress.total}) · {bulkProgress.ok} done · {bulkProgress.failed} failed</>
+                        : <>Finished: {bulkProgress.ok} succeeded · {bulkProgress.failed} failed of {bulkProgress.total}</>}
+                    </p>
+                  </>
+                )}
+                {bulkRunning ? (
+                  <button className="bulk-cancel" onClick={() => { bulkCancelRef.current = true; }}>Stop after current</button>
+                ) : (
+                  <button className="bulk-start" onClick={closeBulkModal}>Close</button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Sources Overlay ─────────────────────────────────────────── */}
       {showSources && (
         <div className="sources-overlay">
@@ -746,6 +861,9 @@ export default function Universe() {
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 7h8M2 11h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Sources
               <span className="sources-badge">{activeSources}</span>
+            </button>
+            <button className="bulk-smartfill-btn" onClick={openBulkSmartFill} disabled={bulkLoadingEligibility || bulkRunning}>
+              {bulkLoadingEligibility ? 'Checking...' : bulkRunning ? 'Running...' : '⚡ Bulk SmartFill'}
             </button>
             <div className="search-box">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#94a3b8" strokeWidth="1.5"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -1290,6 +1408,35 @@ export default function Universe() {
         .band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
         .rev-estimate { color: #64748b; font-style: italic; cursor: help; }
         .est-tag { font-size: 0.62rem; color: #94a3b8; font-style: normal; }
+
+        /* ── Bulk SmartFill ── */
+        .bulk-smartfill-btn {
+          background: #0f172a; color: #fff; border: none; border-radius: 8px;
+          padding: 0.55rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .bulk-smartfill-btn:hover:not(:disabled) { background: #1e293b; }
+        .bulk-smartfill-btn:disabled { opacity: 0.6; cursor: wait; }
+        .bulk-modal {
+          background: #fff; border-radius: 12px; width: 480px; max-width: 92vw;
+          padding: 1.25rem 1.5rem; box-shadow: 0 20px 50px rgba(2,6,23,0.35);
+        }
+        .bulk-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .bulk-modal-header h3 { font-size: 1.05rem; color: #0f172a; }
+        .bulk-funnel { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-bottom: 0.9rem; }
+        .bulk-funnel-row { display: flex; justify-content: space-between; padding: 0.5rem 0.8rem; font-size: 0.8rem; border-bottom: 1px solid #f1f5f9; color: #334155; }
+        .bulk-funnel-row.excluded { color: #94a3b8; }
+        .bulk-funnel-row.eligible { background: #f0fdf4; color: #166534; font-weight: 700; border-bottom: none; }
+        .bulk-estimate h4 { font-size: 0.8rem; color: #0f172a; margin-bottom: 0.3rem; }
+        .bulk-estimate p { font-size: 0.76rem; color: #475569; margin-bottom: 0.35rem; line-height: 1.45; }
+        .bulk-estimate .bulk-note { font-size: 0.7rem; color: #94a3b8; }
+        .bulk-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1rem; }
+        .bulk-cancel { background: #fff; border: 1px solid #e2e8f0; color: #64748b; border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+        .bulk-start { background: #16a34a; border: none; color: #fff; border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+        .bulk-start:disabled { opacity: 0.5; cursor: not-allowed; }
+        .bulk-run { padding: 0.5rem 0 0.25rem 0; }
+        .bulk-bar-track { height: 10px; background: #f1f5f9; border-radius: 6px; overflow: hidden; margin-bottom: 0.6rem; }
+        .bulk-bar-fill { height: 100%; background: #16a34a; transition: width 0.4s ease; }
+        .bulk-run-status { font-size: 0.78rem; color: #475569; margin-bottom: 0.8rem; }
         .email-cell { font-size: 0.78rem; }
         .email-link { color: #2563eb; text-decoration: none; }
         .email-link:hover { text-decoration: underline; }

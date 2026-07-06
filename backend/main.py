@@ -612,6 +612,58 @@ async def smartfill_company(company_name: str):
     }
 
 
+@app.get("/smartfill/eligible")
+async def smartfill_eligible(skip_processed: bool = Query(True, description="Skip companies already SmartFilled (status not Scraped/Uploaded)")):
+    """
+    Pre-flight for bulk SmartFill. Applies the two cheap keyword filters
+    (UK/Ireland geography + tech/software industry) with ZERO AI calls,
+    and returns the eligible company list plus a Gemini credit estimate.
+    """
+    universe = bq_handler.get_universe()
+    total = len(universe)
+
+    non_uk_ie = 0
+    uk_ie_non_tech = 0
+    already_processed = 0
+    eligible = []
+
+    for c in universe:
+        qual = qualify_company(c)  # keyword-based, no AI
+        if not qual["is_uk_ireland"]:
+            non_uk_ie += 1
+            continue
+        if not qual["is_tech"]:
+            uk_ie_non_tech += 1
+            continue
+        if skip_processed and c.get("status") not in ("Scraped", "Uploaded"):
+            already_processed += 1
+            continue
+        eligible.append(c.get("name"))
+
+    n = len(eligible)
+    # Gemini calls per SmartFill (from code paths):
+    #   qualification 1 + enrichment 1 (grounded) + CH PDF parse 0-3
+    #   + scoring 1 (grounded, if qualified) + revenue estimate 0-1 (grounded)
+    est = {
+        "gemini_calls_per_company": {"min": 3, "typical": 5, "max": 7},
+        "grounded_calls_per_company": {"min": 2, "typical": 3},
+        "total_gemini_calls": {"min": n * 3, "typical": n * 5, "max": n * 7},
+        "total_grounded_calls_typical": n * 3,
+        "token_cost_usd_typical": round(n * 0.015, 2),
+        "grounding_note": "First ~1,500 grounded prompts/day are free (≈500 companies/day). Beyond that $35/1K prompts adds ~$0.10/company.",
+    }
+
+    return {
+        "total_universe": total,
+        "excluded_non_uk_ie": non_uk_ie,
+        "excluded_non_tech": uk_ie_non_tech,
+        "skipped_already_processed": already_processed,
+        "eligible_count": n,
+        "eligible_names": eligible,
+        "estimate": est,
+    }
+
+
 @app.get("/ch-pdf/{company_name}")
 async def get_ch_pdf(company_name: str):
     """Serve the Companies House filing PDF from GCS for a given company."""

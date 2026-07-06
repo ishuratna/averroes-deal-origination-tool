@@ -78,6 +78,12 @@ export const dealApi = {
     return data;
   },
 
+  async getSmartFillEligible(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/smartfill/eligible`);
+    if (!response.ok) throw new Error('Failed to load SmartFill eligibility');
+    return await response.json();
+  },
+
   async smartFill(companyName: string): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/smartfill/${encodeURIComponent(companyName)}`, { method: 'POST' });
     let data;
