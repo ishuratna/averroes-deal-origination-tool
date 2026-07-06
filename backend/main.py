@@ -599,55 +599,6 @@ async def get_ch_pdf(company_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/requalify-all")
-async def requalify_all():
-    """Re-evaluate ALL companies against the two hard filters (UK/Ireland + Tech).
-    Uses TWO batch UPDATE queries instead of one per company — fast and safe."""
-    logger.info("Re-qualifying entire universe...")
-    universe = bq_handler.get_universe()
-    if not universe:
-        return {"status": "Complete", "message": "Universe is empty.", "qualified": 0, "rejected": 0}
-
-    # Classify every company in-memory first (no BQ calls)
-    qualified_names = []
-    rejected_names = []
-    for company in universe:
-        qual = qualify_company(company)
-        if qual["qualified"]:
-            qualified_names.append(company["name"])
-        else:
-            rejected_names.append(company["name"])
-
-    from google.cloud import bigquery as bq_lib
-
-    # Batch update: set all qualified companies in one query
-    if qualified_names:
-        try:
-            names_list = ", ".join([f"'{n}'" for n in qualified_names])
-            query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Qualified' WHERE name IN ({names_list})"""
-            bq_handler.client.query(query).result()
-            logger.info(f"Batch-qualified {len(qualified_names)} companies.")
-        except Exception as e:
-            logger.error(f"Batch qualify failed: {e}")
-
-    # Batch update: set all rejected companies in one query
-    if rejected_names:
-        try:
-            names_list = ", ".join([f"'{n}'" for n in rejected_names])
-            query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit' WHERE name IN ({names_list})"""
-            bq_handler.client.query(query).result()
-            logger.info(f"Batch-rejected {len(rejected_names)} companies.")
-        except Exception as e:
-            logger.error(f"Batch reject failed: {e}")
-
-    return {
-        "status": "Success",
-        "message": f"Re-qualified {len(universe)} companies.",
-        "qualified": len(qualified_names),
-        "rejected": len(rejected_names),
-    }
-
-
 @app.post("/enrich/{company_name}")
 async def manual_enrich(company_name: str):
     """

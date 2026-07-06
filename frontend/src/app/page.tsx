@@ -85,7 +85,6 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState<string | null>(null);
-  const [requalifying, setRequalifying] = useState(false);
   const [stats, setStats] = useState({ total: 0, qualified: 0 });
 
   // View toggle
@@ -150,18 +149,6 @@ export default function Home() {
       await loadData();
     } catch (error) { alert(`Ingestion failed for ${name}`); }
     finally { setIngesting(null); }
-  };
-
-  const handleRequalifyAll = async () => {
-    if (!confirm("This will re-evaluate ALL companies against the hard filters (UK/Ireland + Tech). Continue?")) return;
-    setRequalifying(true);
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app'}/requalify-all`, { method: 'POST' });
-      const result = await response.json();
-      alert(`Re-qualification complete:\n${result.qualified} Qualified\n${result.rejected} Not a Fit\n${result.errors || 0} Errors`);
-      await loadData();
-    } catch (error) { alert("Re-qualification failed."); console.error(error); }
-    finally { setRequalifying(false); }
   };
 
   // ── Deal lifecycle handlers ──────────────────────────────────────────────
@@ -347,16 +334,6 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="nav-group">
-            <span className="group-label">Actions</span>
-            <button
-              className={`agent-btn requalify-btn ${requalifying ? 'loading' : ''}`}
-              onClick={handleRequalifyAll}
-              disabled={requalifying}
-            >
-              {requalifying ? 'Re-qualifying...' : 'Re-qualify All'}
-            </button>
-          </div>
         </nav>
 
         <div className="sidebar-footer">
@@ -804,8 +781,6 @@ export default function Home() {
         }
         .agent-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
         .agent-btn.loading { opacity: 0.5; cursor: wait; }
-        .requalify-btn { border-color: #2563eb; color: #2563eb; }
-        .requalify-btn:hover:not(:disabled) { background: #2563eb; color: #fff; }
 
         .sidebar-footer { padding: 1.25rem; border-top: 1px solid #e2e8f0; }
         .user-profile { display: flex; align-items: center; gap: 0.65rem; }
