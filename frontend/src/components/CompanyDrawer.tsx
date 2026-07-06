@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { CompanyTarget, ActivityEntry } from '../types';
 import { dealApi } from '../services/api';
+import InfoTip, { DEFS } from './InfoTip';
 
 interface CompanyDrawerProps {
   company: CompanyTarget | null;
@@ -156,11 +157,11 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                 <>
                   <SectionHeading title="Averroes Fit Score" />
                   <div className="score-breakdown">
-                    <ScoreBar label="Employee Growth" score={company.score_employee_growth} details={scoreDetails?.employee_growth} />
-                    <ScoreBar label="Revenue Growth" score={company.score_revenue_growth} details={scoreDetails?.revenue_growth} />
-                    <ScoreBar label="Revenue Size" score={company.score_revenue_size} details={scoreDetails?.revenue_size} />
-                    <ScoreBar label="Business Model Fit" score={company.score_business_fit} details={scoreDetails?.business_fit} />
-                    <ScoreBar label="Market Sentiment" score={company.score_market_sentiment} details={scoreDetails?.market_sentiment} />
+                    <ScoreBar label="Employee Growth" tip={DEFS.metricEmployeeGrowth} score={company.score_employee_growth} details={scoreDetails?.employee_growth} />
+                    <ScoreBar label="Revenue Growth" tip={DEFS.metricRevenueGrowth} score={company.score_revenue_growth} details={scoreDetails?.revenue_growth} />
+                    <ScoreBar label="Revenue Size" tip={DEFS.metricRevenueSize} score={company.score_revenue_size} details={scoreDetails?.revenue_size} />
+                    <ScoreBar label="Business Model Fit" tip={DEFS.metricBusinessFit} score={company.score_business_fit} details={scoreDetails?.business_fit} />
+                    <ScoreBar label="Market Sentiment" tip={DEFS.metricMarketSentiment} score={company.score_market_sentiment} details={scoreDetails?.market_sentiment} />
                   </div>
                 </>
               )}
@@ -188,7 +189,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.ch_incorporated_date && <DetailRow label="Incorporated" value={company.ch_incorporated_date} />}
                     {company.ch_sic_codes && <DetailRow label="SIC Codes" value={company.ch_sic_codes} />}
                     {company.filing_type && <DetailRow label="Filing Type" value={company.filing_type} />}
-                    {company.ch_pdf_path && (
+                    {company.ch_pdf_path ? (
                       <div className="detail-row">
                         <span className="detail-label">Filed Accounts</span>
                         <a
@@ -200,7 +201,19 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                           View CH Filing PDF
                         </a>
                       </div>
-                    )}
+                    ) : company.ch_company_number ? (
+                      <div className="detail-row">
+                        <span className="detail-label">Filed Accounts</span>
+                        <a
+                          href={`https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(company.ch_company_number)}/filing-history`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ch-pdf-link"
+                        >
+                          View Filings on Companies House
+                        </a>
+                      </div>
+                    ) : null}
                   </div>
                 </>
               )}
@@ -1183,7 +1196,7 @@ function DetailRow({ label, value, highlight, isLink }: { label: string; value?:
 
 
 /* ── Score Bar Component ── */
-function ScoreBar({ label, score, details }: { label: string; score?: number | null; details?: { value?: string; explanation?: string } }) {
+function ScoreBar({ label, tip, score, details }: { label: string; tip?: string; score?: number | null; details?: { value?: string; explanation?: string } }) {
   if (score == null) return null;
 
   const pct = Math.round(score * 100);
@@ -1193,7 +1206,7 @@ function ScoreBar({ label, score, details }: { label: string; score?: number | n
   return (
     <div className="score-bar-item">
       <div className="score-bar-header">
-        <span className="score-bar-label">{label}</span>
+        <span className="score-bar-label"><InfoTip label={label} tip={tip} /></span>
         <span className="score-bar-pct" style={{ color }}>{pct}</span>
       </div>
       <div className="score-bar-track">

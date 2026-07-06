@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand } from "../types";
 import { dealApi } from "../services/api";
 import CompanyDrawer from "../components/CompanyDrawer";
+import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -84,7 +85,6 @@ export default function Home() {
   const [pipeline, setPipeline] = useState<CompanyTarget[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState<string | null>(null);
   const [stats, setStats] = useState({ total: 0, qualified: 0 });
 
   // View toggle
@@ -139,17 +139,6 @@ export default function Home() {
       setLoading(false);
     }
   }
-
-  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking', name: string) => {
-    setIngesting(name);
-    try {
-      if (type === 'marketplace') await dealApi.ingestMarketplace(name);
-      else if (type === 'conference') await dealApi.ingestConference(name);
-      else if (type === 'ranking') await dealApi.ingestRanking(name);
-      await loadData();
-    } catch (error) { alert(`Ingestion failed for ${name}`); }
-    finally { setIngesting(null); }
-  };
 
   // ── Deal lifecycle handlers ──────────────────────────────────────────────
 
@@ -315,25 +304,6 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="nav-group">
-            <span className="group-label">Sourcing</span>
-            {[
-              { label: 'Acquire.com', type: 'marketplace' as const },
-              { label: 'Flippa', type: 'marketplace' as const },
-              { label: 'FT 1000', type: 'ranking' as const },
-              { label: 'SaaStock Europe', type: 'conference' as const },
-            ].map(src => (
-              <button
-                key={src.label}
-                className={`agent-btn ${ingesting === src.label ? 'loading' : ''}`}
-                onClick={() => handleIngest(src.type, src.label)}
-                disabled={!!ingesting}
-              >
-                {src.label} {ingesting === src.label && '...'}
-              </button>
-            ))}
-          </div>
-
         </nav>
 
         <div className="sidebar-footer">
@@ -419,7 +389,7 @@ export default function Home() {
         <div className="filter-bar">
           <div className="filter-row">
             <div className="filter-group">
-              <label className="filter-label">B2B SaaS Fit</label>
+              <label className="filter-label"><InfoTip label="B2B SaaS Fit" tip={DEFS.filterSaaS} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'high', l: 'B2B SaaS' }, { v: 'medium', l: 'B2B + Tech' }].map(o => (
                   <button key={o.v} className={`filter-btn ${filterSaaS === o.v ? 'active' : ''}`} onClick={() => { setFilterSaaS(o.v as any); setActiveViewId(null); }}>{o.l}</button>
@@ -427,7 +397,7 @@ export default function Home() {
               </div>
             </div>
             <div className="filter-group">
-              <label className="filter-label">Ownership</label>
+              <label className="filter-label"><InfoTip label="Ownership" tip={DEFS.filterOwnership} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'bootstrapped', l: 'Bootstrapped' }, { v: 'angel', l: 'Angel' }, { v: 'vc', l: 'VC-backed' }].map(o => (
                   <button key={o.v} className={`filter-btn ${filterOwnership === o.v ? 'active' : ''}`} onClick={() => { setFilterOwnership(o.v as any); setActiveViewId(null); }}>{o.l}</button>
@@ -435,7 +405,7 @@ export default function Home() {
               </div>
             </div>
             <div className="filter-group">
-              <label className="filter-label">Growth</label>
+              <label className="filter-label"><InfoTip label="Growth" tip={DEFS.filterGrowth} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'fast', l: 'Fast Growth' }, { v: 'steady', l: 'Growing' }].map(o => (
                   <button key={o.v} className={`filter-btn ${filterGrowth === o.v ? 'active' : ''}`} onClick={() => { setFilterGrowth(o.v as any); setActiveViewId(null); }}>{o.l}</button>
@@ -496,7 +466,7 @@ export default function Home() {
                   onDrop={(e) => handleDrop(e, stage)}
                 >
                   <div className="kanban-column-header" style={{ borderTopColor: stageColor(stage) }}>
-                    <span className="kanban-column-title">{STAGE_LABELS[stage]}</span>
+                    <span className="kanban-column-title"><InfoTip label={STAGE_LABELS[stage]} tip={STAGE_DEFS[stage]} /></span>
                     <span className="kanban-column-count">{stageDeals.length}</span>
                   </div>
                   <div className="kanban-cards">
@@ -776,21 +746,6 @@ export default function Home() {
         }
         .nav-item:hover { color: #2563eb; background: #eff6ff; }
         .nav-item.active { color: #2563eb; background: #eff6ff; }
-
-        .agent-btn {
-          background: transparent;
-          border: 1px solid #e2e8f0;
-          color: #64748b;
-          padding: 0.55rem 0.75rem;
-          border-radius: 8px;
-          text-align: left;
-          font-size: 0.8rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .agent-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
-        .agent-btn.loading { opacity: 0.5; cursor: wait; }
 
         .sidebar-footer { padding: 1.25rem; border-top: 1px solid #e2e8f0; }
         .user-profile { display: flex; align-items: center; gap: 0.65rem; }
@@ -1370,7 +1325,7 @@ export default function Home() {
         @media (max-width: 1024px) {
           .sidebar { width: 72px; }
           .sidebar .logo span, .sidebar .group-label, .sidebar .nav-item span:not(svg),
-          .sidebar .agent-btn, .sidebar .user-info { display: none !important; }
+          .sidebar .user-info { display: none !important; }
           .sidebar .logo { text-align: center; padding: 1.5rem 0; font-size: 0.9rem; }
           .main-content { margin-left: 72px; width: calc(100% - 72px); }
           .kanban-board { grid-template-columns: repeat(3, 1fr); }

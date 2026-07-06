@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { CompanyTarget, getRevenueBand } from "../../types";
 import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
+import InfoTip, { DEFS } from "../../components/InfoTip";
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -807,30 +808,30 @@ export default function Universe() {
             <table className="crm-table">
               <thead>
                 <tr>
-                  <th>Company</th>
-                  <th>Fit</th>
-                  <th>Website</th>
-                  <th>Sector</th>
-                  <th>Region</th>
-                  <th>Employees</th>
-                  <th>Founded</th>
-                  <th>Age</th>
-                  <th>Raised</th>
-                  <th>Valuation</th>
-                  <th>Revenue</th>
-                  <th>Band</th>
-                  <th>EBITDA</th>
-                  <th>Profit</th>
-                  <th>Assets</th>
-                  <th>Size</th>
-                  <th>Status</th>
-                  <th>Leadership</th>
-                  <th>Email</th>
-                  <th>LinkedIn</th>
-                  <th>Source</th>
-                  <th>Date Added</th>
-                  <th>Description</th>
-                  <th>Actions</th>
+                  <th><InfoTip label="Company" tip={DEFS.company} /></th>
+                  <th><InfoTip label="Fit" tip={DEFS.fit} /></th>
+                  <th><InfoTip label="Website" tip={DEFS.website} /></th>
+                  <th><InfoTip label="Sector" tip={DEFS.sector} /></th>
+                  <th><InfoTip label="Region" tip={DEFS.region} /></th>
+                  <th><InfoTip label="Employees" tip={DEFS.employees} /></th>
+                  <th><InfoTip label="Founded" tip={DEFS.founded} /></th>
+                  <th><InfoTip label="Age" tip={DEFS.age} /></th>
+                  <th><InfoTip label="Raised" tip={DEFS.raised} /></th>
+                  <th><InfoTip label="Valuation" tip={DEFS.valuation} /></th>
+                  <th><InfoTip label="Revenue (FY)" tip={DEFS.revenueFY} /></th>
+                  <th><InfoTip label="Revenue (Prev FY)" tip={DEFS.revenuePrevFY} /></th>
+                  <th><InfoTip label="Revenue Band" tip={DEFS.band} /></th>
+                  <th><InfoTip label="EBITDA" tip={DEFS.ebitda} /></th>
+                  <th><InfoTip label="Profit" tip={DEFS.profit} /></th>
+                  <th><InfoTip label="Assets" tip={DEFS.assets} /></th>
+                  <th><InfoTip label="Status" tip={DEFS.status} /></th>
+                  <th><InfoTip label="Leadership" tip={DEFS.leadership} /></th>
+                  <th><InfoTip label="Email" tip={DEFS.email} /></th>
+                  <th><InfoTip label="LinkedIn" tip={DEFS.linkedin} /></th>
+                  <th><InfoTip label="Source" tip={DEFS.source} /></th>
+                  <th><InfoTip label="Date Added" tip={DEFS.dateAdded} /></th>
+                  <th><InfoTip label="Description" tip={DEFS.description} /></th>
+                  <th><InfoTip label="Actions" tip={DEFS.actions} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -864,19 +865,29 @@ export default function Universe() {
                       <td className="num-cell">{company.total_raised_m ? `£${company.total_raised_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `£${company.valuation_estimate_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">
-                        {company.revenue_y1 ? `£${(company.revenue_y1 / 1e6).toFixed(1)}M`
-                          : company.revenue_m ? `£${company.revenue_m.toFixed(1)}M`
-                          : company.revenue_estimate_m ? (
-                            <span className="rev-estimate" title={`Estimated: ${company.revenue_source || 'proxy-based'} (${company.revenue_confidence || 'low'} confidence)`}>
-                              ~£{company.revenue_estimate_m.toFixed(1)}M <span className="est-tag">(est.)</span>
-                            </span>
-                          ) : '—'}
+                        {company.revenue_y1 ? (
+                          <span title={company.revenue_y1_date ? `Companies House filing, FY ending ${company.revenue_y1_date}` : 'Companies House filing'}>
+                            £{(company.revenue_y1 / 1e6).toFixed(1)}M
+                          </span>
+                        ) : company.revenue_m ? (
+                          <span title="PitchBook">£{company.revenue_m.toFixed(1)}M</span>
+                        ) : company.revenue_estimate_m ? (
+                          <span className="rev-estimate" title={`Estimated: ${company.revenue_source || 'proxy-based'} (${company.revenue_confidence || 'low'} confidence)`}>
+                            ~£{company.revenue_estimate_m.toFixed(1)}M <span className="est-tag">(est.)</span>
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="num-cell">
+                        {company.revenue_y2 ? (
+                          <span title={company.revenue_y2_date ? `Companies House filing, FY ending ${company.revenue_y2_date}` : 'Companies House filing'}>
+                            £{(company.revenue_y2 / 1e6).toFixed(1)}M
+                          </span>
+                        ) : '—'}
                       </td>
                       <td>{(() => { const band = getRevenueBand(company); return band ? <span className={`band-badge band-${band.toLowerCase().replace(/\s+/g, '-')}`}>{band}</span> : '—'; })()}</td>
                       <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.total_assets_y1 ? `£${(company.total_assets_y1 / 1e6).toFixed(1)}M` : '—'}</td>
-                      <td>{company.size_bucket ? <span className={`size-badge size-${company.size_bucket.toLowerCase()}`}>{company.size_bucket}</span> : '—'}</td>
                       <td><span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span></td>
                       <td>{company.contact_name || '—'}</td>
                       <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '—'}</td>
@@ -1265,11 +1276,6 @@ export default function Universe() {
         .status-badge.uploaded { background: #eff6ff; color: #2563eb; }
         .status-badge.scraped { background: #f1f5f9; color: #94a3b8; }
         .status-badge.not-a-fit { background: #fef2f2; color: #dc2626; }
-        .size-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-        .size-badge.size-micro { background: #f0fdf4; color: #166534; }
-        .size-badge.size-small { background: #dcfce7; color: #166534; }
-        .size-badge.size-mid { background: #fef3c7; color: #92400e; }
-        .size-badge.size-large { background: #fef2f2; color: #dc2626; }
         .band-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
         .band-badge.band-target-band { background: #dcfce7; color: #166534; }
         .band-badge.band-too-early { background: #fef3c7; color: #92400e; }
