@@ -13,6 +13,7 @@ from scrapers.conference_scraper import ConferenceScraper
 from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
 from scrapers.directory_scraper import DirectoryScraper
+from scrapers.network_scraper import NetworkScraper
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
@@ -59,6 +60,7 @@ conf_scraper = ConferenceScraper()
 market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
 directory_scraper = DirectoryScraper()
+network_scraper = NetworkScraper()
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
@@ -284,6 +286,31 @@ async def ingest_ranking(list_name: str = Query(..., description="Name of the ra
         "message": f"Scraped {len(raw_companies)} companies from {list_name}. Use SmartFill to score and enrich.",
         "gcs_path": gcs_filename
     }
+
+@app.post("/ingest/network")
+async def ingest_network(source_name: str = Query(..., description="Network source: 'EF Alumni' or 'Tech Nation'")):
+    """Scrape founder-network/alumni directory → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
+    if source_name not in network_scraper.get_supported_sources():
+        raise HTTPException(status_code=404, detail=f"Network source '{source_name}' not supported. Options: {network_scraper.get_supported_sources()}")
+    raw_companies = network_scraper.scrape_source(source_name)
+    if not raw_companies:
+        return {"status": "Complete", "count": 0, "message": f"No companies found from {source_name}."}
+    for c in raw_companies:
+        c["source"] = c.get("source", source_name)
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    success = bq_handler.save_targets(raw_companies)
+    if not success:
+        raise HTTPException(status_code=500, detail="Database save failed.")
+    gcs_filename = gcs_handler.save_companies(raw_companies, source_name.lower().replace(" ", "_"))
+    return {
+        "status": "Success",
+        "count": len(raw_companies),
+        "source": source_name,
+        "message": f"Scraped {len(raw_companies)} companies from {source_name}. Use SmartFill to score and enrich.",
+        "gcs_path": gcs_filename,
+    }
+
 
 @app.post("/ingest/directory")
 async def ingest_directory(source_name: str = Query("TheSaaSDirectory", description="Directory source to scrape"), max_pages: int = Query(20, description="Max pages to scrape")):

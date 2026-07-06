@@ -11,12 +11,12 @@ import InfoTip, { DEFS } from "../../components/InfoTip";
 
 interface SourceDef {
   name: string;
-  type: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'upload';
+  type: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network' | 'upload';
   label: string;
   description: string;
   icon: string;          // emoji
   canRefresh: boolean;
-  refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory';
+  refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network';
 }
 
 const ALL_SOURCES: SourceDef[] = [
@@ -35,6 +35,9 @@ const ALL_SOURCES: SourceDef[] = [
   { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'Deloitte\'s ranking of the 50 fastest-growing tech companies in the UK.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
   // Directories
   { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
+  // Founder networks / alumni
+  { name: 'EF Alumni', type: 'network', label: 'EF Alumni', description: 'Entrepreneur First portfolio directory — London B2B companies, 2014+ vintages. Founder-led secondaries angle.', icon: '🎓', canRefresh: true, refreshType: 'network' },
+  { name: 'Tech Nation', type: 'network', label: 'Tech Nation Future Fifty', description: 'Future Fifty cohort lists (2025, 2026) — UK scaleups at £5M+ revenue or 50% YoY growth.', icon: '🇬🇧', canRefresh: true, refreshType: 'network' },
 ];
 
 // ── Saved view type ─────────────────────────────────────────────────────────
@@ -160,12 +163,16 @@ export default function Universe() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking', name: string) => {
+  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking' | 'network', name: string) => {
     setIngesting(name);
     try {
       if (type === 'marketplace') await dealApi.ingestMarketplace(name);
       else if (type === 'conference') await dealApi.ingestConference(name);
       else if (type === 'ranking') await dealApi.ingestRanking(name);
+      else if (type === 'network') {
+        const res = await dealApi.ingestNetwork(name);
+        alert(`Found ${res.count} companies from ${name}.`);
+      }
       await loadData();
     } catch (error) { alert(`Ingestion failed for ${name}`); }
     finally { setIngesting(null); }
@@ -526,13 +533,14 @@ export default function Universe() {
             </div>
 
             {/* Source type sections */}
-            {(['marketplace', 'conference', 'ranking', 'directory'] as const).map(type => {
+            {(['marketplace', 'conference', 'ranking', 'directory', 'network'] as const).map(type => {
               const sources = ALL_SOURCES.filter(s => s.type === type);
               const typeLabels: Record<string, string> = {
                 marketplace: 'Marketplaces',
                 conference: 'Conferences & Events',
                 ranking: 'Rankings & Lists',
                 directory: 'Directories',
+                network: 'Founder Networks & Alumni',
               };
               return (
                 <div key={type} className="source-type-section">

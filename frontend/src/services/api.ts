@@ -44,6 +44,12 @@ export const dealApi = {
     return await response.json();
   },
 
+  async ingestNetwork(sourceName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/ingest/network?source_name=${encodeURIComponent(sourceName)}`, { method: 'POST' });
+    if (!response.ok) throw new Error('Network ingestion failed');
+    return await response.json();
+  },
+
   async ingestDirectory(sourceName: string, maxPages: number = 20): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/ingest/directory?source_name=${encodeURIComponent(sourceName)}&max_pages=${maxPages}`, { method: 'POST' });
     if (!response.ok) throw new Error('Directory ingestion failed');

@@ -1,3 +1,4 @@
+import re
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict
@@ -7,6 +8,19 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# SaaStock publishes machine-readable llms.txt indexes per edition —
+# sponsors + featured speakers with companies. Far more reliable than HTML scraping.
+SAASTOCK_EDITIONS = [
+    "https://saastock.com/europe/2025/llms.txt",
+    "https://saastock.com/europe/2024/llms.txt",
+    "https://saastock.com/europe/2023/llms.txt",
+    "https://saastock.com/europe/2022/llms.txt",
+]
+
+# Generic legal suffixes / non-company entries to skip in sponsor lists
+_SPONSOR_SKIP = {"failte ireland", "enterprise ireland", "dublin city council"}
+
+
 class ConferenceScraper:
     """
     Base Scraper for Conference Exhibitor/Sponsor Lists.
@@ -15,8 +29,8 @@ class ConferenceScraper:
         self.targets = [
             {
                 "name": "SaaStock Europe",
-                "url": "https://www.saastock.com/events/saastock-europe/",
-                "selector": ".sponsor-logo, .startup-logo" # Generalized selectors to start
+                "url": "https://saastock.com/europe/",
+                "selector": None  # handled by _scrape_saastock_llms (llms.txt archive)
             },
             {
                 "name": "London Tech Week",
@@ -38,9 +52,16 @@ class ConferenceScraper:
         if not target:
             logger.error(f"Conference {conf_name} not found in targets.")
             return []
-        
+
         logger.info(f"Scraping {conf_name} from {target['url']}...")
-        
+
+        # SaaStock: use the official llms.txt archive (multi-edition, machine-readable)
+        if "SaaStock" in conf_name:
+            companies = self._scrape_saastock_llms()
+            if companies:
+                return companies
+            logger.warning("SaaStock llms.txt scrape returned nothing — falling through.")
+
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(target['url'], headers=headers, timeout=5)
@@ -106,6 +127,82 @@ class ConferenceScraper:
             if "SaaStock" in conf_name:
                 return [{"name": "Artisan", "website": "https://artisan.co", "sector": "AI / B2B SaaS", "description": "Autonomous AI sales agents.", "source": conf_name}]
             return []
+
+    def _scrape_saastock_llms(self) -> List[Dict]:
+        """
+        Parse SaaStock's per-edition llms.txt files (official machine-readable indexes).
+        Extracts sponsor companies and featured speakers' companies across editions.
+        SaaStock Europe 2024 alone lists 392 sponsors — the richest conference source.
+        """
+        companies: Dict[str, Dict] = {}
+
+        for url in SAASTOCK_EDITIONS:
+            edition = "SaaStock Europe " + (re.search(r"/(20\d{2})/", url).group(1) if re.search(r"/(20\d{2})/", url) else "")
+            try:
+                resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+                resp.raise_for_status()
+            except Exception as e:
+                logger.warning(f"[SaaStock] Fetch failed for {url}: {e}")
+                continue
+
+            text = resp.text
+            found = 0
+
+            # ── Sponsors section: "- Company Name" bullets under "## Sponsors" ──
+            sponsors_match = re.search(r"## Sponsors\n(.*?)(?:\n## |\Z)", text, re.DOTALL)
+            if sponsors_match:
+                for line in sponsors_match.group(1).splitlines():
+                    line = line.strip()
+                    if not line.startswith("- "):
+                        continue
+                    name = line[2:].strip()
+                    # Trim legal suffixes for cleaner CH matching later
+                    name = re.sub(r"\s+(Ltd|LTD|Limited|LLC|Inc\.?|N\.V\.?|Pte|Pty|SL|UAB|GmbH|B\.V\.?)\.?$", "", name).strip()
+                    if not name or len(name) > 60 or name.lower() in _SPONSOR_SKIP:
+                        continue
+                    key = name.lower()
+                    if key not in companies:
+                        companies[key] = {
+                            "name": name,
+                            "website": "",
+                            "sector": "B2B SaaS",
+                            "description": f"Sponsor/partner at {edition}.",
+                            "source": edition,
+                            "status": "Scraped",
+                        }
+                        found += 1
+
+            # ── Featured speakers: "- Name, Role at Company — "talk"" bullets ──
+            speakers_match = re.search(r"## Featured speakers\n(.*?)(?:\n## |\Z)", text, re.DOTALL)
+            if speakers_match:
+                for line in speakers_match.group(1).splitlines():
+                    line = line.strip()
+                    if not line.startswith("- "):
+                        continue
+                    m = re.match(r"- (.+?), (.+?) at (.+?) —", line)
+                    if not m:
+                        continue
+                    person, role, comp = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+                    if not comp or len(comp) > 60:
+                        continue
+                    key = comp.lower()
+                    if key not in companies:
+                        companies[key] = {
+                            "name": comp,
+                            "website": "",
+                            "sector": "B2B SaaS",
+                            "description": f"{person} ({role}) spoke at {edition}.",
+                            "contact_name": person if any(k in role.lower() for k in ["founder", "ceo"]) else "",
+                            "source": edition,
+                            "status": "Scraped",
+                        }
+                        found += 1
+                    elif any(k in role.lower() for k in ["founder", "ceo"]) and not companies[key].get("contact_name"):
+                        companies[key]["contact_name"] = person
+
+            logger.info(f"[SaaStock] {edition}: +{found} new companies (running total {len(companies)})")
+
+        return list(companies.values())
 
     def get_all_targets(self) -> List[str]:
         return [t["name"] for t in self.targets]
