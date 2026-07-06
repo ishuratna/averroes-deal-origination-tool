@@ -94,6 +94,7 @@ export interface CompanyTarget {
   score_business_fit?: number;
   score_market_sentiment?: number;
   score_details?: string;
+  revenue_band?: string;
 }
 
 export interface ActivityEntry {
@@ -116,3 +117,17 @@ export interface PipelineMetrics {
 // Deal stages in pipeline order
 export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
 export type DealStage = typeof DEAL_STAGES[number];
+
+// Revenue band: Averroes sweet spot £2.5–10M = "Target Band".
+// Uses the stored band (computed by SmartFill, incl. AI-estimated revenue);
+// falls back to deriving from raw revenue data for rows not yet re-SmartFilled.
+export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: number; revenue_m?: number }): string | null {
+  if (company.revenue_band) return company.revenue_band;
+  let revM: number | null = null;
+  if (company.revenue_y1 != null && company.revenue_y1 > 0) revM = company.revenue_y1 / 1e6;
+  else if (company.revenue_m != null && company.revenue_m > 0) revM = company.revenue_m;
+  if (revM == null) return null;
+  if (revM < 2.5) return 'Too Early';
+  if (revM <= 10) return 'Target Band';
+  return 'Too Large';
+}

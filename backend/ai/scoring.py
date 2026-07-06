@@ -145,31 +145,48 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
     if rev_m is None or rev_m <= 0:
         return None
 
-    # Score: Averroes sweet spot is £5-30M
-    # Under £2M = 0.1-0.3
-    # £2-5M = 0.3-0.5
-    # £5-15M = 0.5-0.75 (good)
-    # £15-30M = 0.75-1.0 (sweet spot)
-    # £30-50M = 0.6-0.75 (acceptable but large end)
-    # Over £50M = 0.3 (too big but already qualified somehow)
-    if rev_m < 2:
-        score = 0.1 + (rev_m / 2) * 0.2
-    elif rev_m < 5:
-        score = 0.3 + ((rev_m - 2) / 3) * 0.2
-    elif rev_m < 15:
-        score = 0.5 + ((rev_m - 5) / 10) * 0.25
-    elif rev_m <= 30:
-        score = 0.75 + ((rev_m - 15) / 15) * 0.25
+    # Score: Averroes sweet spot is £2.5-10M (valuation ~£15-50M at ~6x)
+    # Continuous curve, full marks across the whole sweet spot:
+    # Under £1M = 0.1-0.3 (too early)
+    # £1-2.5M = 0.3-1.0 (approaching, rising)
+    # £2.5-10M = 1.0 (sweet spot / Target Band — all equal)
+    # £10-20M = 1.0 declining to 0.5 (above target)
+    # £20-50M = 0.5 declining to 0.3 (too large)
+    # Over £50M = 0.2 (too big but already qualified somehow)
+    if rev_m < 1:
+        score = 0.1 + rev_m * 0.2
+    elif rev_m < 2.5:
+        score = 0.3 + ((rev_m - 1) / 1.5) * 0.7
+    elif rev_m <= 10:
+        score = 1.0
+    elif rev_m <= 20:
+        score = 1.0 - ((rev_m - 10) / 10) * 0.5
     elif rev_m <= 50:
-        score = 0.75 - ((rev_m - 30) / 20) * 0.15
+        score = 0.5 - ((rev_m - 20) / 30) * 0.2
     else:
-        score = 0.3
+        score = 0.2
 
     return {
         "score": round(score, 3),
         "value": round(rev_m, 2),
+        "revenue_band": compute_revenue_band(rev_m),
         "explanation": f"Revenue ~£{rev_m:.1f}M ({source})",
     }
+
+
+def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
+    """
+    Classify revenue (£M) into the Averroes deal band.
+    Target Band = the £2.5-10M sweet spot. Informational only — does NOT
+    affect qualification (hard cap stays at £50M).
+    """
+    if rev_m is None or rev_m <= 0:
+        return None
+    if rev_m < 2.5:
+        return "Too Early"
+    if rev_m <= 10:
+        return "Target Band"
+    return "Too Large"
 
 
 def score_company(company: dict) -> Dict:
@@ -220,6 +237,9 @@ def score_company(company: dict) -> Dict:
                 scores[metric] = gemini_scores[metric]["score"]
                 details[metric] = gemini_scores[metric]
 
+    # Revenue band (informational — from whatever revenue the cascade found)
+    revenue_band = details.get("revenue_size", {}).get("revenue_band")
+
     # ── Compute composite ──
     available = len(scores)
     logger.info(f"[Scoring] '{company_name}' has {available}/5 metrics: {list(scores.keys())}")
@@ -233,6 +253,7 @@ def score_company(company: dict) -> Dict:
             "score_business_fit": scores.get("business_fit"),
             "score_market_sentiment": scores.get("market_sentiment"),
             "score_details": json.dumps(details),
+            "revenue_band": revenue_band,
             "metrics_available": available,
             "error": f"Insufficient data: only {available}/5 metrics available (need 4+)",
         }
@@ -248,6 +269,7 @@ def score_company(company: dict) -> Dict:
         "score_business_fit": scores.get("business_fit"),
         "score_market_sentiment": scores.get("market_sentiment"),
         "score_details": json.dumps(details),
+        "revenue_band": revenue_band,
         "metrics_available": available,
         "error": None,
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from 'next/link';
-import { CompanyTarget, ActivityEntry, DEAL_STAGES } from "../types";
+import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand } from "../types";
 import { dealApi } from "../services/api";
 import CompanyDrawer from "../components/CompanyDrawer";
 
@@ -528,6 +528,11 @@ export default function Home() {
                             </div>
                             <div className="kc-sector-row">
                               <p className="kc-sector">{company.sector || 'Tech'}</p>
+                              {getRevenueBand(company) && (
+                                <span className={`kc-band-badge band-${getRevenueBand(company)!.toLowerCase().replace(/\s+/g, '-')}`}>
+                                  {getRevenueBand(company)}
+                                </span>
+                              )}
                               {company.averroes_fit_score != null && (
                                 <span className={`kc-fit-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}>
                                   {Math.round(company.averroes_fit_score * 100)}
@@ -1112,6 +1117,10 @@ export default function Home() {
         .kc-fit-badge.high { background: #16a34a; }
         .kc-fit-badge.mid { background: #d97706; }
         .kc-fit-badge.low { background: #dc2626; }
+        .kc-band-badge { font-size: 0.58rem; font-weight: 800; padding: 0.1rem 0.4rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+        .kc-band-badge.band-target-band { background: #dcfce7; color: #166534; }
+        .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
+        .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
 
         .kc-metrics { display: flex; gap: 0.75rem; margin-bottom: 0.5rem; }
         .kc-metric { display: flex; flex-direction: column; }

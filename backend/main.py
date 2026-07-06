@@ -25,7 +25,7 @@ from ai.criteria import (
 )
 from ai.enrichment import EnrichmentAgent
 from services.companies_house_service import extract_ch_financials
-from ai.scoring import score_company
+from ai.scoring import score_company, compute_revenue_band
 from config.sourcing_config import SOURCING_CRITERIA
 
 # Load .env for local development; Cloud Run injects env vars directly
@@ -419,6 +419,20 @@ async def smartfill_company(company_name: str):
         except Exception as e:
             logger.error(f"Scoring failed for {company_name}: {e}", exc_info=True)
 
+    # Revenue band — from scoring if available, else derived from raw revenue data
+    # (so even Not-a-Fit companies with CH/PitchBook revenue get banded)
+    revenue_band = scoring_result.get("revenue_band")
+    if not revenue_band:
+        rev_m = None
+        try:
+            if ch_data.get("revenue_y1"):
+                rev_m = float(ch_data["revenue_y1"]) / 1_000_000
+            elif company_data.get("revenue_m"):
+                rev_m = float(company_data["revenue_m"])
+        except (ValueError, TypeError):
+            pass
+        revenue_band = compute_revenue_band(rev_m)
+
     # Step 5: Update BQ (size + CH financials + scoring)
     try:
         from google.cloud import bigquery as bq_lib
@@ -459,6 +473,7 @@ async def smartfill_company(company_name: str):
             score_business_fit = @score_business_fit,
             score_market_sentiment = @score_market_sentiment,
             score_details = @score_details,
+            revenue_band = @revenue_band,
             description = CASE WHEN (@desc != '' AND LENGTH(@desc) > LENGTH(IFNULL(description, ''))) THEN @desc ELSE description END
             WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
@@ -498,6 +513,7 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("score_business_fit", "FLOAT64", scoring_result.get("score_business_fit")),
             bq_lib.ScalarQueryParameter("score_market_sentiment", "FLOAT64", scoring_result.get("score_market_sentiment")),
             bq_lib.ScalarQueryParameter("score_details", "STRING", scoring_result.get("score_details") or ""),
+            bq_lib.ScalarQueryParameter("revenue_band", "STRING", revenue_band or ""),
             bq_lib.ScalarQueryParameter("desc", "STRING", description),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -553,6 +569,7 @@ async def smartfill_company(company_name: str):
         "score_business_fit": scoring_result.get("score_business_fit"),
         "score_market_sentiment": scoring_result.get("score_market_sentiment"),
         "score_details": scoring_result.get("score_details"),
+        "revenue_band": revenue_band,
         "metrics_available": scoring_result.get("metrics_available"),
     }
 

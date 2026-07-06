@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import Link from 'next/link';
-import { CompanyTarget } from "../../types";
+import { CompanyTarget, getRevenueBand } from "../../types";
 import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
 
@@ -818,6 +818,7 @@ export default function Universe() {
                   <th>Raised</th>
                   <th>Valuation</th>
                   <th>Revenue</th>
+                  <th>Band</th>
                   <th>EBITDA</th>
                   <th>Profit</th>
                   <th>Assets</th>
@@ -835,7 +836,7 @@ export default function Universe() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={23}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={24}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -863,6 +864,7 @@ export default function Universe() {
                       <td className="num-cell">{company.total_raised_m ? `£${company.total_raised_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.valuation_estimate_m ? `£${company.valuation_estimate_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.revenue_y1 ? `£${(company.revenue_y1 / 1e6).toFixed(1)}M` : company.revenue_m ? `£${company.revenue_m.toFixed(1)}M` : '—'}</td>
+                      <td>{(() => { const band = getRevenueBand(company); return band ? <span className={`band-badge band-${band.toLowerCase().replace(/\s+/g, '-')}`}>{band}</span> : '—'; })()}</td>
                       <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.total_assets_y1 ? `£${(company.total_assets_y1 / 1e6).toFixed(1)}M` : '—'}</td>
@@ -895,7 +897,7 @@ export default function Universe() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={23} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={24} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1260,6 +1262,10 @@ export default function Universe() {
         .size-badge.size-small { background: #dcfce7; color: #166534; }
         .size-badge.size-mid { background: #fef3c7; color: #92400e; }
         .size-badge.size-large { background: #fef2f2; color: #dc2626; }
+        .band-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+        .band-badge.band-target-band { background: #dcfce7; color: #166534; }
+        .band-badge.band-too-early { background: #fef3c7; color: #92400e; }
+        .band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
         .email-cell { font-size: 0.78rem; }
         .email-link { color: #2563eb; text-decoration: none; }
         .email-link:hover { text-decoration: underline; }
