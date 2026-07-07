@@ -34,8 +34,8 @@ class ConferenceScraper:
             },
             {
                 "name": "London Tech Week",
-                "url": "https://londontechweek.com/partners",
-                "selector": "a.partner-logo"
+                "url": "https://londontechweek.com/exhibitors",
+                "selector": None  # handled by _scrape_ltw (exhibitors + speakers, paginated)
             },
             {
                 "name": "SaaSiest",
@@ -62,6 +62,13 @@ class ConferenceScraper:
                 return companies
             logger.warning("SaaStock llms.txt scrape returned nothing — falling through.")
 
+        # London Tech Week: paginated exhibitor list + speaker list (server-rendered)
+        if "London Tech Week" in conf_name:
+            companies = self._scrape_ltw()
+            if companies:
+                return companies
+            logger.warning("LTW scrape returned nothing — falling through.")
+
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(target['url'], headers=headers, timeout=5)
@@ -83,35 +90,9 @@ class ConferenceScraper:
                         "status": "Scraped"
                     })
             
-            # --- Fallback / Demo Data if Scraping is Blocked ---
             if not companies:
-                logger.info(f"Using fallback data for {conf_name}")
-                if "SaaStock" in conf_name:
-                    companies = [
-                        {"name": "Artisan", "website": "https://artisan.co", "sector": "AI / B2B SaaS", "description": "Autonomous AI sales agents."},
-                        {"name": "DuploCloud", "website": "https://duplocloud.com", "sector": "DevOps", "description": "No-code DevOps automation."},
-                        {"name": "Dust", "website": "https://dust.tt", "sector": "AI", "description": "Custom internal AI assistants."},
-                        {"name": "Firebolt", "website": "https://firebolt.io", "sector": "Data", "description": "High-performance data warehouse."},
-                        {"name": "Cloudsmith", "website": "https://cloudsmith.com", "sector": "Supply Chain Security", "description": "Software supply chain management platform."},
-                        {"name": "Tines", "website": "https://tines.com", "sector": "Security Automation", "description": "Smart automation for security teams."},
-                        {"name": "Paddle", "website": "https://paddle.com", "sector": "Fintech / SaaS", "description": "Payments, tax, and subscriptions for B2B."},
-                        {"name": "Salesloft", "website": "https://salesloft.com", "sector": "Sales Engagement", "description": "The AI-powered revenue orchestration platform."},
-                        {"name": "Lattice", "website": "https://lattice.com", "sector": "HR Tech", "description": "People success platform for high-growth teams."},
-                        {"name": "Synthesia", "website": "https://synthesia.io", "sector": "AI / Video", "description": "AI video creation platform."}
-                    ]
-                elif "London Tech Week" in conf_name:
-                    companies = [
-                        {"name": "MatAlytics", "website": "https://matalytics.com", "sector": "Materials Tech", "description": "AI for materials science."},
-                        {"name": "Quantinuum", "website": "https://quantinuum.com", "sector": "Quantum Computing", "description": "World-leading quantum computing platform."},
-                        {"name": "Zego", "website": "https://zego.com", "sector": "InsurTech", "description": "Commercial motor insurance."},
-                        {"name": "Starling Bank", "website": "https://starlingbank.com", "sector": "Fintech", "description": "Leading UK digital challenger bank."},
-                        {"name": "Wayve", "website": "https://wayve.ai", "sector": "AI / Mobility", "description": "Embodied AI for autonomous driving."},
-                        {"name": "Syntheni", "website": "https://syntheni.ai", "sector": "AI / Biotech", "description": "Generative AI for synthetic biology."},
-                        {"name": "Huma", "website": "https://huma.com", "sector": "HealthTech", "description": "Digital health platform for predictive care."},
-                        {"name": "Faculty", "website": "https://faculty.ai", "sector": "AI Consultancy", "description": "Making AI work for every organization."},
-                        {"name": "Encord", "website": "https://encord.com", "sector": "AI Infrastructure", "description": "The operating system for AI data."}
-                    ]
-            
+                logger.warning(f"No companies scraped from {conf_name} — returning empty (no demo fallback).")
+
             # Standardize for the main API
             for c in companies:
                 c["source"] = conf_name
@@ -123,10 +104,126 @@ class ConferenceScraper:
             
         except Exception as e:
             logger.error(f"Failed to scrape {conf_name}: {str(e)}")
-            # Even on complete crash, provide fallback for demo continuity
-            if "SaaStock" in conf_name:
-                return [{"name": "Artisan", "website": "https://artisan.co", "sector": "AI / B2B SaaS", "description": "Autonomous AI sales agents.", "source": conf_name}]
             return []
+
+    def _scrape_ltw(self, max_exhibitor_pages: int = 15, max_speaker_pages: int = 12) -> List[Dict]:
+        """
+        London Tech Week 2026 (londontechweek.com, ASP.events platform — server-rendered).
+        Scrapes:
+          1. /exhibitors?page=N  — ~250 exhibitors with name + stand + description
+          2. /speaker-list?page=N — speakers as "Name / Role, Company"
+        """
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36'}
+        companies: Dict[str, Dict] = {}
+
+        # ── 1. Exhibitors (paginated) ──
+        for page in range(1, max_exhibitor_pages + 1):
+            url = f"https://londontechweek.com/exhibitors?page={page}"
+            try:
+                resp = requests.get(url, headers=headers, timeout=20)
+                resp.raise_for_status()
+            except Exception as e:
+                logger.warning(f"[LTW] Exhibitor page {page} fetch failed: {e}")
+                break
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            new_count = 0
+            # Exhibitor cards: heading links referencing 'exhibitor-list/'
+            for a in soup.find_all("a", href=True):
+                if "exhibitor-list/" not in a["href"]:
+                    continue
+                name = a.get_text(strip=True)
+                if not name or len(name) > 70:
+                    continue
+                key = name.lower()
+                if key in companies:
+                    continue
+
+                # Description: nearest following paragraph text in the card
+                description = ""
+                container = a.parent
+                for _ in range(4):
+                    if container is None:
+                        break
+                    p = container.find("p")
+                    if p and len(p.get_text(strip=True)) > 20:
+                        description = p.get_text(strip=True)
+                        break
+                    container = container.parent
+                if not description:
+                    # fall back to text after the heading
+                    txt = a.find_parent().get_text(" ", strip=True) if a.find_parent() else ""
+                    description = txt[:300]
+
+                companies[key] = {
+                    "name": name,
+                    "website": "",
+                    "sector": "Technology",
+                    "description": (description[:400] + "…") if len(description) > 400 else description or "Exhibitor at London Tech Week 2026.",
+                    "source": "London Tech Week 2026",
+                    "status": "Scraped",
+                }
+                new_count += 1
+
+            logger.info(f"[LTW] Exhibitor page {page}: +{new_count} (total {len(companies)})")
+            if new_count == 0:
+                break
+
+        # ── 2. Speakers (paginated) — "Role, Company" under each name ──
+        for page in range(1, max_speaker_pages + 1):
+            url = f"https://londontechweek.com/speaker-list?page={page}"
+            try:
+                resp = requests.get(url, headers=headers, timeout=20)
+                resp.raise_for_status()
+            except Exception as e:
+                logger.warning(f"[LTW] Speaker page {page} fetch failed: {e}")
+                break
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            new_count = 0
+            for a in soup.find_all("a", href=True):
+                if "/speakers/" not in a["href"]:
+                    continue
+                person = a.get_text(strip=True)
+                if not person or len(person) > 60:
+                    continue
+                # Role/company line follows the heading in the card
+                block = a.find_parent(["li", "div", "article"])
+                if not block:
+                    continue
+                block_text = block.get_text("\n", strip=True)
+                role_company = ""
+                for line in block_text.split("\n"):
+                    line = line.strip()
+                    if line and line != person and ", " in line and len(line) < 120:
+                        role_company = line
+                        break
+                if not role_company:
+                    continue
+                role, _, comp = role_company.rpartition(", ")
+                comp = comp.strip()
+                if not comp or len(comp) > 60 or comp.lower() in companies:
+                    # still capture founder contact on an existing record
+                    if comp and comp.lower() in companies and any(k in role.lower() for k in ["founder", "ceo"]) and not companies[comp.lower()].get("contact_name"):
+                        companies[comp.lower()]["contact_name"] = person
+                    continue
+
+                companies[comp.lower()] = {
+                    "name": comp,
+                    "website": "",
+                    "sector": "Technology",
+                    "description": f"{person} ({role}) spoke at London Tech Week 2026.",
+                    "contact_name": person if any(k in role.lower() for k in ["founder", "ceo"]) else "",
+                    "source": "London Tech Week 2026",
+                    "status": "Scraped",
+                }
+                new_count += 1
+
+            logger.info(f"[LTW] Speaker page {page}: +{new_count} (total {len(companies)})")
+            if new_count == 0:
+                break
+
+        return list(companies.values())
 
     def _scrape_saastock_llms(self) -> List[Dict]:
         """

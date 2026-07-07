@@ -726,31 +726,6 @@ async def manual_enrich(company_name: str):
     
     return {"status": "Success", "details": details}
 
-@app.post("/analyze/{company_name}")
-async def deep_dive_analysis(company_name: str):
-    """
-    Triggers a granular AI deep-dive on a target company.
-    In production, this would crawl news, social signals, and glassdoor.
-    """
-    logger.info(f"Triggering deep-dive for {company_name}...")
-    
-    # Simulated granular intelligence extraction
-    granular_intelligence = {
-        "culture_score": 0.85,
-        "talent_retention": "High",
-        "market_sentiment": "Positive",
-        "recent_news": "Recently expanded into the DACH region with a new Berlin office.",
-        "competitive_edge": "Proprietary ML models for data sync with 99.9% accuracy."
-    }
-    
-    # Update description in BQ with more detail
-    # For now, we return it to the UI as proof of agent action
-    return {
-        "status": "Success",
-        "company": company_name,
-        "granular_findings": granular_intelligence
-    }
-
 class OutreachSendRequest(BaseModel):
     to: str
     subject: str

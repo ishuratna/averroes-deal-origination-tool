@@ -20,19 +20,19 @@ interface SourceDef {
 }
 
 const ALL_SOURCES: SourceDef[] = [
-  // Marketplaces
-  { name: 'Acquire.com', type: 'marketplace', label: 'Acquire.com', description: 'Online marketplace for buying and selling startups and SaaS businesses.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
-  { name: 'Flippa', type: 'marketplace', label: 'Flippa', description: 'Marketplace for buying and selling online businesses, domains, and apps.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
-  { name: 'Microns', type: 'marketplace', label: 'Microns', description: 'Curated marketplace for profitable micro-SaaS and internet businesses.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
-  { name: 'SideProjectors', type: 'marketplace', label: 'SideProjectors', description: 'Marketplace for buying and selling side projects and small web apps.', icon: '🛒', canRefresh: true, refreshType: 'marketplace' },
+  // Marketplaces — real integrations pending (require auth/JS scraping); no demo data
+  { name: 'Acquire.com', type: 'marketplace', label: 'Acquire.com', description: 'SaaS acquisition marketplace. Integration pending — requires authenticated scraping (Playwright).', icon: '🛒', canRefresh: false },
+  { name: 'Flippa', type: 'marketplace', label: 'Flippa', description: 'Online business marketplace. Integration pending — JS-rendered site / rate-limited API.', icon: '🛒', canRefresh: false },
+  { name: 'Microns', type: 'marketplace', label: 'Microns', description: 'Micro-SaaS marketplace. Integration pending — client-rendered listings.', icon: '🛒', canRefresh: false },
+  { name: 'SideProjectors', type: 'marketplace', label: 'SideProjectors', description: 'Side-project marketplace. Integration pending — client-rendered search.', icon: '🛒', canRefresh: false },
   // Conferences
-  { name: 'SaaStock Europe', type: 'conference', label: 'SaaStock Europe', description: 'Europe\'s largest SaaS conference. Exhibitors and sponsors scraped for targets.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
-  { name: 'London Tech Week', type: 'conference', label: 'London Tech Week', description: 'UK\'s flagship tech event featuring startups and scale-ups.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
-  { name: 'SaaSiest', type: 'conference', label: 'SaaSiest', description: 'Nordic/European B2B SaaS conference with emerging growth companies.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  { name: 'SaaStock Europe', type: 'conference', label: 'SaaStock Europe', description: 'Sponsors + founder speakers from the official machine-readable archives, editions 2022–2025 (Dublin).', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  { name: 'London Tech Week', type: 'conference', label: 'London Tech Week 2026', description: 'Full 2026 exhibitor list (~250 companies) + speaker companies, scraped from the official site.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
+  { name: 'SaaSiest', type: 'conference', label: 'SaaSiest', description: 'Nordic/European B2B SaaS conference. Generic partner-page scrape — may return few results.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
   // Rankings
-  { name: 'FT 1000', type: 'ranking', label: 'FT 1000', description: 'Financial Times ranking of Europe\'s fastest-growing companies.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
-  { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'Annual ranking of the UK\'s top 100 most disruptive startups.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
-  { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'Deloitte\'s ranking of the 50 fastest-growing tech companies in the UK.', icon: '📊', canRefresh: true, refreshType: 'ranking' },
+  { name: 'FT 1000', type: 'ranking', label: 'FT 1000', description: 'FT ranking of Europe\'s fastest-growing companies. Not scrapeable — paywalled interactive table.', icon: '📊', canRefresh: false },
+  { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'The UK\'s top 100 new businesses, scraped live from startups.co.uk (latest year).', icon: '📊', canRefresh: true, refreshType: 'ranking' },
+  { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'UK\'s 50 fastest-growing tech companies. Not scrapeable — JS-rendered page.', icon: '📊', canRefresh: false },
   // Directories
   { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
   // Founder networks / alumni

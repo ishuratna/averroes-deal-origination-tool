@@ -62,12 +62,6 @@ export const dealApi = {
     return await response.json();
   },
 
-  async analyzeCompany(companyName: string): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/analyze/${encodeURIComponent(companyName)}`, { method: 'POST' });
-    if (!response.ok) throw new Error('Deep-dive analysis failed');
-    return await response.json();
-  },
-
   async uploadFile(file: File): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
