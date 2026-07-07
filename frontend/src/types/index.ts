@@ -121,6 +121,39 @@ export interface PipelineMetrics {
 export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
 export type DealStage = typeof DEAL_STAGES[number];
 
+// ── Investor (LP) database ──────────────────────────────────────────────────
+
+export interface Investor {
+  investor_id?: string;
+  name: string;
+  investor_type?: string;
+  aum_m?: number;
+  ticket_min_m?: number;
+  ticket_max_m?: number;
+  region?: string;
+  hq_city?: string;
+  hq_country?: string;
+  website?: string;
+  description?: string;
+  contact_name?: string;
+  contact_email?: string;
+  linkedin_url?: string;
+  source?: string;
+  source_companies?: string;
+  status?: string;
+  lp_fit_score?: number;
+  score_geography?: number;
+  score_pe_appetite?: number;
+  score_ticket_fit?: number;
+  score_tech_affinity?: number;
+  fit_details?: string;
+  notes?: string;
+  ingested_at?: string;
+  updated_at?: string;
+}
+
+export const INVESTOR_STAGES = ['Identified', 'Researched', 'Contacted', 'Meeting', 'Committed', 'Passed'] as const;
+
 // Revenue band: Averroes sweet spot £2.5–10M = "Target Band".
 // Uses the stored band (computed by SmartFill, incl. AI-estimated revenue);
 // falls back to deriving from raw revenue data for rows not yet re-SmartFilled.

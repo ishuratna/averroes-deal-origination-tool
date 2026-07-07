@@ -72,6 +72,44 @@ export const dealApi = {
     return data;
   },
 
+  // ── Investor (LP) database ──
+  async getInvestors(): Promise<any[]> {
+    const response = await fetch(`${API_BASE_URL}/investors`);
+    if (!response.ok) throw new Error('Failed to load investors');
+    return await response.json();
+  },
+
+  async mineInvestors(minFit: number = 0.4): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/mine?min_fit=${minFit}`, { method: 'POST' });
+    if (!response.ok) throw new Error('Investor mining failed');
+    return await response.json();
+  },
+
+  async investorFill(name: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investorfill/${encodeURIComponent(name)}`, { method: 'POST' });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'InvestorFill failed');
+    }
+    return await response.json();
+  },
+
+  async updateInvestorStatus(name: string, status: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/status`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error('Investor status update failed');
+    return await response.json();
+  },
+
+  async addInvestorNote(name: string, note: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/notes`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
+    });
+    if (!response.ok) throw new Error('Investor note failed');
+    return await response.json();
+  },
+
   async getSmartFillEligible(): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/smartfill/eligible`);
     if (!response.ok) throw new Error('Failed to load SmartFill eligibility');

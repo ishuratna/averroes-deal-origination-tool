@@ -14,6 +14,8 @@ from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
 from scrapers.directory_scraper import DirectoryScraper
 from scrapers.network_scraper import NetworkScraper
+from storage.investor_handler import InvestorBQHandler, INVESTOR_STAGES
+from ai.investor_fill import investor_fill, mine_investors_from_companies
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
@@ -61,6 +63,7 @@ market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
 directory_scraper = DirectoryScraper()
 network_scraper = NetworkScraper()
+investor_handler = InvestorBQHandler(bq_handler.client, bq_handler.project_id, dataset_id=BQ_DATASET)
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
@@ -852,6 +855,81 @@ class CriteriaApplyRequest(BaseModel):
     criteria: dict
     updated_by: Optional[str] = "Ishu Ratna"
     requalify: Optional[bool] = True
+
+
+# ── Investor (LP) Database Endpoints ─────────────────────────────────────────
+
+class InvestorStatusRequest(BaseModel):
+    status: str
+
+class InvestorNoteRequest(BaseModel):
+    note: str
+
+
+@app.get("/investors")
+async def get_investors():
+    """All investors (LP universe), sorted by fit score."""
+    return investor_handler.get_all()
+
+
+@app.post("/investors/mine")
+async def mine_investors(min_fit: float = Query(0.4, description="Minimum company fit score to mine investors from")):
+    """
+    Extract investors from high-fit companies' PitchBook data
+    (active/former investors). Raw save — NO AI. Use InvestorFill per investor.
+    """
+    universe = bq_handler.get_universe()
+    candidates = mine_investors_from_companies(universe, min_fit_score=min_fit)
+    inserted = investor_handler.save_investors(candidates)
+    return {
+        "status": "Success",
+        "found": len(candidates),
+        "inserted_new": inserted,
+        "message": f"Mined {len(candidates)} investors from high-fit companies ({inserted} new). Use InvestorFill to research and score each.",
+    }
+
+
+@app.post("/investorfill/{investor_name}")
+async def investorfill(investor_name: str):
+    """
+    InvestorFill: Gemini + Google Search researches the investor —
+    type, AUM, ticket size, contacts + 4-criteria LP fit score.
+    """
+    # Pull existing context (portfolio overlap helps the search)
+    context = {}
+    try:
+        for inv in investor_handler.get_all():
+            if inv.get("name", "").lower() == investor_name.lower():
+                context = inv
+                break
+    except Exception:
+        pass
+
+    result = investor_fill(investor_name, context)
+    if result.get("error"):
+        raise HTTPException(status_code=422, detail=result["error"])
+
+    if not investor_handler.update_enrichment(investor_name, result):
+        raise HTTPException(status_code=500, detail="Database update failed")
+
+    return {"status": "Success", "investor": investor_name, **result}
+
+
+@app.put("/investors/{investor_name}/status")
+async def update_investor_status(investor_name: str, req: InvestorStatusRequest):
+    """Move an investor through the relationship pipeline."""
+    if req.status not in INVESTOR_STAGES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {INVESTOR_STAGES}")
+    if not investor_handler.update_status(investor_name, req.status):
+        raise HTTPException(status_code=500, detail="Status update failed")
+    return {"status": "Success", "investor": investor_name, "new_status": req.status}
+
+
+@app.post("/investors/{investor_name}/notes")
+async def add_investor_note(investor_name: str, req: InvestorNoteRequest):
+    if not investor_handler.add_note(investor_name, req.note):
+        raise HTTPException(status_code=500, detail="Note save failed")
+    return {"status": "Success"}
 
 
 @app.get("/criteria")
