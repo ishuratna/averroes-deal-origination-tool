@@ -94,6 +94,30 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getInvestorFillEligible(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investorfill/eligible`);
+    if (!response.ok) throw new Error('Failed to load InvestorFill eligibility');
+    return await response.json();
+  },
+
+  async draftInvestorOutreach(name: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/outreach/draft/${encodeURIComponent(name)}`, { method: 'POST' });
+    if (!response.ok) throw new Error('LP outreach draft failed');
+    return await response.json();
+  },
+
+  async sendInvestorOutreach(to: string, subject: string, body: string, investorName?: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/outreach/send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, body, investor_name: investorName }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'LP outreach send failed');
+    }
+    return await response.json();
+  },
+
   async uploadInvestorFile(file: File): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);

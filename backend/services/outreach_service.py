@@ -134,6 +134,97 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
         return _fallback_template(company_data)
 
 
+def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
+    """
+    Draft a personalised LP introduction email using stored investor data
+    (PitchBook fields + InvestorFill research). No Google Search — saves credits.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    name = investor.get("name", "")
+    contact_name = investor.get("contact_name", "")
+    contact_email = investor.get("contact_email", "")
+
+    context_parts = []
+    for label, key in [
+        ("Type", "investor_type"), ("Description", "description"),
+        ("HQ", "hq_country"), ("AUM ($M)", "aum_m"),
+        ("PE strategy preferences", "strategy_preferences"),
+        ("Geographic mandate", "geo_preferences"),
+        ("Open to first-time funds", "open_to_first_time"),
+        ("PE fund commitments", "num_pe_commitments"),
+        ("Portfolio overlap with our pipeline", "source_companies"),
+        ("Contact title", "contact_title"),
+    ]:
+        val = investor.get(key)
+        if val not in (None, ""):
+            context_parts.append(f"{label}: {val}")
+    lp_context = "\n".join(context_parts) if context_parts else f"Investor: {name}"
+
+    fallback = {
+        "subject": f"Introduction — Averroes Capital (UK lower-mid-market software)",
+        "body": (f"Dear {contact_name.split()[0] if contact_name.strip() else 'colleague'},\n\n"
+                 f"I lead investor relations at Averroes Capital, a UK private equity firm focused on founder-led "
+                 f"B2B software companies with £2.5–10M revenue — a segment we believe is structurally underserved.\n\n"
+                 f"Given {name}'s activity in private markets, I thought a brief introduction could be mutually interesting. "
+                 f"Would you be open to a short call in the coming weeks?\n\n"
+                 f"Best regards,\nBeatrice Carrara\nPartner, Averroes Capital"),
+        "to": contact_email or "",
+        "contact_name": contact_name or "",
+        "investor": name,
+    }
+    if not api_key:
+        return fallback
+
+    prompt = f"""
+    You are Beatrice Carrara, Partner at Averroes Capital — a UK lower-mid-market private
+    equity firm investing in founder-led B2B SaaS and software companies (£2.5-10M revenue).
+
+    Write a SHORT, professional LP introduction email to {contact_name or 'the principal'}
+    at {name} — a potential LIMITED PARTNER (investor in our fund / co-investor in deals).
+
+    INVESTOR INTELLIGENCE (from our database — use to personalise):
+    {lp_context}
+
+    EMAIL GUIDELINES:
+    - This is INVESTOR RELATIONS, not deal sourcing: we are inviting them to hear about
+      our strategy, not pitching a specific transaction.
+    - Reference something SPECIFIC about them: their strategy preferences (e.g. buyout/growth),
+      geographic mandate, or portfolio overlap with our pipeline if present.
+    - Position Averroes: disciplined UK lower-mid-market software specialist; proprietary
+      AI-driven origination covering the whole UK/Ireland universe; founder-friendly.
+    - Length: 5-7 sentences. Senior investors skim.
+    - No hyperbole, no "exciting opportunity" language. Understated and credible.
+    - CTA: offer a short introductory call or to share our strategy note.
+    - Sign off: Beatrice Carrara, Partner, Averroes Capital
+    - No email headers — just subject and body.
+
+    Return ONLY valid JSON: {{"subject": "...", "body": "..."}} with \\n for line breaks.
+    """
+
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        text = (response.text or "").strip()
+        if not text:
+            return fallback
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(text)
+        return {
+            "subject": result.get("subject", fallback["subject"]),
+            "body": result.get("body", fallback["body"]),
+            "to": contact_email or "",
+            "contact_name": contact_name or "",
+            "investor": name,
+        }
+    except Exception as e:
+        logger.error(f"LP outreach draft failed for {name}: {e}")
+        return fallback
+
+
 def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
     """
     Send an email via Gmail SMTP using App Password.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { Investor, INVESTOR_STAGES } from "../../types";
 import { dealApi } from "../../services/api";
@@ -39,6 +39,18 @@ export default function Investors() {
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [showSources, setShowSources] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // Bulk InvestorFill
+  const [bulkEligibility, setBulkEligibility] = useState<any | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string; ok: number; failed: number } | null>(null);
+  const bulkCancelRef = useRef(false);
+
+  // LP Outreach
+  const [outreachDraft, setOutreachDraft] = useState<any | null>(null);
+  const [outreachLoading, setOutreachLoading] = useState<string | null>(null);
+  const [outreachSending, setOutreachSending] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -79,6 +91,82 @@ export default function Investors() {
       await loadData();
     } catch (e: any) { alert(`Upload failed: ${e.message}`); }
     finally { setUploading(false); }
+  };
+
+  // ── Bulk InvestorFill ──
+  const openBulkFill = async () => {
+    setBulkLoading(true);
+    try {
+      const data = await dealApi.getInvestorFillEligible();
+      setBulkEligibility(data);
+    } catch (e) { alert('Failed to load eligibility — is the backend deployed?'); }
+    finally { setBulkLoading(false); }
+  };
+
+  const runBulkFill = async () => {
+    if (!bulkEligibility?.eligible_names?.length) return;
+    const names: string[] = bulkEligibility.eligible_names;
+    bulkCancelRef.current = false;
+    setBulkRunning(true);
+    let ok = 0, failed = 0;
+    for (let i = 0; i < names.length; i++) {
+      if (bulkCancelRef.current) break;
+      setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
+      try { await dealApi.investorFill(names[i]); ok++; }
+      catch (e) { failed++; console.error(`Bulk InvestorFill failed for ${names[i]}`, e); }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    setBulkProgress({ done: ok + failed, total: names.length, current: '', ok, failed });
+    setBulkRunning(false);
+    await loadData();
+  };
+
+  const closeBulkModal = () => {
+    if (bulkRunning) {
+      if (!confirm('A bulk run is in progress. Cancel it?')) return;
+      bulkCancelRef.current = true;
+    }
+    setBulkEligibility(null);
+    setBulkProgress(null);
+  };
+
+  // ── LP Outreach ──
+  const openOutreach = async (inv: Investor) => {
+    setOutreachLoading(inv.name);
+    try {
+      const draft = await dealApi.draftInvestorOutreach(inv.name);
+      setOutreachDraft({ ...draft, investor: inv.name });
+    } catch (e: any) { alert(`Draft failed: ${e.message}`); }
+    finally { setOutreachLoading(null); }
+  };
+
+  const sendOutreach = async () => {
+    if (!outreachDraft?.to) { alert('No recipient email — run InvestorFill to find contacts first.'); return; }
+    setOutreachSending(true);
+    try {
+      await dealApi.sendInvestorOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.investor);
+      alert('Sent. Stage moved to Contacted.');
+      setOutreachDraft(null);
+      await loadData();
+    } catch (e: any) { alert(`Send failed: ${e.message}`); }
+    finally { setOutreachSending(false); }
+  };
+
+  // ── CSV export of the current filtered view ──
+  const exportCsv = () => {
+    const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_pe_commitments', 'total_commitments_m', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'source', 'source_companies', 'status'];
+    const esc = (v: any) => {
+      const s = v == null ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [cols.join(','), ...filtered.map(inv => cols.map(c => esc((inv as any)[c])).join(','))];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `averroes_lp_shortlist_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleStatusChange = async (name: string, status: string) => {
@@ -140,6 +228,12 @@ export default function Investors() {
             <button className="sources-btn" onClick={() => setShowSources(true)}>
               Sources
               <span className="sources-badge">{Array.from(new Set(investors.map(i => i.source).filter(Boolean))).length}</span>
+            </button>
+            <button className="export-btn" onClick={exportCsv} disabled={filtered.length === 0}>
+              ⬇ Export ({filtered.length})
+            </button>
+            <button className="bulkfill-btn" onClick={openBulkFill} disabled={bulkLoading || bulkRunning}>
+              {bulkLoading ? 'Checking…' : bulkRunning ? 'Running…' : '⚡ Bulk InvestorFill'}
             </button>
             <button className="mine-btn" onClick={handleMine} disabled={mining}>
               {mining ? 'Mining…' : '⛏ Mine from High-Fit Companies'}
@@ -242,9 +336,14 @@ export default function Investors() {
                         </select>
                       </td>
                       <td>
-                        <button className="fill-btn" disabled={filling === inv.name} onClick={() => handleFill(inv.name)}>
-                          {filling === inv.name ? '…' : 'InvestorFill'}
-                        </button>
+                        <div className="action-btns">
+                          <button className="fill-btn" disabled={filling === inv.name} onClick={() => handleFill(inv.name)}>
+                            {filling === inv.name ? '…' : 'InvestorFill'}
+                          </button>
+                          <button className="outreach-btn" disabled={outreachLoading === inv.name} onClick={() => openOutreach(inv)}>
+                            {outreachLoading === inv.name ? '…' : 'Outreach'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -337,6 +436,80 @@ export default function Investors() {
           </div>
         );
       })()}
+
+      {/* ── Bulk InvestorFill modal ── */}
+      {bulkEligibility && (
+        <div className="modal-overlay" onClick={closeBulkModal}>
+          <div className="fill-modal" onClick={e => e.stopPropagation()}>
+            <div className="fill-modal-header">
+              <h3>Bulk InvestorFill</h3>
+              <button className="modal-close" onClick={closeBulkModal}>&times;</button>
+            </div>
+
+            {!bulkRunning && !bulkProgress && (
+              <>
+                <div className="fill-scores" style={{ marginTop: '0.6rem' }}>
+                  <div className="fill-score-row"><span>Total investors</span><b>{bulkEligibility.total_investors}</b></div>
+                  <div className="fill-score-row"><span>Excluded — mandate outside UK/EU/ME</span><b>−{bulkEligibility.excluded_outside_mandate}</b></div>
+                  <div className="fill-score-row"><span>Excluded — no relevant PE strategy</span><b>−{bulkEligibility.excluded_no_relevant_strategy}</b></div>
+                  <div className="fill-score-row"><span>Skipped — already researched</span><b>−{bulkEligibility.skipped_already_researched}</b></div>
+                  <div className="fill-score-row composite"><span>Eligible for InvestorFill</span><b>{bulkEligibility.eligible_count}</b></div>
+                </div>
+                <p className="fill-desc" style={{ marginTop: '0.7rem' }}>
+                  1 AI call per investor → ~{bulkEligibility.estimate.total_gemini_calls} calls, token cost ≈ ${bulkEligibility.estimate.token_cost_usd_typical}. {bulkEligibility.estimate.grounding_note}
+                </p>
+                <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end' }}>
+                  <button className="modal-ok" style={{ width: 'auto', background: '#fff', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={closeBulkModal}>Cancel</button>
+                  <button className="modal-ok" style={{ width: 'auto', background: '#16a34a' }} onClick={runBulkFill} disabled={bulkEligibility.eligible_count === 0}>
+                    Start — {bulkEligibility.eligible_count} investors
+                  </button>
+                </div>
+              </>
+            )}
+
+            {(bulkRunning || bulkProgress) && bulkProgress && (
+              <div style={{ marginTop: '0.8rem' }}>
+                <div className="bulk-bar-track"><div className="bulk-bar-fill" style={{ width: `${bulkProgress.total ? Math.round((bulkProgress.done / bulkProgress.total) * 100) : 0}%` }} /></div>
+                <p className="fill-desc">
+                  {bulkRunning
+                    ? <>Researching <b>{bulkProgress.current}</b> ({bulkProgress.done + 1}/{bulkProgress.total}) · {bulkProgress.ok} done · {bulkProgress.failed} failed</>
+                    : <>Finished: {bulkProgress.ok} succeeded · {bulkProgress.failed} failed of {bulkProgress.total}</>}
+                </p>
+                {bulkRunning
+                  ? <button className="modal-ok" style={{ background: '#fff', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={() => { bulkCancelRef.current = true; }}>Stop after current</button>
+                  : <button className="modal-ok" onClick={closeBulkModal}>Close</button>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── LP Outreach modal ── */}
+      {outreachDraft && (
+        <div className="modal-overlay" onClick={() => setOutreachDraft(null)}>
+          <div className="fill-modal" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
+            <div className="fill-modal-header">
+              <h3>LP Outreach — {outreachDraft.investor}</h3>
+              <button className="modal-close" onClick={() => setOutreachDraft(null)}>&times;</button>
+            </div>
+            <label className="or-label">To</label>
+            <input className="or-input" value={outreachDraft.to || ''} placeholder="No email on file — run InvestorFill first"
+              onChange={e => setOutreachDraft({ ...outreachDraft, to: e.target.value })} />
+            <label className="or-label">Subject</label>
+            <input className="or-input" value={outreachDraft.subject || ''}
+              onChange={e => setOutreachDraft({ ...outreachDraft, subject: e.target.value })} />
+            <label className="or-label">Body</label>
+            <textarea className="or-textarea" rows={11} value={outreachDraft.body || ''}
+              onChange={e => setOutreachDraft({ ...outreachDraft, body: e.target.value })} />
+            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '0.8rem' }}>
+              <button className="modal-ok" style={{ width: 'auto', background: '#fff', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={() => setOutreachDraft(null)}>Cancel</button>
+              <button className="modal-ok" style={{ width: 'auto' }} onClick={sendOutreach} disabled={outreachSending || !outreachDraft.to}>
+                {outreachSending ? 'Sending…' : 'Send & mark Contacted'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* InvestorFill result modal */}
       {fillResult && (
@@ -449,6 +622,20 @@ export default function Investors() {
         .strat-none { color: #dc2626; font-weight: 600; }
         .ft-yes { background: #dcfce7; color: #166534; font-weight: 800; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 4px; }
         .ft-no { background: #f1f5f9; color: #94a3b8; font-weight: 700; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 4px; }
+        .action-btns { display: flex; gap: 0.35rem; }
+        .outreach-btn { background: #fff; border: 1px solid #2563eb; color: #2563eb; border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+        .outreach-btn:hover:not(:disabled) { background: #eff6ff; }
+        .export-btn { background: #fff; border: 1px solid #e2e8f0; color: #475569; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+        .export-btn:hover:not(:disabled) { border-color: #16a34a; color: #16a34a; }
+        .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .bulkfill-btn { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+        .bulkfill-btn:hover:not(:disabled) { background: #1d4ed8; }
+        .bulkfill-btn:disabled { opacity: 0.6; cursor: wait; }
+        .bulk-bar-track { height: 10px; background: #f1f5f9; border-radius: 6px; overflow: hidden; margin-bottom: 0.6rem; }
+        .bulk-bar-fill { height: 100%; background: #16a34a; transition: width 0.4s ease; }
+        .or-label { display: block; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; margin: 0.6rem 0 0.2rem 0; }
+        .or-input { width: 100%; padding: 0.5rem 0.7rem; border: 1px solid #e2e8f0; border-radius: 7px; font-size: 0.8rem; }
+        .or-textarea { width: 100%; padding: 0.6rem 0.7rem; border: 1px solid #e2e8f0; border-radius: 7px; font-size: 0.8rem; line-height: 1.5; resize: vertical; font-family: inherit; }
         .stage-select { border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.3rem 0.4rem; font-size: 0.72rem; font-weight: 700; background: #fff; cursor: pointer; }
         .fill-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .fill-btn:hover:not(:disabled) { background: #1d4ed8; }

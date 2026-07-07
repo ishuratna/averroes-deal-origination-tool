@@ -929,6 +929,50 @@ async def upload_investor_file(file: UploadFile = File(...)):
     }
 
 
+@app.get("/investorfill/eligible")
+async def investorfill_eligible(skip_researched: bool = Query(True, description="Skip investors already researched (have a fit score or moved past Identified)")):
+    """
+    Pre-flight for bulk InvestorFill. Zero AI: excludes only EXPLICIT negatives
+    from PitchBook data (mandate outside UK/Europe/ME, or stated strategy
+    preferences with none relevant). Unknowns pass — absence of data is not a no.
+    """
+    investors = investor_handler.get_all()
+    total = len(investors)
+
+    excluded_mandate = 0
+    excluded_strategy = 0
+    skipped_researched = 0
+    eligible = []
+
+    for inv in investors:
+        if (inv.get("geo_preferences") or "") == "Outside mandate":
+            excluded_mandate += 1
+            continue
+        if (inv.get("strategy_preferences") or "") == "None relevant":
+            excluded_strategy += 1
+            continue
+        if skip_researched and (inv.get("lp_fit_score") is not None or (inv.get("status") or "Identified") != "Identified"):
+            skipped_researched += 1
+            continue
+        eligible.append(inv.get("name"))
+
+    n = len(eligible)
+    return {
+        "total_investors": total,
+        "excluded_outside_mandate": excluded_mandate,
+        "excluded_no_relevant_strategy": excluded_strategy,
+        "skipped_already_researched": skipped_researched,
+        "eligible_count": n,
+        "eligible_names": eligible,
+        "estimate": {
+            "gemini_calls_per_investor": 1,
+            "total_gemini_calls": n,
+            "token_cost_usd_typical": round(n * 0.006, 2),
+            "grounding_note": "1 grounded search call per investor. First ~1,500/day free; beyond that $35/1K adds ~$0.035/investor.",
+        },
+    }
+
+
 @app.post("/investorfill/{investor_name}")
 async def investorfill(investor_name: str):
     """
@@ -953,6 +997,42 @@ async def investorfill(investor_name: str):
         raise HTTPException(status_code=500, detail="Database update failed")
 
     return {"status": "Success", "investor": investor_name, **result}
+
+
+class InvestorOutreachSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    investor_name: Optional[str] = None
+
+
+@app.post("/investors/outreach/draft/{investor_name}")
+async def draft_investor_outreach(investor_name: str):
+    """Draft a personalised LP introduction email from stored data. No search calls."""
+    investor = None
+    for inv in investor_handler.get_all():
+        if inv.get("name", "").lower() == investor_name.lower():
+            investor = inv
+            break
+    if not investor:
+        raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
+    from services.outreach_service import draft_lp_outreach_email
+    return draft_lp_outreach_email(investor)
+
+
+@app.post("/investors/outreach/send")
+async def send_investor_outreach(req: InvestorOutreachSendRequest):
+    """Send an LP outreach email via Gmail SMTP; bumps stage to Contacted on success."""
+    logger.info(f"Sending LP outreach to: {req.to} (investor: {req.investor_name})")
+    result = send_email(req.to, req.subject, req.body)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result["detail"])
+    if req.investor_name:
+        try:
+            investor_handler.update_status(req.investor_name, "Contacted")
+        except Exception as e:
+            logger.warning(f"Failed to bump investor status after outreach: {e}")
+    return result
 
 
 @app.put("/investors/{investor_name}/status")
