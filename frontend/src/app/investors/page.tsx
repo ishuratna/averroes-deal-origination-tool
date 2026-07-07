@@ -556,7 +556,7 @@ export default function Investors() {
         .sidebar-nav :global(.nav-item:hover) { background: #f1f5f9; }
         .sidebar-nav :global(.nav-item.active) { color: #2563eb; background: #eff6ff; }
 
-        .main-content { flex: 1; margin-left: 260px; padding: 1.75rem 2rem; }
+        .main-content { flex: 1; margin-left: 260px; padding: 1.75rem 2rem; max-width: calc(100vw - 260px); min-width: 0; }
         .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; }
         .page-header h1 { font-size: 1.4rem; color: #0f172a; }
         .subtitle { font-size: 0.8rem; color: #64748b; margin-top: 0.2rem; }
@@ -602,6 +602,10 @@ export default function Investors() {
 
         .table-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
         .table-scroll { overflow-x: auto; }
+        .table-scroll::-webkit-scrollbar { height: 8px; }
+        .table-scroll::-webkit-scrollbar-track { background: #f8fafc; }
+        .table-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .inv-table td { white-space: nowrap; }
         .inv-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
         .inv-table th { background: #f8fafc; text-align: left; padding: 0.6rem 0.8rem; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
         .inv-table td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
