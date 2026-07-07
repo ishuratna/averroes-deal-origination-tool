@@ -63,10 +63,10 @@ market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
 directory_scraper = DirectoryScraper()
 network_scraper = NetworkScraper()
-investor_handler = InvestorBQHandler(bq_handler.client, bq_handler.project_id, dataset_id=BQ_DATASET)
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
+investor_handler = InvestorBQHandler(bq_handler.client, bq_handler.project_id, dataset_id=BQ_DATASET)
 
 # ─── Load qualification criteria from BQ into criteria module at startup ──────
 try:
