@@ -442,16 +442,13 @@ Return ONLY valid JSON:
             ),
         )
 
-        text = response.text
+        from ai.investor_fill import _response_text, _extract_json
+        text = _response_text(response)
         if not text:
             logger.warning("[Scoring] Gemini returned empty response")
             return None
 
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        result = json.loads(text)
+        result = _extract_json(text)
 
         # Validate and clean scores
         output = {}

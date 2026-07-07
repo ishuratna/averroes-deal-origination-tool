@@ -14,11 +14,47 @@ Composite = average of assessable criteria; minimum 3 of 4 assessable,
 otherwise lp_fit_score = null (never a guessed number).
 """
 import os
+import re
 import json
 import logging
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _response_text(response) -> str:
+    """Collect text from a Gemini response, tolerating empty .text with populated parts."""
+    text = (getattr(response, "text", None) or "").strip()
+    if text:
+        return text
+    try:
+        parts = []
+        for cand in (response.candidates or []):
+            for part in (cand.content.parts or []):
+                if getattr(part, "text", None):
+                    parts.append(part.text)
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+
+def _extract_json(text: str) -> dict:
+    """
+    Parse JSON from an LLM response that may include markdown fences or
+    surrounding prose (common with Search-grounded responses).
+    """
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Fall back: first '{' to last '}' — the JSON body inside surrounding prose
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        return json.loads(text[start:end + 1])
+    raise json.JSONDecodeError("No JSON object found in response", text[:80], 0)
 
 
 def investor_fill(name: str, context: Dict = None) -> Dict:
@@ -101,10 +137,10 @@ Return ONLY valid JSON:
             config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())]),
         )
 
-        text = (response.text or "").strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(text)
+        text = _response_text(response)
+        if not text:
+            return {"error": "AI returned an empty response — retry in a moment"}
+        result = _extract_json(text)
 
         if not result.get("identified"):
             return {"error": f"Could not confidently identify investor '{name}' via web search"}
