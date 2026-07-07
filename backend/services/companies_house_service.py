@@ -16,7 +16,9 @@ import io
 import json
 import logging
 import base64
+import re as _re
 import requests
+from difflib import SequenceMatcher as _SequenceMatcher
 from typing import Dict, Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,68 @@ def _search_company(company_name: str) -> List[dict]:
         return []
 
 
+# Words that carry NO identity information — legal suffixes and generic
+# industry terms. Overlap on these must never count as a name match.
+# (Fix for false positives like "Vrinsoft Technology Inc" matching
+#  "ALL EAT APP NETWORK TECHNOLOGY INCORPORATED LTD" via the word "technology".)
+_GENERIC_NAME_TOKENS = {
+    "ltd", "limited", "plc", "llp", "llc", "inc", "incorporated", "co", "corp",
+    "corporation", "company", "group", "holdings", "holding", "uk", "gb",
+    "the", "and", "of", "a", "an", "&",
+    "technologies", "technology", "tech", "software", "solutions", "solution",
+    "services", "service", "systems", "system", "digital", "global",
+    "international", "app", "apps", "network", "networks", "labs", "lab",
+    "studio", "studios", "consulting", "consultancy", "ventures", "partners",
+    "media", "online", "platform", "platforms", "cloud", "it", "europe", "london",
+}
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    name = _re.sub(r"[^a-z0-9\s]", " ", (name or "").lower())
+    return _re.sub(r"\s+", " ", name).strip()
+
+
+def _core_name(name: str) -> str:
+    """Normalized name with generic/legal tokens removed (order preserved)."""
+    return " ".join(t for t in _normalize_name(name).split() if t not in _GENERIC_NAME_TOKENS)
+
+
+def _name_gate(company_name: str, title: str) -> Optional[Tuple[str, int]]:
+    """
+    HARD GATE on name similarity. Returns (gate_level, name_score) if the two
+    names plausibly refer to the same company, else None (candidate discarded —
+    no amount of status/SIC/address bonus can revive it).
+    """
+    n1, n2 = _normalize_name(company_name), _normalize_name(title)
+    if not n1 or not n2:
+        return None
+    if n1 == n2:
+        return ("exact", 100)
+
+    c1, c2 = _core_name(company_name), _core_name(title)
+
+    # Same distinctive words (e.g. "vrinsoft" == "vrinsoft") ignoring suffixes
+    if c1 and c1 == c2:
+        return ("exact-core", 90)
+
+    # One distinctive name contains the other (e.g. "monzo" in "monzo bank")
+    if c1 and c2 and len(min(c1, c2, key=len)) >= 4 and (c1 in c2 or c2 in c1):
+        return ("contains", 75)
+
+    # Fuzzy: near-identical distinctive names (typos, spacing)
+    if c1 and c2:
+        ratio = _SequenceMatcher(None, c1, c2).ratio()
+        if ratio >= 0.85:
+            return ("fuzzy", 65)
+        # Partial: at least one shared DISTINCTIVE word + strong overall similarity
+        shared = set(c1.split()) & set(c2.split())
+        if shared and ratio >= 0.6:
+            return ("partial", 50)
+
+    return None
+
+
 def _pick_best_match(
     results: List[dict],
     company_name: str,
@@ -63,60 +127,53 @@ def _pick_best_match(
 ) -> Optional[dict]:
     """
     Pick the best matching company from CH search results.
-    Prefers: active companies, name similarity, matching SIC codes.
+
+    STRINGENT: name similarity is a hard gate — candidates whose names don't
+    plausibly refer to the same company are discarded outright. Status/SIC/
+    address only rank candidates that already passed the gate.
     """
     if not results:
         return None
 
-    company_name_lower = company_name.lower().strip()
     context_lower = f"{sector} {description}".lower()
 
     scored = []
     for item in results:
-        score = 0
-        title = (item.get("title") or "").lower()
+        title = item.get("title") or ""
 
-        # Exact or near-exact name match
-        if title == company_name_lower:
-            score += 100
-        elif company_name_lower in title or title in company_name_lower:
-            score += 60
-        else:
-            # Partial word overlap
-            name_words = set(company_name_lower.split())
-            title_words = set(title.split())
-            overlap = name_words & title_words
-            score += len(overlap) * 15
+        gate = _name_gate(company_name, title)
+        if gate is None:
+            continue  # name doesn't match — discard regardless of other signals
+        gate_level, score = gate
 
-        # Active companies preferred
+        # Small tie-breaker bonuses (can never rescue a failed name gate)
         status = (item.get("company_status") or "").lower()
         if status == "active":
-            score += 30
+            score += 10
         elif status == "dissolved":
-            score -= 20
+            score -= 15
 
-        # SIC code / sector alignment
         sic_codes = item.get("sic_codes") or []
         snippet = (item.get("snippet") or "").lower()
         if any(kw in snippet or kw in " ".join(sic_codes) for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
             if any(kw in context_lower for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
-                score += 20
+                score += 5
 
-        # UK address preferred (some results might be foreign)
         address = item.get("address", {})
         country = (address.get("country") or "").lower()
         if "united kingdom" in country or "england" in country or "wales" in country or "scotland" in country:
-            score += 10
+            score += 5
 
+        item["_match_gate"] = gate_level
         scored.append((score, item))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-
-    best_score, best = scored[0]
-    if best_score < 15:
-        logger.warning(f"Best CH match for '{company_name}' has low score ({best_score}): {best.get('title')}")
+    if not scored:
+        logger.warning(f"[CH] No candidate passed the name gate for '{company_name}' — refusing to match.")
         return None
 
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best_score, best = scored[0]
+    logger.info(f"[CH] Best match for '{company_name}': '{best.get('title')}' (gate={best.get('_match_gate')}, score={best_score})")
     return best
 
 
@@ -376,14 +433,13 @@ def extract_ch_financials(
     official_name = best.get("title", "")
     logger.info(f"[CH] Step 1 result: '{official_name}' (#{company_number})")
 
-    # Determine match confidence
-    name_lower = company_name.lower().strip()
-    title_lower = official_name.lower().strip()
-    if name_lower == title_lower or name_lower in title_lower or title_lower in name_lower:
+    # Match confidence derives from the name gate the candidate passed
+    gate_level = best.get("_match_gate", "")
+    if gate_level in ("exact", "exact-core"):
         match_confidence = "high"
-    elif any(w in title_lower for w in name_lower.split() if len(w) > 3):
+    elif gate_level in ("contains", "fuzzy"):
         match_confidence = "medium"
-    else:
+    else:  # "partial"
         match_confidence = "low"
 
     # ── Step 2: Get company profile ──
