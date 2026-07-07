@@ -1,32 +1,52 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 
 /**
  * Hover tooltip for column headers / headings.
  * Usage: <InfoTip label="Status" tip={DEFS.status} />
+ *
+ * Implementation note: uses INLINE styles + React hover state (not CSS classes)
+ * so the popup is hidden in the very first server-rendered paint — styled-jsx
+ * class-based hiding caused a flash of raw definition text on initial load.
  */
 export default function InfoTip({ label, tip }: { label: React.ReactNode; tip?: string }) {
+  const [open, setOpen] = useState(false);
   if (!tip) return <>{label}</>;
+
   return (
-    <span className="infotip">
-      <span className="infotip-label">{label}</span>
-      <span className="infotip-pop">{tip}</span>
-      <style jsx>{`
-        .infotip { position: relative; display: inline-block; }
-        .infotip-label { border-bottom: 1px dotted currentColor; cursor: help; }
-        .infotip-pop {
-          visibility: hidden; opacity: 0; transition: opacity 0.12s ease 0.18s;
-          position: absolute; top: calc(100% + 7px); left: 0;
-          background: #0f172a; color: #f1f5f9;
-          font-size: 0.7rem; font-weight: 500; line-height: 1.45;
-          text-transform: none; letter-spacing: normal; white-space: normal;
-          padding: 0.5rem 0.65rem; border-radius: 6px;
-          width: max-content; max-width: 250px;
-          box-shadow: 0 8px 20px rgba(2, 6, 23, 0.35);
-          z-index: 500; pointer-events: none; text-align: left;
-        }
-        .infotip:hover .infotip-pop { visibility: visible; opacity: 1; }
-      `}</style>
+    <span
+      style={{ position: "relative", display: "inline-block" }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span style={{ borderBottom: "1px dotted currentColor", cursor: "help" }}>{label}</span>
+      {open && (
+        <span
+          style={{
+            position: "absolute",
+            top: "calc(100% + 7px)",
+            left: 0,
+            background: "#0f172a",
+            color: "#f1f5f9",
+            fontSize: "0.7rem",
+            fontWeight: 500,
+            lineHeight: 1.45,
+            textTransform: "none",
+            letterSpacing: "normal",
+            whiteSpace: "normal",
+            padding: "0.5rem 0.65rem",
+            borderRadius: "6px",
+            width: "max-content",
+            maxWidth: "250px",
+            boxShadow: "0 8px 20px rgba(2, 6, 23, 0.35)",
+            zIndex: 500,
+            pointerEvents: "none",
+            textAlign: "left",
+          }}
+        >
+          {tip}
+        </span>
+      )}
     </span>
   );
 }
