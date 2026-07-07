@@ -206,12 +206,58 @@ class InvestorBQHandler:
 
         if not rows:
             return 0
-        errors = self.client.insert_rows_json(self.table_id, rows)
-        if errors:
-            logger.error(f"Investor insert errors: {errors}")
-            return 0
-        logger.info(f"Inserted {len(rows)} new investors")
-        return len(rows)
+
+        # DML INSERT (not streaming insert_rows_json): streaming-buffered rows
+        # cannot be UPDATEd/DELETEd for up to 90 minutes, which broke
+        # InvestorFill / relabelling right after upload. DML rows are
+        # immediately mutable. Batched to stay under BQ's query-parameter limit.
+        string_cols = [
+            "investor_id", "name", "investor_type", "region", "hq_city", "hq_country",
+            "website", "description", "contact_name", "contact_email", "linkedin_url",
+            "source", "source_companies", "status", "fit_details", "notes", "pb_id",
+            "aka", "contact_title", "contact_phone", "hq_email", "global_region",
+            "strategy_preferences", "geo_preferences", "open_to_first_time",
+            "other_preferences", "registration_number", "pb_last_updated",
+        ]
+        float_cols = ["aum_m", "ticket_min_m", "ticket_max_m", "lp_fit_score",
+                      "score_geography", "score_pe_appetite", "score_ticket_fit",
+                      "score_tech_affinity", "total_commitments_m"]
+        int_cols = ["year_founded", "num_commitments", "num_active_commitments", "num_pe_commitments"]
+        all_cols = string_cols + float_cols + int_cols
+
+        inserted = 0
+        BATCH = 200  # 200 rows × 41 params = 8,200 < BQ's 10,000-parameter limit
+        for b in range(0, len(rows), BATCH):
+            batch = rows[b:b + BATCH]
+            values_sql = []
+            params = []
+            for i, r in enumerate(batch):
+                placeholders = []
+                for col in all_cols:
+                    pname = f"p{i}_{col}"
+                    placeholders.append(f"@{pname}")
+                    if col in string_cols:
+                        params.append(bigquery.ScalarQueryParameter(pname, "STRING", r.get(col) or ""))
+                    elif col in float_cols:
+                        params.append(bigquery.ScalarQueryParameter(pname, "FLOAT64", r.get(col)))
+                    else:
+                        params.append(bigquery.ScalarQueryParameter(pname, "INT64", r.get(col)))
+                placeholders.append("CURRENT_TIMESTAMP()")  # ingested_at
+                placeholders.append("CURRENT_TIMESTAMP()")  # updated_at
+                values_sql.append(f"({', '.join(placeholders)})")
+
+            query = (
+                f"INSERT INTO `{self.table_id}` ({', '.join(all_cols)}, ingested_at, updated_at) "
+                f"VALUES {', '.join(values_sql)}"
+            )
+            try:
+                self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+                inserted += len(batch)
+            except Exception as e:
+                logger.error(f"Investor DML insert failed for batch {b}-{b + len(batch)}: {e}")
+
+        logger.info(f"Inserted {inserted} new investors (DML)")
+        return inserted
 
     def upsert_investors(self, investors: List[Dict]) -> Dict:
         """
