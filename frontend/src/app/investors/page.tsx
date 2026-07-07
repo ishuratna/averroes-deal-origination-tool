@@ -246,9 +246,6 @@ export default function Investors() {
             <button className="bulkfill-btn" onClick={openBulkFill} disabled={bulkLoading || bulkRunning}>
               {bulkLoading ? 'Checking…' : bulkRunning ? 'Running…' : '⚡ Bulk InvestorFill'}
             </button>
-            <button className="mine-btn" onClick={handleMine} disabled={mining}>
-              {mining ? 'Mining…' : '⛏ Mine from High-Fit Companies'}
-            </button>
           </div>
         </header>
 
@@ -621,9 +618,6 @@ export default function Investors() {
         .sources-btn { background: #fff; border: 1px solid #e2e8f0; color: #475569; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
         .sources-btn:hover { border-color: #2563eb; color: #2563eb; }
         .sources-badge { background: #2563eb; color: #fff; border-radius: 10px; font-size: 0.65rem; padding: 0.05rem 0.45rem; font-weight: 800; }
-        .mine-btn { background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1.1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
-        .mine-btn:hover:not(:disabled) { background: #1e293b; }
-        .mine-btn:disabled { opacity: 0.6; cursor: wait; }
 
         /* Sources overlay — same template as Master Universe */
         .sources-overlay { position: fixed; inset: 0; background: rgba(2,6,23,0.5); display: flex; justify-content: flex-end; z-index: 900; }
