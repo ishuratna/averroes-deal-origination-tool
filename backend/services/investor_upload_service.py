@@ -208,6 +208,9 @@ def parse_investor_file(file_content: bytes, filename: str = "") -> List[Dict]:
         col = colmap.get(field)
         return row.get(col) if col else None
 
+    # Source = the filename (minus extension) so separate uploads stay distinguishable
+    source_label = re.sub(r"\.(xlsx|xls|csv)$", "", filename, flags=re.IGNORECASE) or "PitchBook LP Upload"
+
     investors: List[Dict] = []
     seen = set()
     for _, row in df.iterrows():
@@ -261,7 +264,7 @@ def parse_investor_file(file_content: bytes, filename: str = "") -> List[Dict]:
             "num_pe_commitments": _int(get(row, "num_pe_commitments")),
             "total_commitments_m": _num(get(row, "total_commitments_m")),
             "pb_last_updated": pb_updated,
-            "source": "PitchBook LP Upload",
+            "source": source_label,
             "status": "Identified",
         })
 

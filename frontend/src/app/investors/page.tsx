@@ -371,7 +371,7 @@ export default function Investors() {
 
       {/* ── Sources Overlay (same template as Master Universe) ── */}
       {showSources && (() => {
-        const bySource = (label: string) => investors.filter(i => (i.source || '').startsWith(label));
+        const bySource = (label: string) => investors.filter(i => (i.source || '').toLowerCase().includes(label.toLowerCase()));
         const lastIngested = (list: Investor[]) => {
           const dates = list.map(i => i.ingested_at).filter(Boolean).sort();
           return dates.length ? new Date(dates[dates.length - 1]!).toLocaleDateString() : null;
