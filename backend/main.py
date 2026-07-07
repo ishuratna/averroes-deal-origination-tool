@@ -14,6 +14,7 @@ from scrapers.marketplace_scraper import MarketplaceScraper
 from scrapers.ranking_scraper import RankingListScraper
 from scrapers.directory_scraper import DirectoryScraper
 from scrapers.network_scraper import NetworkScraper
+from scrapers.investor_scraper import InvestorScraper
 from storage.investor_handler import InvestorBQHandler, INVESTOR_STAGES
 from ai.investor_fill import investor_fill, mine_investors_from_companies
 from services.investor_upload_service import parse_investor_file
@@ -68,6 +69,7 @@ enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
 investor_handler = InvestorBQHandler(bq_handler.client, bq_handler.project_id, dataset_id=BQ_DATASET)
+investor_scraper = InvestorScraper()
 
 # ─── Load qualification criteria from BQ into criteria module at startup ──────
 try:
@@ -887,6 +889,24 @@ async def mine_investors(min_fit: float = Query(0.4, description="Minimum compan
         "found": len(candidates),
         "inserted_new": inserted,
         "message": f"Mined {len(candidates)} investors from high-fit companies ({inserted} new). Use InvestorFill to research and score each.",
+    }
+
+
+@app.post("/investors/scrape")
+async def scrape_investors(source_name: str = Query(..., description="Investor scraper: 'Praxis Rock Directories' or 'Companies House Registry'")):
+    """Scrape a public investor directory → upsert into the LP universe. No AI."""
+    if source_name not in investor_scraper.get_supported_sources():
+        raise HTTPException(status_code=404, detail=f"Source '{source_name}' not supported. Options: {investor_scraper.get_supported_sources()}")
+    found = investor_scraper.scrape_source(source_name)
+    if not found:
+        return {"status": "Complete", "found": 0, "message": f"No investors found from {source_name}."}
+    result = investor_handler.upsert_investors(found)
+    return {
+        "status": "Success",
+        "found": len(found),
+        "inserted_new": result["inserted"],
+        "merged": result["merged"],
+        "message": f"Scraped {len(found)} investors from {source_name}: {result['inserted']} new, {result['merged']} merged.",
     }
 
 

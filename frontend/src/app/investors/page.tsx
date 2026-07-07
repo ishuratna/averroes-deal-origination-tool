@@ -83,6 +83,17 @@ export default function Investors() {
     finally { setFilling(null); }
   };
 
+  const [scraping, setScraping] = useState<string | null>(null);
+  const handleScrape = async (sourceName: string) => {
+    setScraping(sourceName);
+    try {
+      const res = await dealApi.scrapeInvestors(sourceName);
+      alert(res.message || `Found ${res.found} investors.`);
+      await loadData();
+    } catch (e: any) { alert(`Scrape failed: ${e.message}`); }
+    finally { setScraping(null); }
+  };
+
   const handleUpload = async (file: File) => {
     setUploading(true);
     try {
@@ -418,6 +429,50 @@ export default function Investors() {
                       onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = ''; }} />
                   </label>
                 </div>
+              </div>
+
+              <h3 className="source-type-label">Web Scrapers</h3>
+              <div className="source-cards-grid">
+                {(() => {
+                  const praxis = bySource('Praxis Rock');
+                  const chreg = bySource('Companies House');
+                  return (
+                    <>
+                      <div className="source-card">
+                        <div className="source-card-head">
+                          <span className="source-icon">🏛</span>
+                          <div>
+                            <span className="source-name">Praxis Rock Directories</span>
+                            <p className="source-desc">Public family-office &amp; SWF directories (praxisrock.com): London (146 firms), largest global, multi-family offices, sovereign wealth funds. Name, type, description, website per firm.</p>
+                          </div>
+                        </div>
+                        <div className="source-stats">
+                          <span><b>{praxis.length}</b> investors</span>
+                          {lastIngested(praxis) && <span>Last scraped: {lastIngested(praxis)}</span>}
+                        </div>
+                        <button className="source-refresh" onClick={() => handleScrape('Praxis Rock Directories')} disabled={scraping !== null}>
+                          {scraping === 'Praxis Rock Directories' ? 'Scraping…' : 'Scrape ↻'}
+                        </button>
+                      </div>
+                      <div className="source-card">
+                        <div className="source-card-head">
+                          <span className="source-icon">🇬🇧</span>
+                          <div>
+                            <span className="source-name">Companies House Registry</span>
+                            <p className="source-desc">Official UK register search: active companies with &quot;family office&quot; in their name. Free API, includes registration numbers — the most verifiable UK family-office list available.</p>
+                          </div>
+                        </div>
+                        <div className="source-stats">
+                          <span><b>{chreg.length}</b> investors</span>
+                          {lastIngested(chreg) && <span>Last scraped: {lastIngested(chreg)}</span>}
+                        </div>
+                        <button className="source-refresh" onClick={() => handleScrape('Companies House Registry')} disabled={scraping !== null}>
+                          {scraping === 'Companies House Registry' ? 'Scraping…' : 'Scrape ↻'}
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <h3 className="source-type-label">Coming Next</h3>

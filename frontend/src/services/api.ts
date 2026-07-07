@@ -118,6 +118,15 @@ export const dealApi = {
     return await response.json();
   },
 
+  async scrapeInvestors(sourceName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/investors/scrape?source_name=${encodeURIComponent(sourceName)}`, { method: 'POST' });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Investor scrape failed');
+    }
+    return await response.json();
+  },
+
   async uploadInvestorFile(file: File): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
