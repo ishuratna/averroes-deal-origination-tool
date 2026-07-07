@@ -118,7 +118,9 @@ class InvestorBQHandler:
     def get_all(self) -> List[Dict]:
         if not self.client:
             return []
-        query = f"SELECT * FROM `{self.table_id}` ORDER BY lp_fit_score DESC NULLS LAST, name ASC"
+        # Chronological: order by when first added to the database (ingested_at is
+        # set once at insert and never modified by merges/enrichment)
+        query = f"SELECT * FROM `{self.table_id}` ORDER BY ingested_at ASC, name ASC"
         try:
             rows = [dict(r) for r in self.client.query(query).result()]
             for r in rows:

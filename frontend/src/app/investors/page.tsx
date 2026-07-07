@@ -294,13 +294,14 @@ export default function Investors() {
                   <th>Email</th>
                   <th><InfoTip label="Portfolio Overlap" tip={INVESTOR_DEFS.portfolio} /></th>
                   <th>Source</th>
+                  <th><InfoTip label="Added" tip="When this investor was FIRST added to the database. Preserved across re-uploads, merges and enrichment. Table is sorted by this, oldest first." /></th>
                   <th><InfoTip label="Stage" tip={INVESTOR_DEFS.stage} /></th>
                   <th><InfoTip label="Actions" tip={INVESTOR_DEFS.actions} /></th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={16} className="empty-row">Loading…</td></tr>
+                  <tr><td colSpan={17} className="empty-row">Loading…</td></tr>
                 ) : filtered.length > 0 ? (
                   filtered.map((inv, idx) => (
                     <tr key={idx}>
@@ -335,6 +336,7 @@ export default function Investors() {
                       <td className="email-cell">{inv.contact_email ? <a href={`mailto:${inv.contact_email}`}>{inv.contact_email}</a> : '—'}</td>
                       <td className="portfolio-cell" title={inv.source_companies || ''}>{inv.source_companies || '—'}</td>
                       <td className="source-cell">{inv.source || '—'}</td>
+                      <td className="num-cell">{inv.ingested_at ? new Date(inv.ingested_at).toLocaleDateString('en-GB') : '—'}</td>
                       <td>
                         <select
                           className="stage-select"
@@ -359,7 +361,7 @@ export default function Investors() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={16} className="empty-row">
+                  <tr><td colSpan={17} className="empty-row">
                     No investors yet. Click &quot;Mine from High-Fit Companies&quot; to extract investors from your qualified deal universe.
                   </td></tr>
                 )}
