@@ -7,12 +7,16 @@ import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 
 const INVESTOR_DEFS: Record<string, string> = {
-  name: "Investor / LP name. Mined from portfolio companies' cap tables (PitchBook), uploaded, or found via AI search.",
+  name: "Investor / LP name. Mined from portfolio companies' cap tables, uploaded from PitchBook LP exports, or found via AI search. Hover a name to see the description.",
   fit: "LP Fit Score (0–100): average of 4 criteria — geography (UK/Europe/KSA), private-markets appetite, ticket size fit (£250K–5M), tech affinity. At least 3 of 4 must be evidenced via web search, otherwise unscored.",
-  type: "Family Office, Fund of Funds, HNWI/UHNWI, VC, PE, Angel, Corporate or Sovereign — classified by InvestorFill from web evidence.",
-  aum: "Assets under management (£M), where disclosed or estimated from public sources.",
-  ticket: "Typical investment/commitment size range (£M). Target: £250K–£5M.",
+  type: "Family Office, Fund of Funds, HNWI/UHNWI, VC, PE, Angel, Corporate or Sovereign — from the PitchBook export or classified by InvestorFill.",
+  aum: "Assets under management in $M (PitchBook exports in USD), or as found by InvestorFill.",
+  ticket: "Preferred commitment size range ($M, from PitchBook). Target: roughly £250K–£5M equivalent.",
   hq: "Headquarters location. Fit favours UK, Western Europe and Saudi Arabia/GCC.",
+  strategy: "PE-relevant fund strategy preferences from PitchBook (Buyout, Growth/Expansion, FoF, Co-Investment, Secondaries…). 'None relevant' = they state preferences, but not ours — a real negative.",
+  geoPref: "Geographies in their stated investment mandate, condensed to our targets (UK/Ireland/Europe/Middle East). 'Global' = 100+ territory mandate.",
+  firstTime: "Open to first-time funds (per PitchBook). Decisive when raising a first fund; blank = undisclosed.",
+  commitments: "Track record: number of PE fund commitments · total commitments across all funds ($M). Proof they actually write cheques.",
   portfolio: "Companies in OUR deal universe this investor has backed — warm-intro path and evidence of relevant appetite.",
   stage: "Relationship stage: Identified → Researched (after InvestorFill) → Contacted → Meeting → Committed / Passed.",
   actions: "InvestorFill researches this investor via AI + web search: classifies type, finds AUM/ticket/contacts, scores LP fit.",
@@ -33,6 +37,8 @@ export default function Investors() {
   const [filling, setFilling] = useState<string | null>(null);
   const [fillResult, setFillResult] = useState<any | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [showSources, setShowSources] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -65,6 +71,16 @@ export default function Investors() {
     finally { setFilling(null); }
   };
 
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      const res = await dealApi.uploadInvestorFile(file);
+      alert(res.message || `Parsed ${res.parsed} investors (${res.inserted_new} new).`);
+      await loadData();
+    } catch (e: any) { alert(`Upload failed: ${e.message}`); }
+    finally { setUploading(false); }
+  };
+
   const handleStatusChange = async (name: string, status: string) => {
     setUpdatingStatus(name);
     try {
@@ -94,8 +110,8 @@ export default function Investors() {
 
   const fmtTicket = (i: Investor) => {
     if (i.ticket_min_m == null && i.ticket_max_m == null) return '—';
-    const lo = i.ticket_min_m != null ? `£${i.ticket_min_m}M` : '?';
-    const hi = i.ticket_max_m != null ? `£${i.ticket_max_m}M` : '?';
+    const lo = i.ticket_min_m != null ? `$${i.ticket_min_m.toFixed(1)}M` : '?';
+    const hi = i.ticket_max_m != null ? `$${i.ticket_max_m.toFixed(1)}M` : '?';
     return `${lo}–${hi}`;
   };
 
@@ -120,9 +136,15 @@ export default function Investors() {
             <h1>Investor Universe</h1>
             <p className="subtitle">Potential LPs — family offices, funds of funds, HNWIs/UHNWIs — to invest through Averroes</p>
           </div>
-          <button className="mine-btn" onClick={handleMine} disabled={mining}>
-            {mining ? 'Mining…' : '⛏ Mine from High-Fit Companies'}
-          </button>
+          <div className="header-actions">
+            <button className="sources-btn" onClick={() => setShowSources(true)}>
+              Sources
+              <span className="sources-badge">{Array.from(new Set(investors.map(i => i.source).filter(Boolean))).length}</span>
+            </button>
+            <button className="mine-btn" onClick={handleMine} disabled={mining}>
+              {mining ? 'Mining…' : '⛏ Mine from High-Fit Companies'}
+            </button>
+          </div>
         </header>
 
         {/* Stats */}
@@ -159,6 +181,10 @@ export default function Investors() {
                   <th><InfoTip label="AUM" tip={INVESTOR_DEFS.aum} /></th>
                   <th><InfoTip label="Ticket" tip={INVESTOR_DEFS.ticket} /></th>
                   <th><InfoTip label="HQ" tip={INVESTOR_DEFS.hq} /></th>
+                  <th><InfoTip label="PE Strategy" tip={INVESTOR_DEFS.strategy} /></th>
+                  <th><InfoTip label="Geo Mandate" tip={INVESTOR_DEFS.geoPref} /></th>
+                  <th><InfoTip label="1st-Time" tip={INVESTOR_DEFS.firstTime} /></th>
+                  <th><InfoTip label="Commitments" tip={INVESTOR_DEFS.commitments} /></th>
                   <th>Contact</th>
                   <th>Email</th>
                   <th><InfoTip label="Portfolio Overlap" tip={INVESTOR_DEFS.portfolio} /></th>
@@ -169,7 +195,7 @@ export default function Investors() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={12} className="empty-row">Loading…</td></tr>
+                  <tr><td colSpan={16} className="empty-row">Loading…</td></tr>
                 ) : filtered.length > 0 ? (
                   filtered.map((inv, idx) => (
                     <tr key={idx}>
@@ -182,10 +208,25 @@ export default function Investors() {
                         ) : '—'}
                       </td>
                       <td>{inv.investor_type && inv.investor_type !== 'Unknown' ? <span className="type-badge">{inv.investor_type}</span> : '—'}</td>
-                      <td className="num-cell">{inv.aum_m ? `£${inv.aum_m >= 1000 ? (inv.aum_m / 1000).toFixed(1) + 'B' : inv.aum_m.toFixed(0) + 'M'}` : '—'}</td>
+                      <td className="num-cell">{inv.aum_m ? `$${inv.aum_m >= 1000 ? (inv.aum_m / 1000).toFixed(1) + 'B' : inv.aum_m.toFixed(0) + 'M'}` : '—'}</td>
                       <td className="num-cell">{fmtTicket(inv)}</td>
                       <td>{[inv.hq_city, inv.hq_country].filter(Boolean).join(', ') || inv.region || '—'}</td>
-                      <td>{inv.contact_name || '—'}</td>
+                      <td className="strat-cell" title={inv.strategy_preferences || ''}>
+                        {inv.strategy_preferences
+                          ? <span className={inv.strategy_preferences === 'None relevant' ? 'strat-none' : 'strat-ok'}>{inv.strategy_preferences}</span>
+                          : '—'}
+                      </td>
+                      <td className="geo-cell" title={inv.geo_preferences || ''}>{inv.geo_preferences || '—'}</td>
+                      <td>
+                        {inv.open_to_first_time === 'Yes' ? <span className="ft-yes">Yes</span>
+                          : inv.open_to_first_time === 'No' ? <span className="ft-no">No</span> : '—'}
+                      </td>
+                      <td className="num-cell">
+                        {inv.num_pe_commitments != null || inv.total_commitments_m != null
+                          ? <>{inv.num_pe_commitments != null ? `${inv.num_pe_commitments} PE` : '—'}{inv.total_commitments_m != null ? ` · $${inv.total_commitments_m.toFixed(0)}M` : ''}</>
+                          : '—'}
+                      </td>
+                      <td title={inv.contact_title || ''}>{inv.contact_name || '—'}</td>
                       <td className="email-cell">{inv.contact_email ? <a href={`mailto:${inv.contact_email}`}>{inv.contact_email}</a> : '—'}</td>
                       <td className="portfolio-cell" title={inv.source_companies || ''}>{inv.source_companies || '—'}</td>
                       <td className="source-cell">{inv.source || '—'}</td>
@@ -208,7 +249,7 @@ export default function Investors() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={12} className="empty-row">
+                  <tr><td colSpan={16} className="empty-row">
                     No investors yet. Click &quot;Mine from High-Fit Companies&quot; to extract investors from your qualified deal universe.
                   </td></tr>
                 )}
@@ -217,6 +258,85 @@ export default function Investors() {
           </div>
         </section>
       </main>
+
+      {/* ── Sources Overlay (same template as Master Universe) ── */}
+      {showSources && (() => {
+        const bySource = (label: string) => investors.filter(i => (i.source || '').startsWith(label));
+        const lastIngested = (list: Investor[]) => {
+          const dates = list.map(i => i.ingested_at).filter(Boolean).sort();
+          return dates.length ? new Date(dates[dates.length - 1]!).toLocaleDateString() : null;
+        };
+        const mined = bySource('Mined');
+        const uploaded = bySource('PitchBook');
+        return (
+          <div className="sources-overlay" onClick={() => setShowSources(false)}>
+            <div className="sources-panel" onClick={e => e.stopPropagation()}>
+              <div className="sources-header">
+                <div>
+                  <h2>Investor Sources</h2>
+                  <p className="sources-subtitle">{investors.length} investors ingested across {[mined, uploaded].filter(l => l.length > 0).length} active sources</p>
+                </div>
+                <button className="sources-close" onClick={() => setShowSources(false)}>&times;</button>
+              </div>
+
+              <h3 className="source-type-label">Portfolio Intelligence</h3>
+              <div className="source-cards-grid">
+                <div className="source-card">
+                  <div className="source-card-head">
+                    <span className="source-icon">⛏</span>
+                    <div>
+                      <span className="source-name">Mine from High-Fit Companies</span>
+                      <p className="source-desc">Extracts investors from the cap tables (PitchBook active/former investors) of companies scoring 40+ or Qualified in your deal universe. Zero AI cost; portfolio overlap is your warm-intro path.</p>
+                    </div>
+                  </div>
+                  <div className="source-stats">
+                    <span><b>{mined.length}</b> investors</span>
+                    {lastIngested(mined) && <span>Last mined: {lastIngested(mined)}</span>}
+                  </div>
+                  <button className="source-refresh" onClick={handleMine} disabled={mining}>
+                    {mining ? 'Mining…' : 'Refresh ↻'}
+                  </button>
+                </div>
+              </div>
+
+              <h3 className="source-type-label">Databases</h3>
+              <div className="source-cards-grid">
+                <div className="source-card">
+                  <div className="source-card-head">
+                    <span className="source-icon">📄</span>
+                    <div>
+                      <span className="source-name">PitchBook LP Export</span>
+                      <p className="source-desc">Upload a PitchBook Limited Partners export (Excel/CSV). Recommended filters: Family Office + Fund of Funds · HQ UK/Europe/KSA/UAE · Preferred type Buyout/PE Growth · commitment overlapping £250K–5M · industry Software/IT.</p>
+                    </div>
+                  </div>
+                  <div className="source-stats">
+                    <span><b>{uploaded.length}</b> investors</span>
+                    {lastIngested(uploaded) && <span>Last upload: {lastIngested(uploaded)}</span>}
+                  </div>
+                  <label className={`source-upload ${uploading ? 'busy' : ''}`}>
+                    {uploading ? 'Uploading…' : '+ Upload LP Export'}
+                    <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} disabled={uploading}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = ''; }} />
+                  </label>
+                </div>
+              </div>
+
+              <h3 className="source-type-label">Coming Next</h3>
+              <div className="source-cards-grid">
+                <div className="source-card pending">
+                  <div className="source-card-head">
+                    <span className="source-icon">🔎</span>
+                    <div>
+                      <span className="source-name">AI Web Search</span>
+                      <p className="source-desc">Gemini + Search segment sweeps — e.g. &quot;UK single-family offices backing lower-mid-market PE&quot;, &quot;GCC family offices with UK tech exposure&quot;. Not yet built.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* InvestorFill result modal */}
       {fillResult && (
@@ -267,9 +387,36 @@ export default function Investors() {
         .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; }
         .page-header h1 { font-size: 1.4rem; color: #0f172a; }
         .subtitle { font-size: 0.8rem; color: #64748b; margin-top: 0.2rem; }
+        .header-actions { display: flex; gap: 0.6rem; }
+        .sources-btn { background: #fff; border: 1px solid #e2e8f0; color: #475569; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
+        .sources-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .sources-badge { background: #2563eb; color: #fff; border-radius: 10px; font-size: 0.65rem; padding: 0.05rem 0.45rem; font-weight: 800; }
         .mine-btn { background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1.1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
         .mine-btn:hover:not(:disabled) { background: #1e293b; }
         .mine-btn:disabled { opacity: 0.6; cursor: wait; }
+
+        /* Sources overlay — same template as Master Universe */
+        .sources-overlay { position: fixed; inset: 0; background: rgba(2,6,23,0.5); display: flex; justify-content: flex-end; z-index: 900; }
+        .sources-panel { background: #f8fafc; width: 560px; max-width: 94vw; height: 100vh; overflow-y: auto; padding: 1.5rem; box-shadow: -12px 0 40px rgba(2,6,23,0.25); }
+        .sources-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; }
+        .sources-header h2 { font-size: 1.15rem; color: #0f172a; }
+        .sources-subtitle { font-size: 0.75rem; color: #64748b; margin-top: 0.2rem; }
+        .sources-close { background: none; border: none; font-size: 1.6rem; color: #94a3b8; cursor: pointer; line-height: 1; }
+        .source-type-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: #94a3b8; font-weight: 800; margin: 1.1rem 0 0.5rem 0; }
+        .source-cards-grid { display: flex; flex-direction: column; gap: 0.6rem; }
+        .source-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem 1rem; }
+        .source-card.pending { opacity: 0.65; }
+        .source-card-head { display: flex; gap: 0.7rem; align-items: flex-start; }
+        .source-icon { font-size: 1.2rem; }
+        .source-name { font-weight: 800; font-size: 0.85rem; color: #0f172a; }
+        .source-desc { font-size: 0.72rem; color: #64748b; margin-top: 0.2rem; line-height: 1.45; }
+        .source-stats { display: flex; gap: 1rem; font-size: 0.72rem; color: #475569; margin: 0.6rem 0; }
+        .source-refresh { background: #fff; border: 1px solid #2563eb; color: #2563eb; border-radius: 7px; padding: 0.4rem 0.9rem; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .source-refresh:hover:not(:disabled) { background: #2563eb; color: #fff; }
+        .source-refresh:disabled { opacity: 0.6; cursor: wait; }
+        .source-upload { display: inline-block; background: #16a34a; color: #fff; border-radius: 7px; padding: 0.45rem 0.9rem; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .source-upload:hover { background: #15803d; }
+        .source-upload.busy { opacity: 0.6; cursor: wait; }
 
         .stats-row { display: flex; gap: 0.75rem; margin-bottom: 1.25rem; }
         .stat-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.8rem 1.2rem; display: flex; flex-direction: column; min-width: 110px; }
@@ -297,6 +444,11 @@ export default function Investors() {
         .fit-badge.mid { background: #d97706; }
         .fit-badge.low { background: #dc2626; }
         .type-badge { background: #eff6ff; color: #2563eb; font-weight: 700; font-size: 0.65rem; padding: 0.2rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+        .strat-cell, .geo-cell { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .strat-ok { color: #166534; font-weight: 600; }
+        .strat-none { color: #dc2626; font-weight: 600; }
+        .ft-yes { background: #dcfce7; color: #166534; font-weight: 800; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 4px; }
+        .ft-no { background: #f1f5f9; color: #94a3b8; font-weight: 700; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 4px; }
         .stage-select { border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.3rem 0.4rem; font-size: 0.72rem; font-weight: 700; background: #fff; cursor: pointer; }
         .fill-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .fill-btn:hover:not(:disabled) { background: #1d4ed8; }

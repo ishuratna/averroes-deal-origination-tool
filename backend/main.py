@@ -16,6 +16,7 @@ from scrapers.directory_scraper import DirectoryScraper
 from scrapers.network_scraper import NetworkScraper
 from storage.investor_handler import InvestorBQHandler, INVESTOR_STAGES
 from ai.investor_fill import investor_fill, mine_investors_from_companies
+from services.investor_upload_service import parse_investor_file
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
@@ -886,6 +887,45 @@ async def mine_investors(min_fit: float = Query(0.4, description="Minimum compan
         "found": len(candidates),
         "inserted_new": inserted,
         "message": f"Mined {len(candidates)} investors from high-fit companies ({inserted} new). Use InvestorFill to research and score each.",
+    }
+
+
+@app.post("/investors/upload")
+async def upload_investor_file(file: UploadFile = File(...)):
+    """
+    Upload a PitchBook LP export (Excel/CSV) → parse (152-column 'All Columns'
+    format supported) → insert new + merge-fill existing investors. No AI.
+    Figures stored as exported (USD millions).
+    """
+    if not file.filename.endswith((".xlsx", ".xls", ".csv")):
+        raise HTTPException(status_code=400, detail="Only Excel or CSV files are supported.")
+    if "pitchbook" not in file.filename.lower():
+        raise HTTPException(status_code=400, detail="This uploader expects a PitchBook LP export — filename must contain 'PitchBook'.")
+    content = await file.read()
+    logger.info(f"Received investor file: {file.filename} ({len(content)} bytes)")
+
+    # Archive raw file to GCS (best-effort)
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        gcs_handler.save_raw_file(content, f"investors/{timestamp}_{file.filename.replace(' ', '_')}", file.content_type)
+    except Exception as gcs_err:
+        logger.warning(f"GCS archival of investor file failed (continuing): {gcs_err}")
+
+    try:
+        investors = parse_investor_file(content, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse file: {e}")
+
+    if not investors:
+        raise HTTPException(status_code=422, detail="No investors found — expected a PitchBook LP export with a 'Limited Partners' column.")
+
+    result = investor_handler.upsert_investors(investors)
+    return {
+        "status": "Success",
+        "parsed": len(investors),
+        "inserted_new": result["inserted"],
+        "merged": result["merged"],
+        "message": f"Parsed {len(investors)} investors from {file.filename}: {result['inserted']} new, {result['merged']} merged into existing records. Use InvestorFill to research and score.",
     }
 
 

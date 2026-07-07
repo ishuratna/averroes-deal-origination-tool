@@ -94,6 +94,17 @@ export const dealApi = {
     return await response.json();
   },
 
+  async uploadInvestorFile(file: File): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE_URL}/investors/upload`, { method: 'POST', body: formData });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Investor upload failed');
+    }
+    return await response.json();
+  },
+
   async updateInvestorStatus(name: string, status: string): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/status`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),

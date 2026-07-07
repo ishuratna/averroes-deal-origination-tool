@@ -148,6 +148,24 @@ export interface Investor {
   score_tech_affinity?: number;
   fit_details?: string;
   notes?: string;
+  // PitchBook LP export fields (USD figures)
+  pb_id?: string;
+  aka?: string;
+  contact_title?: string;
+  contact_phone?: string;
+  hq_email?: string;
+  global_region?: string;
+  year_founded?: number;
+  strategy_preferences?: string;
+  geo_preferences?: string;
+  open_to_first_time?: string;
+  num_commitments?: number;
+  num_active_commitments?: number;
+  num_pe_commitments?: number;
+  total_commitments_m?: number;
+  other_preferences?: string;
+  registration_number?: string;
+  pb_last_updated?: string;
   ingested_at?: string;
   updated_at?: string;
 }

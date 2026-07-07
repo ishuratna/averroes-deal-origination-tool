@@ -51,8 +51,38 @@ class InvestorBQHandler:
         ("score_tech_affinity", "FLOAT64"), # B2B software exposure
         ("fit_details", "STRING"),          # JSON explanations
         ("notes", "STRING"),
+        # ── PitchBook LP export fields (USD figures) ──
+        ("pb_id", "STRING"),                 # PitchBook Limited Partner ID — dedup/update key
+        ("aka", "STRING"),                   # also known as
+        ("contact_title", "STRING"),
+        ("contact_phone", "STRING"),
+        ("hq_email", "STRING"),
+        ("global_region", "STRING"),         # HQ Global Region (e.g. Europe, Middle East)
+        ("year_founded", "INT64"),
+        ("strategy_preferences", "STRING"),  # condensed: PE-relevant strategies only
+        ("geo_preferences", "STRING"),       # condensed: UK/Europe/ME mandate hits
+        ("open_to_first_time", "STRING"),    # Yes / No / ''
+        ("num_commitments", "INT64"),
+        ("num_active_commitments", "INT64"),
+        ("num_pe_commitments", "INT64"),
+        ("total_commitments_m", "FLOAT64"),  # $M
+        ("other_preferences", "STRING"),
+        ("registration_number", "STRING"),   # UK Companies House number where present
+        ("pb_last_updated", "STRING"),
         ("ingested_at", "TIMESTAMP"),
         ("updated_at", "TIMESTAMP"),
+    ]
+
+    # PitchBook fields written on merge: strings fill gaps only; PB IDs/counters always refresh
+    _MERGE_FILL_STRINGS = [
+        "investor_type", "region", "hq_city", "hq_country", "website", "description",
+        "contact_name", "contact_email", "linkedin_url", "aka", "contact_title",
+        "contact_phone", "hq_email", "global_region", "strategy_preferences",
+        "geo_preferences", "open_to_first_time", "other_preferences", "registration_number",
+    ]
+    _MERGE_FILL_NUMERICS = [
+        "aum_m", "ticket_min_m", "ticket_max_m", "year_founded",
+        "num_commitments", "num_active_commitments", "num_pe_commitments", "total_commitments_m",
     ]
 
     def __init__(self, client: Optional[bigquery.Client], project_id: str, dataset_id: str = "averroes_deal_flow"):
@@ -151,6 +181,23 @@ class InvestorBQHandler:
                 "score_tech_affinity": inv.get("score_tech_affinity"),
                 "fit_details": inv.get("fit_details") or "",
                 "notes": inv.get("notes") or "",
+                "pb_id": inv.get("pb_id") or "",
+                "aka": inv.get("aka") or "",
+                "contact_title": inv.get("contact_title") or "",
+                "contact_phone": inv.get("contact_phone") or "",
+                "hq_email": inv.get("hq_email") or "",
+                "global_region": inv.get("global_region") or "",
+                "year_founded": inv.get("year_founded"),
+                "strategy_preferences": inv.get("strategy_preferences") or "",
+                "geo_preferences": inv.get("geo_preferences") or "",
+                "open_to_first_time": inv.get("open_to_first_time") or "",
+                "num_commitments": inv.get("num_commitments"),
+                "num_active_commitments": inv.get("num_active_commitments"),
+                "num_pe_commitments": inv.get("num_pe_commitments"),
+                "total_commitments_m": inv.get("total_commitments_m"),
+                "other_preferences": inv.get("other_preferences") or "",
+                "registration_number": inv.get("registration_number") or "",
+                "pb_last_updated": inv.get("pb_last_updated") or "",
                 "ingested_at": now,
                 "updated_at": now,
             })
@@ -163,6 +210,67 @@ class InvestorBQHandler:
             return 0
         logger.info(f"Inserted {len(rows)} new investors")
         return len(rows)
+
+    def upsert_investors(self, investors: List[Dict]) -> Dict:
+        """
+        Insert new investors; MERGE data into existing ones (PitchBook fills gaps —
+        string fields only where currently empty, numerics only where currently null).
+        Returns {"inserted": n, "merged": n}.
+        """
+        if not self.client or not investors:
+            return {"inserted": 0, "merged": 0}
+        existing = self.get_existing_names()
+        new_rows = [i for i in investors if (i.get("name") or "").strip().lower() not in existing]
+        to_merge = [i for i in investors if (i.get("name") or "").strip().lower() in existing]
+
+        inserted = self.save_investors(new_rows)
+
+        merged = 0
+        for inv in to_merge:
+            if self._merge_investor(inv):
+                merged += 1
+        logger.info(f"Upsert complete: {inserted} inserted, {merged} merged")
+        return {"inserted": inserted, "merged": merged}
+
+    def _merge_investor(self, inv: Dict) -> bool:
+        """Fill-gaps merge of one investor's PitchBook fields into an existing row."""
+        name = (inv.get("name") or "").strip()
+        if not name:
+            return False
+
+        set_clauses = []
+        params = [bigquery.ScalarQueryParameter("name", "STRING", name)]
+
+        for col in self._MERGE_FILL_STRINGS:
+            val = inv.get(col)
+            if val:
+                set_clauses.append(f"{col} = CASE WHEN (IFNULL({col}, '') = '') THEN @{col} ELSE {col} END")
+                params.append(bigquery.ScalarQueryParameter(col, "STRING", str(val)))
+        for col in self._MERGE_FILL_NUMERICS:
+            val = inv.get(col)
+            if val is not None:
+                bq_type = "INT64" if col in ("year_founded", "num_commitments", "num_active_commitments", "num_pe_commitments") else "FLOAT64"
+                set_clauses.append(f"{col} = IFNULL({col}, @{col})")
+                params.append(bigquery.ScalarQueryParameter(col, bq_type, val))
+
+        # PitchBook identifiers/counters always refresh (authoritative)
+        for col in ("pb_id", "pb_last_updated"):
+            val = inv.get(col)
+            if val:
+                set_clauses.append(f"{col} = @{col}")
+                params.append(bigquery.ScalarQueryParameter(col, "STRING", str(val)))
+
+        if not set_clauses:
+            return False
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP()")
+
+        query = f"UPDATE `{self.table_id}` SET {', '.join(set_clauses)} WHERE LOWER(name) = LOWER(@name)"
+        try:
+            self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+            return True
+        except Exception as e:
+            logger.error(f"Merge failed for investor '{name}': {e}")
+            return False
 
     def update_status(self, name: str, new_status: str) -> bool:
         if not self.client or new_status not in INVESTOR_STAGES:
