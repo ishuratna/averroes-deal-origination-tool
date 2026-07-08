@@ -69,6 +69,10 @@ class InvestorBQHandler:
         ("other_preferences", "STRING"),
         ("registration_number", "STRING"),   # UK Companies House number where present
         ("pb_last_updated", "STRING"),
+        # Companies House registry intelligence (UK entities)
+        ("psc_summary", "STRING"),           # who controls the vehicle — UHNWI discovery
+        ("officers_summary", "STRING"),      # active directors (principals to contact)
+        ("net_assets_m", "FLOAT64"),         # filed net assets, £M — AUM proxy
         ("ingested_at", "TIMESTAMP"),
         ("updated_at", "TIMESTAMP"),
     ]
@@ -360,6 +364,9 @@ class InvestorBQHandler:
             score_ticket_fit = @score_ticket_fit,
             score_tech_affinity = @score_tech_affinity,
             fit_details = @fit_details,
+            psc_summary = CASE WHEN @psc_summary != '' THEN @psc_summary ELSE psc_summary END,
+            officers_summary = CASE WHEN @officers_summary != '' THEN @officers_summary ELSE officers_summary END,
+            net_assets_m = IFNULL(@net_assets_m, net_assets_m),
             status = CASE WHEN status = 'Identified' THEN 'Researched' ELSE status END,
             updated_at = CURRENT_TIMESTAMP()
             WHERE LOWER(name) = LOWER(@name)"""
@@ -382,6 +389,9 @@ class InvestorBQHandler:
             bigquery.ScalarQueryParameter("score_ticket_fit", "FLOAT64", fields.get("score_ticket_fit")),
             bigquery.ScalarQueryParameter("score_tech_affinity", "FLOAT64", fields.get("score_tech_affinity")),
             bigquery.ScalarQueryParameter("fit_details", "STRING", fields.get("fit_details") or ""),
+            bigquery.ScalarQueryParameter("psc_summary", "STRING", fields.get("psc_summary") or ""),
+            bigquery.ScalarQueryParameter("officers_summary", "STRING", fields.get("officers_summary") or ""),
+            bigquery.ScalarQueryParameter("net_assets_m", "FLOAT64", fields.get("net_assets_m")),
             bigquery.ScalarQueryParameter("name", "STRING", name),
         ])
         try:

@@ -98,6 +98,13 @@ export interface CompanyTarget {
   revenue_estimate_m?: number;
   revenue_source?: string;
   revenue_confidence?: string;
+  // Companies House registry intelligence
+  ch_psc_summary?: string;
+  ch_ownership_verified?: string;
+  ch_charges_count?: number;
+  ch_charges_summary?: string;
+  ch_last_share_allotment?: string;
+  ch_accounts_next_due?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;
@@ -175,6 +182,9 @@ export interface Investor {
   other_preferences?: string;
   registration_number?: string;
   pb_last_updated?: string;
+  psc_summary?: string;
+  officers_summary?: string;
+  net_assets_m?: number;
   ingested_at?: string;
   updated_at?: string;
 }

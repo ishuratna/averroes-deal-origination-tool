@@ -189,6 +189,11 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.ch_incorporated_date && <DetailRow label="Incorporated" value={company.ch_incorporated_date} />}
                     {company.ch_sic_codes && <DetailRow label="SIC Codes" value={company.ch_sic_codes} />}
                     {company.filing_type && <DetailRow label="Filing Type" value={company.filing_type} />}
+                    {company.ch_ownership_verified && <DetailRow label="Ownership (PSC)" value={company.ch_ownership_verified} />}
+                    {company.ch_psc_summary && <DetailRow label="Controllers" value={company.ch_psc_summary} />}
+                    {company.ch_charges_summary && <DetailRow label="Secured Debt" value={company.ch_charges_summary} />}
+                    {company.ch_last_share_allotment && <DetailRow label="Last Share Issue" value={company.ch_last_share_allotment} />}
+                    {company.ch_accounts_next_due && <DetailRow label="Next Accounts Due" value={company.ch_accounts_next_due} />}
                     {company.ch_pdf_path ? (
                       <div className="detail-row">
                         <span className="detail-label">Filed Accounts</span>

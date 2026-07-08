@@ -147,10 +147,33 @@ class InvestorScraper:
 
     # ── Companies House registry search ───────────────────────────────────────
 
-    def scrape_ch_registry(self, query: str = "family office", max_results: int = 300) -> List[Dict]:
+    # Name patterns that indicate an investor entity, mapped to our types.
+    # Single-family offices are often named after the family, so name search
+    # alone misses them; the SIC search below catches unnamed ones.
+    CH_NAME_QUERIES = [
+        ("family office", "Family Office"),
+        ("family investments", "Family Office"),
+        ("family capital", "Family Office"),
+        ("private investment office", "Family Office"),
+        ("investment office", "Family Office"),
+        ("family holdings", "Family Office"),
+    ]
+
+    # SIC codes for investor entities (catches family offices with bland names):
+    #   64303 — venture and development capital companies (highest signal)
+    #   66300 — fund management activities
+    CH_SIC_QUERIES = [
+        ("64303", "PE", "venture and development capital company", 400),
+        ("66300", "Fund of Funds", "fund management activities", 300),
+    ]
+
+    def scrape_ch_registry(self, max_per_query: int = 300) -> List[Dict]:
         """
-        Search the official UK register for active companies with 'family office'
-        in their name. Uses the existing COMPANIES_HOUSE_API_KEY.
+        Search the official UK register for investor entities two ways:
+          1. Name patterns ('family office', 'family investments', ...)
+          2. SIC codes via the advanced-search API (finds family offices and
+             investment vehicles whose names don't say what they are)
+        Active companies only. Uses the existing COMPANIES_HOUSE_API_KEY.
         """
         key = os.getenv("COMPANIES_HOUSE_API_KEY", "")
         if not key:
@@ -158,54 +181,102 @@ class InvestorScraper:
             return []
 
         investors: Dict[str, Dict] = {}
-        start = 0
-        page_size = 100
 
-        while start < max_results:
-            try:
-                resp = requests.get(
-                    f"{CH_API_BASE}/search/companies",
-                    params={"q": query, "items_per_page": page_size, "start_index": start},
-                    auth=(key, ""),
-                    timeout=20,
-                )
-                resp.raise_for_status()
-                items = resp.json().get("items", [])
-            except Exception as e:
-                logger.warning(f"[CH Registry] Search failed at index {start}: {e}")
-                break
-            if not items:
-                break
+        # ── 1. Name-pattern searches ──
+        for query, inv_type in self.CH_NAME_QUERIES:
+            start = 0
+            while start < max_per_query:
+                try:
+                    resp = requests.get(
+                        f"{CH_API_BASE}/search/companies",
+                        params={"q": query, "items_per_page": 100, "start_index": start},
+                        auth=(key, ""),
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                    items = resp.json().get("items", [])
+                except Exception as e:
+                    logger.warning(f"[CH Registry] Search '{query}' failed at {start}: {e}")
+                    break
+                if not items:
+                    break
 
-            for item in items:
-                title = (item.get("title") or "").strip()
-                status = (item.get("company_status") or "").lower()
-                if not title or status != "active":
-                    continue
-                # Require the query words in the actual name (search can match loosely)
-                if "family office" not in title.lower():
-                    continue
-                key_name = title.lower()
-                if key_name in investors:
-                    continue
+                for item in items:
+                    title = (item.get("title") or "").strip()
+                    status = (item.get("company_status") or "").lower()
+                    if not title or status != "active":
+                        continue
+                    # Require the phrase in the actual name (search matches loosely)
+                    if query not in title.lower():
+                        continue
+                    key_name = title.lower()
+                    if key_name in investors:
+                        continue
+                    addr = item.get("address", {}) or {}
+                    investors[key_name] = {
+                        "name": title.title(),
+                        "investor_type": inv_type,
+                        "region": "UK",
+                        "hq_city": addr.get("locality") or "",
+                        "hq_country": "United Kingdom",
+                        "registration_number": item.get("company_number") or "",
+                        "description": f"Active UK-registered entity with '{query}' in its name (Companies House, inc. {item.get('date_of_creation', 'n/a')}).",
+                        "source": "Companies House Registry",
+                        "status": "Identified",
+                    }
 
-                addr = item.get("address", {}) or {}
-                locality = addr.get("locality") or ""
-                investors[key_name] = {
-                    "name": title.title(),
-                    "investor_type": "Family Office",
-                    "region": "UK",
-                    "hq_city": locality,
-                    "hq_country": "United Kingdom",
-                    "registration_number": item.get("company_number") or "",
-                    "description": f"Active UK-registered entity with 'family office' in its name (Companies House, inc. {item.get('date_of_creation', 'n/a')}).",
-                    "source": "Companies House Registry",
-                    "status": "Identified",
-                }
+                if len(items) < 100:
+                    break
+                start += 100
+            logger.info(f"[CH Registry] name query '{query}': total pool now {len(investors)}")
 
-            logger.info(f"[CH Registry] index {start}: {len(items)} results (kept {len(investors)} so far)")
-            if len(items) < page_size:
-                break
-            start += page_size
+        # ── 2. SIC-code advanced search (unnamed investment vehicles) ──
+        for sic, inv_type, sic_label, cap in self.CH_SIC_QUERIES:
+            start = 0
+            found = 0
+            while found < cap:
+                try:
+                    resp = requests.get(
+                        f"{CH_API_BASE}/advanced-search/companies",
+                        params={"sic_codes": sic, "company_status": "active",
+                                "size": 100, "start_index": start},
+                        auth=(key, ""),
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                    items = resp.json().get("items", [])
+                except Exception as e:
+                    logger.warning(f"[CH Registry] SIC {sic} search failed at {start}: {e}")
+                    break
+                if not items:
+                    break
+
+                for item in items:
+                    title = (item.get("company_name") or item.get("title") or "").strip()
+                    if not title:
+                        continue
+                    key_name = title.lower()
+                    if key_name in investors:
+                        continue
+                    addr = item.get("registered_office_address", {}) or item.get("address", {}) or {}
+                    investors[key_name] = {
+                        "name": title.title(),
+                        "investor_type": inv_type,
+                        "region": "UK",
+                        "hq_city": addr.get("locality") or "",
+                        "hq_country": "United Kingdom",
+                        "registration_number": item.get("company_number") or "",
+                        "description": f"Active UK company filed under SIC {sic} ({sic_label}) per Companies House, inc. {item.get('date_of_creation', 'n/a')}.",
+                        "source": "Companies House Registry",
+                        "status": "Identified",
+                    }
+                    found += 1
+                    if found >= cap:
+                        break
+
+                if len(items) < 100:
+                    break
+                start += 100
+            logger.info(f"[CH Registry] SIC {sic}: +{found} (total pool {len(investors)})")
 
         return list(investors.values())

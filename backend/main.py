@@ -503,6 +503,12 @@ async def smartfill_company(company_name: str):
             ch_match_confidence = @ch_match_confidence,
             ch_notes = @ch_notes,
             ch_pdf_path = @ch_pdf_path,
+            ch_psc_summary = @ch_psc_summary,
+            ch_ownership_verified = @ch_ownership_verified,
+            ch_charges_count = @ch_charges_count,
+            ch_charges_summary = @ch_charges_summary,
+            ch_last_share_allotment = @ch_last_share_allotment,
+            ch_accounts_next_due = @ch_accounts_next_due,
             averroes_fit_score = @averroes_fit_score,
             score_employee_growth = @score_employee_growth,
             score_revenue_growth = @score_revenue_growth,
@@ -546,6 +552,12 @@ async def smartfill_company(company_name: str):
             bq_lib.ScalarQueryParameter("ch_match_confidence", "STRING", ch_data.get("ch_match_confidence") or ""),
             bq_lib.ScalarQueryParameter("ch_notes", "STRING", ch_data.get("notes") or ""),
             bq_lib.ScalarQueryParameter("ch_pdf_path", "STRING", ch_data.get("ch_pdf_path") or ""),
+            bq_lib.ScalarQueryParameter("ch_psc_summary", "STRING", ch_data.get("ch_psc_summary") or ""),
+            bq_lib.ScalarQueryParameter("ch_ownership_verified", "STRING", ch_data.get("ch_ownership_verified") or ""),
+            bq_lib.ScalarQueryParameter("ch_charges_count", "INT64", ch_data.get("ch_charges_count")),
+            bq_lib.ScalarQueryParameter("ch_charges_summary", "STRING", ch_data.get("ch_charges_summary") or ""),
+            bq_lib.ScalarQueryParameter("ch_last_share_allotment", "STRING", ch_data.get("ch_last_share_allotment") or ""),
+            bq_lib.ScalarQueryParameter("ch_accounts_next_due", "STRING", ch_data.get("ch_accounts_next_due") or ""),
             bq_lib.ScalarQueryParameter("averroes_fit_score", "FLOAT64", scoring_result.get("averroes_fit_score")),
             bq_lib.ScalarQueryParameter("score_employee_growth", "FLOAT64", scoring_result.get("score_employee_growth")),
             bq_lib.ScalarQueryParameter("score_revenue_growth", "FLOAT64", scoring_result.get("score_revenue_growth")),
@@ -604,6 +616,12 @@ async def smartfill_company(company_name: str):
         "ch_match_confidence": ch_data.get("ch_match_confidence"),
         "ch_notes": ch_data.get("notes"),
         "ch_pdf_path": ch_data.get("ch_pdf_path"),
+        "ch_psc_summary": ch_data.get("ch_psc_summary"),
+        "ch_ownership_verified": ch_data.get("ch_ownership_verified"),
+        "ch_charges_count": ch_data.get("ch_charges_count"),
+        "ch_charges_summary": ch_data.get("ch_charges_summary"),
+        "ch_last_share_allotment": ch_data.get("ch_last_share_allotment"),
+        "ch_accounts_next_due": ch_data.get("ch_accounts_next_due"),
         # Averroes Fit Scoring
         "averroes_fit_score": scoring_result.get("averroes_fit_score"),
         "score_employee_growth": scoring_result.get("score_employee_growth"),
@@ -1018,6 +1036,26 @@ async def investorfill(investor_name: str):
     result = investor_fill(investor_name, context)
     if result.get("error"):
         raise HTTPException(status_code=422, detail=result["error"])
+
+    # Companies House enrichment for UK entities: PSC principal (UHNWI discovery),
+    # officer contacts, and filed net assets as an AUM proxy.
+    from ai.investor_fill import ch_enrich_investor
+    is_uk = any("united kingdom" in (str(v) or "").lower() or (str(v) or "").strip().upper() == "UK"
+                for v in [context.get("hq_country"), result.get("hq_country"), context.get("region"), result.get("region")])
+    reg_no = (context.get("registration_number") or "").strip()
+    if is_uk or reg_no:
+        try:
+            ch = ch_enrich_investor(investor_name, reg_no)
+            result["psc_summary"] = ch["psc_summary"]
+            result["officers_summary"] = ch["officers_summary"]
+            result["net_assets_m"] = ch["net_assets_m"]
+            # Fill gaps: principal as contact; net assets as AUM proxy
+            if ch["principal_name"] and not result.get("contact_name"):
+                result["contact_name"] = ch["principal_name"]
+            if ch["net_assets_m"] is not None and result.get("aum_m") is None:
+                result["aum_m"] = ch["net_assets_m"]
+        except Exception as e:
+            logger.warning(f"CH enrichment failed for investor '{investor_name}': {e}")
 
     if not investor_handler.update_enrichment(investor_name, result):
         raise HTTPException(status_code=500, detail="Database update failed")

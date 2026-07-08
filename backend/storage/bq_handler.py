@@ -86,6 +86,13 @@ class BigQueryHandler:
         ("revenue_estimate_m", "FLOAT64"),
         ("revenue_source", "STRING"),
         ("revenue_confidence", "STRING"),
+        # Companies House registry intelligence
+        ("ch_psc_summary", "STRING"),
+        ("ch_ownership_verified", "STRING"),
+        ("ch_charges_count", "INT64"),
+        ("ch_charges_summary", "STRING"),
+        ("ch_last_share_allotment", "STRING"),
+        ("ch_accounts_next_due", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)

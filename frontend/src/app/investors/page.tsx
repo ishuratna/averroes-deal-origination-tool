@@ -165,7 +165,7 @@ export default function Investors() {
 
   // ── CSV export of the current filtered view ──
   const exportCsv = () => {
-    const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_pe_commitments', 'total_commitments_m', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'source', 'source_companies', 'status'];
+    const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'net_assets_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_pe_commitments', 'total_commitments_m', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'psc_summary', 'officers_summary', 'registration_number', 'source', 'source_companies', 'status'];
     const esc = (v: any) => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -458,7 +458,7 @@ export default function Investors() {
                           <span className="source-icon">🇬🇧</span>
                           <div>
                             <span className="source-name">Companies House Registry</span>
-                            <p className="source-desc">Official UK register search: active companies with &quot;family office&quot; in their name. Free API, includes registration numbers — the most verifiable UK family-office list available.</p>
+                            <p className="source-desc">Official UK register: 6 investor name patterns (family office, family investments, private investment office…) plus SIC-code search (64303 venture/development capital, 66300 fund management) — catches family offices whose names don&apos;t say what they are. Free API, registration numbers included.</p>
                           </div>
                         </div>
                         <div className="source-stats">

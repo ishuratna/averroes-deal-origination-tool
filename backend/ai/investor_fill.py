@@ -203,6 +203,62 @@ Return ONLY valid JSON:
         return {"error": str(e)}
 
 
+def ch_enrich_investor(name: str, registration_number: str = "") -> Dict:
+    """
+    Companies House enrichment for UK investor entities (free API calls +
+    at most one Gemini call for accounts parsing):
+      - PSC register → who controls the vehicle (UHNWI discovery)
+      - Officers → principals to contact
+      - Latest filed net assets → AUM proxy (£M)
+    Returns {psc_summary, officers_summary, net_assets_m, principal_name} (fields may be empty).
+    """
+    from services.companies_house_service import (
+        get_psc_summary, get_officers_summary, _search_company, _pick_best_match,
+        _get_accounts_filings, _download_accounts_pdf, _parse_accounts_pdf_with_gemini,
+    )
+
+    out = {"psc_summary": "", "officers_summary": "", "net_assets_m": None, "principal_name": ""}
+
+    number = (registration_number or "").strip()
+    if not number:
+        # Try to find the entity on the register (strict name gate — no wrong matches)
+        results = _search_company(name)
+        best = _pick_best_match(results, name) if results else None
+        if not best or best.get("_match_gate") not in ("exact", "exact-core", "contains"):
+            return out
+        number = best.get("company_number", "")
+    if not number:
+        return out
+
+    psc = get_psc_summary(number)
+    officers = get_officers_summary(number)
+    out["psc_summary"] = psc["psc_summary"]
+    out["officers_summary"] = officers["officers_summary"]
+
+    # Principal: first individual PSC, else first director
+    if psc["psc_individuals"]:
+        out["principal_name"] = psc["psc_individuals"][0]
+    elif officers["directors"]:
+        out["principal_name"] = officers["directors"][0]["name"]
+
+    # Net assets from the latest accounts filing (1 Gemini PDF parse)
+    try:
+        filings = _get_accounts_filings(number, max_items=2)
+        if filings:
+            pdf = _download_accounts_pdf(filings[0])
+            if pdf:
+                parsed = _parse_accounts_pdf_with_gemini(pdf, name, number, filings[0].get("date", ""))
+                if parsed and not parsed.get("error"):
+                    na = parsed.get("net_assets_current")
+                    if na is not None:
+                        out["net_assets_m"] = round(float(na) / 1_000_000, 2)
+    except Exception as e:
+        logger.warning(f"[InvestorFill/CH] Net assets extraction failed for '{name}': {e}")
+
+    logger.info(f"[InvestorFill/CH] '{name}' (#{number}): principal={out['principal_name'] or 'n/a'}, net_assets_m={out['net_assets_m']}")
+    return out
+
+
 def mine_investors_from_companies(companies: list, min_fit_score: float = 0.4) -> list:
     """
     Extract investor names from high-fit companies' PitchBook data

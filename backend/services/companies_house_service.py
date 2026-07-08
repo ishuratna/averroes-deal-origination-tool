@@ -398,6 +398,158 @@ Return ONLY valid JSON:
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
+# ── Registry intelligence: PSC, officers, charges, share allotments ──────────
+
+_INSTITUTIONAL_HINTS = ["ventures", "capital", "partners", "equity", "fund", " lp",
+                        "investments limited", "holdings plc", "nominees", "trustees"]
+
+
+def get_psc_summary(company_number: str) -> Dict:
+    """
+    Persons with Significant Control — who really owns the company.
+    Returns {psc_summary, ownership_verified, psc_individuals: [names]}.
+    """
+    auth = _ch_auth()
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/persons-with-significant-control",
+                            auth=auth, timeout=15)
+        if resp.status_code == 404:
+            return {"psc_summary": "", "ownership_verified": "", "psc_individuals": []}
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"[CH] PSC fetch failed for {company_number}: {e}")
+        return {"psc_summary": "", "ownership_verified": "", "psc_individuals": []}
+
+    def _band(natures: list) -> str:
+        text = " ".join(natures or [])
+        if "75-to-100" in text:
+            return "75-100%"
+        if "50-to-75" in text:
+            return "50-75%"
+        if "25-to-50" in text:
+            return "25-50%"
+        return "unknown %"
+
+    individuals, corporates, lines = [], [], []
+    for p in items:
+        if p.get("ceased_on"):
+            continue
+        name = p.get("name", "")
+        kind = p.get("kind", "")
+        band = _band(p.get("natures_of_control"))
+        if "individual" in kind:
+            individuals.append((name, band))
+            lines.append(f"{name} (individual, {band})")
+        else:
+            corporates.append((name, band))
+            lines.append(f"{name} (entity, {band})")
+
+    # Classify ownership from the register
+    if individuals and not corporates:
+        top_band = individuals[0][1]
+        if any(b in ("75-100%",) for _, b in individuals):
+            verified = "Founder/family-owned (75-100% individual control)"
+        elif any(b in ("50-75%",) for _, b in individuals):
+            verified = "Founder-controlled (50-75% individual control)"
+        else:
+            verified = f"Individually held ({top_band})"
+    elif corporates:
+        inst = [n for n, _ in corporates if any(h in n.lower() for h in _INSTITUTIONAL_HINTS)]
+        if inst:
+            verified = f"Institutional investor on register: {inst[0]}"
+        else:
+            verified = f"Held via entity: {corporates[0][0]}"
+        if individuals:
+            verified += f" + individual holders"
+    else:
+        verified = "No active PSC registered"
+
+    return {
+        "psc_summary": "; ".join(lines)[:500],
+        "ownership_verified": verified,
+        "psc_individuals": [n for n, _ in individuals],
+    }
+
+
+def get_officers_summary(company_number: str, max_officers: int = 6) -> Dict:
+    """Active directors: names, roles, birth year. Returns {officers_summary, directors: [...]}."""
+    auth = _ch_auth()
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/officers",
+                            params={"items_per_page": 25}, auth=auth, timeout=15)
+        if resp.status_code == 404:
+            return {"officers_summary": "", "directors": []}
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"[CH] Officers fetch failed for {company_number}: {e}")
+        return {"officers_summary": "", "directors": []}
+
+    directors, lines = [], []
+    for o in items:
+        if o.get("resigned_on") or "director" not in (o.get("officer_role") or ""):
+            continue
+        name = o.get("name", "")
+        dob = o.get("date_of_birth") or {}
+        birth_year = dob.get("year")
+        directors.append({"name": name, "birth_year": birth_year})
+        lines.append(f"{name}" + (f" (b. {birth_year})" if birth_year else ""))
+        if len(directors) >= max_officers:
+            break
+
+    return {"officers_summary": "; ".join(lines)[:400], "directors": directors}
+
+
+def get_charges_summary(company_number: str) -> Dict:
+    """Outstanding charges (secured debt). Returns {charges_count, charges_summary}."""
+    auth = _ch_auth()
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/charges",
+                            auth=auth, timeout=15)
+        if resp.status_code == 404:
+            return {"charges_count": 0, "charges_summary": ""}
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning(f"[CH] Charges fetch failed for {company_number}: {e}")
+        return {"charges_count": None, "charges_summary": ""}
+
+    outstanding = [c for c in data.get("items", []) if (c.get("status") or "") == "outstanding"]
+    holders = []
+    for c in outstanding[:4]:
+        for p in c.get("persons_entitled", []) or []:
+            nm = p.get("name", "")
+            if nm and nm not in holders:
+                holders.append(nm)
+    summary = f"{len(outstanding)} outstanding" + (f" — held by {', '.join(holders[:3])}" if holders else "")
+    return {"charges_count": len(outstanding), "charges_summary": summary if outstanding else ""}
+
+
+def get_capital_events(company_number: str) -> Dict:
+    """
+    Share allotments (SH01 etc.) from filing history — a quiet-fundraise detector.
+    Returns {last_share_allotment: 'YYYY-MM-DD' or ''}.
+    """
+    auth = _ch_auth()
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/filing-history",
+                            params={"category": "capital", "items_per_page": 5},
+                            auth=auth, timeout=15)
+        if resp.status_code == 404:
+            return {"last_share_allotment": ""}
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"[CH] Capital filings fetch failed for {company_number}: {e}")
+        return {"last_share_allotment": ""}
+
+    for f in items:
+        if "allotment" in (f.get("description") or "") or (f.get("type") or "").startswith("SH01"):
+            return {"last_share_allotment": f.get("date", "")}
+    return {"last_share_allotment": items[0].get("date", "") if items else ""}
+
+
 def extract_ch_financials(
     company_name: str,
     sector: str = "",
@@ -449,6 +601,7 @@ def extract_ch_financials(
     ch_status = "Unknown"
     ch_incorporated = None
     ch_sic_codes = None
+    ch_accounts_next_due = None
 
     if profile:
         ch_status = profile.get("company_status", "unknown").replace("_", " ").title()
@@ -456,6 +609,21 @@ def extract_ch_financials(
         ch_incorporated = date_of_creation
         sic = profile.get("sic_codes", [])
         ch_sic_codes = ", ".join(sic) if sic else None
+        ch_accounts_next_due = (profile.get("accounts", {}) or {}).get("next_due")
+
+    # ── Step 2b: Registry intelligence (PSC ownership, charges, share allotments) ──
+    logger.info(f"[CH] Step 2b: Fetching PSC / charges / capital events for #{company_number}...")
+    psc = get_psc_summary(company_number)
+    charges = get_charges_summary(company_number)
+    capital = get_capital_events(company_number)
+    registry_intel = {
+        "ch_psc_summary": psc["psc_summary"],
+        "ch_ownership_verified": psc["ownership_verified"],
+        "ch_charges_count": charges["charges_count"],
+        "ch_charges_summary": charges["charges_summary"],
+        "ch_last_share_allotment": capital["last_share_allotment"],
+        "ch_accounts_next_due": ch_accounts_next_due,
+    }
 
     # ── Step 3: Get filing history (accounts only) ──
     logger.info(f"[CH] Step 3: Fetching accounts filing history for #{company_number}...")
@@ -473,6 +641,7 @@ def extract_ch_financials(
             "filing_type": None,
             "notes": "No accounts filings found on Companies House",
             "error": None,
+            **registry_intel,
         }
 
     # Try to download PDFs for up to the latest 3 filings
@@ -548,6 +717,7 @@ def extract_ch_financials(
         "filing_type": filing_type,
         "error": None,
         "ch_pdf_path": saved_pdf_path,
+        **registry_intel,
     }
 
     if not all_financials:
