@@ -42,7 +42,15 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       try {
         const res = await fetch(`${API_BASE_URL}/auth/config`);
         const cfg = await res.json();
-        if (!cfg.auth_enabled) { setState("open"); return; }
+        if (!cfg.auth_enabled) {
+          sessionStorage.removeItem("averroes_auth_on");
+          setState("open");
+          return;
+        }
+        // Remember auth is active so apiFetch can pre-check tokens client-side
+        sessionStorage.setItem("averroes_auth_on", "1");
+        const note = sessionStorage.getItem("averroes_session_note");
+        if (note) { setError(note); sessionStorage.removeItem("averroes_session_note"); }
         setConfig(cfg);
         setState(getStoredToken() ? "open" : "locked");
       } catch {

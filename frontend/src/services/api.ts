@@ -2,16 +2,40 @@ import { CompanyTarget, ActivityEntry } from "../types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
-// Authenticated fetch: attaches the Google ID token; on 401 clears it and
-// reloads so the AuthGate shows the sign-in screen again.
+// Authenticated fetch: attaches the Google ID token. On a missing/expired
+// session it redirects to sign-in cleanly and returns a never-resolving
+// promise, so callers' catch blocks don't fire misleading error alerts.
+function _sessionRedirect(): Promise<Response> {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('averroes_id_token');
+    sessionStorage.setItem('averroes_session_note', 'Your session expired — please sign in again.');
+    window.location.reload();
+  }
+  return new Promise<Response>(() => {});  // never resolves; page is reloading
+}
+
+function _tokenValid(token: string | null): boolean {
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return !payload.exp || payload.exp * 1000 > Date.now() + 30_000;
+  } catch { return false; }
+}
+
 async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('averroes_id_token') : null;
   const headers: Record<string, string> = { ...(options.headers as Record<string, string> || {}) };
+
+  // Pre-check: if auth is known to be active and the token is missing/expired,
+  // go straight to sign-in without a doomed network call.
+  if (typeof window !== 'undefined' && sessionStorage.getItem('averroes_auth_on') === '1' && !_tokenValid(token)) {
+    return _sessionRedirect();
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`;
+
   const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && typeof window !== 'undefined') {
-    localStorage.removeItem('averroes_id_token');
-    window.location.reload();
+  if (response.status === 401) {
+    return _sessionRedirect();
   }
   return response;
 }
