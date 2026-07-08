@@ -88,6 +88,7 @@ class BigQueryHandler:
         ("revenue_confidence", "STRING"),
         ("gross_profit_y1", "FLOAT64"),
         ("gross_profit_y2", "FLOAT64"),
+        ("last_smartfill_at", "TIMESTAMP"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),
@@ -326,6 +327,23 @@ class BigQueryHandler:
         except Exception as e:
             logger.error(f"Failed to update status for {company_name}: {e}")
             return False
+
+    def count_smartfills_today(self) -> int:
+        """How many SmartFill runs have been logged today (UTC). Powers the daily cost cap."""
+        if not self.client:
+            return 0
+        query = f"""SELECT COUNT(*) AS n FROM `{self.activity_table_id}`
+                    WHERE action_type IN ('smartfill', 'smartenrich') AND DATE(created_at) = CURRENT_DATE()"""
+        try:
+            rows = list(self.client.query(query).result())
+            return int(rows[0].n) if rows else 0
+        except Exception as e:
+            logger.error(f"Failed to count today's smartfills: {e}")
+            return 0
+
+    def log_smartfill(self, company_name: str, kind: str = "smartfill") -> bool:
+        """Record a SmartFill/SmartEnrich run in the activity log (feeds the daily cap counter)."""
+        return self._log_activity(company_name, kind, "system", note_text=f"{kind} run")
 
     def add_activity_note(self, company_name: str, note_text: str, created_by: str = "Ishu Ratna") -> bool:
         """Add a note to a company's activity log."""

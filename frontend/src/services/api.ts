@@ -154,14 +154,22 @@ export const dealApi = {
     return await response.json();
   },
 
+  async smartEnrich(companyName: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/smartenrich/${encodeURIComponent(companyName)}`, { method: 'POST' });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`SmartEnrich failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'SmartEnrich failed'); }
+    return data;
+  },
+
   async getSmartFillEligible(): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/smartfill/eligible`);
     if (!response.ok) throw new Error('Failed to load SmartFill eligibility');
     return await response.json();
   },
 
-  async smartFill(companyName: string): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/smartfill/${encodeURIComponent(companyName)}`, { method: 'POST' });
+  async smartFill(companyName: string, bulk: boolean = false): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/smartfill/${encodeURIComponent(companyName)}${bulk ? '?bulk=true' : ''}`, { method: 'POST' });
     let data;
     try { data = await response.json(); } catch (e) { throw new Error(`SmartFill failed: ${response.statusText}`); }
     if (!response.ok) { throw new Error(data.detail || 'SmartFill failed'); }

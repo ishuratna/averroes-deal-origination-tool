@@ -384,10 +384,23 @@ async def upload_custom_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Daily cost cap — keeps grounded Gemini calls inside the free 1,500/day quota.
+# Configurable without deploy: gcloud run services update averroes-deal-backend
+#   --update-env-vars DAILY_SMARTFILL_CAP=600 (never use --set-env-vars)
+DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))
+
+
 @app.post("/smartfill/{company_name}")
-async def smartfill_company(company_name: str):
+async def smartfill_company(company_name: str, bulk: bool = Query(False, description="Bulk mode: skips web-search scoring for Too Large companies (cost gate)")):
     """SmartFill: Qualify (UK/Ireland + Tech) + enrich founder/LinkedIn/website."""
-    logger.info(f"SmartFill triggered for: {company_name}")
+    # ── Daily cost cap ──
+    used_today = bq_handler.count_smartfills_today()
+    if used_today >= DAILY_SMARTFILL_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day, keeps AI search calls in the free tier). Resets at midnight UTC — {used_today} used today.",
+        )
+    logger.info(f"SmartFill triggered for: {company_name} ({used_today + 1}/{DAILY_SMARTFILL_CAP} today)")
     company_data = {"name": company_name}
     try:
         for c in bq_handler.get_universe():
@@ -442,7 +455,7 @@ async def smartfill_company(company_name: str):
         scoring_input["website"] = website or company_data.get("website", "")
         scoring_input["size_bucket"] = size_bucket
         try:
-            scoring_result = score_company(scoring_input)
+            scoring_result = score_company(scoring_input, skip_qualitative_if_too_large=bulk)
             logger.info(f"[SmartFill] Scoring result for '{company_name}': "
                         f"fit_score={scoring_result.get('averroes_fit_score')}, "
                         f"metrics_available={scoring_result.get('metrics_available')}, "
@@ -472,6 +485,7 @@ async def smartfill_company(company_name: str):
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
+            last_smartfill_at = CURRENT_TIMESTAMP(),
             stage_entered_at = CASE WHEN IFNULL(status, '') != @status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
             qualified_at = CASE WHEN @status = 'Qualified' THEN IFNULL(qualified_at, CURRENT_TIMESTAMP()) ELSE qualified_at END,
             status = @status,
@@ -581,6 +595,12 @@ async def smartfill_company(company_name: str):
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
 
+    # Count this run against the daily cap (best-effort)
+    try:
+        bq_handler.log_smartfill(company_name)
+    except Exception as e:
+        logger.warning(f"Failed to log smartfill run: {e}")
+
     return {
         "status": "Success",
         "company": company_name,
@@ -645,55 +665,217 @@ async def smartfill_company(company_name: str):
 
 
 @app.get("/smartfill/eligible")
-async def smartfill_eligible(skip_processed: bool = Query(True, description="Skip companies already SmartFilled (status not Scraped/Uploaded)")):
+async def smartfill_eligible():
     """
-    Pre-flight for bulk SmartFill. Applies the two cheap keyword filters
-    (UK/Ireland geography + tech/software industry) with ZERO AI calls,
-    and returns the eligible company list plus a Gemini credit estimate.
+    Pre-flight for bulk SmartFill. ZERO AI calls. Cost-optimised rules:
+      - only companies NEVER SmartFilled before (last_smartfill_at is null)
+      - must pass ALL THREE hard filters on stored data (geography + industry
+        + size where determinable)
+      - respects the daily cap: reports remaining quota and trims the list to it
     """
     universe = bq_handler.get_universe()
     total = len(universe)
 
     non_uk_ie = 0
-    uk_ie_non_tech = 0
-    already_processed = 0
+    non_tech = 0
+    too_large = 0
+    already_filled = 0
     eligible = []
 
     for c in universe:
-        qual = qualify_company(c)  # keyword-based, no AI
+        if c.get("last_smartfill_at"):
+            already_filled += 1
+            continue
+        qual = qualify_company(c)  # keyword + rule-based size, no AI
         if not qual["is_uk_ireland"]:
             non_uk_ie += 1
             continue
         if not qual["is_tech"]:
-            uk_ie_non_tech += 1
+            non_tech += 1
             continue
-        if skip_processed and c.get("status") not in ("Scraped", "Uploaded"):
-            already_processed += 1
+        if qual.get("size_qualified") is False:
+            too_large += 1
             continue
         eligible.append(c.get("name"))
 
+    used_today = bq_handler.count_smartfills_today()
+    remaining_today = max(0, DAILY_SMARTFILL_CAP - used_today)
     n = len(eligible)
-    # Gemini calls per SmartFill (from code paths):
-    #   qualification 1 + enrichment 1 (grounded) + CH PDF parse 0-3
-    #   + scoring 1 (grounded, if qualified) + revenue estimate 0-1 (grounded)
+    runnable = eligible[:remaining_today]
+
+    est_n = len(runnable)
     est = {
         "gemini_calls_per_company": {"min": 3, "typical": 5, "max": 7},
         "grounded_calls_per_company": {"min": 2, "typical": 3},
-        "total_gemini_calls": {"min": n * 3, "typical": n * 5, "max": n * 7},
-        "total_grounded_calls_typical": n * 3,
-        "token_cost_usd_typical": round(n * 0.015, 2),
-        "grounding_note": "First ~1,500 grounded prompts/day are free (≈500 companies/day). Beyond that $35/1K prompts adds ~$0.10/company.",
+        "total_gemini_calls": {"min": est_n * 3, "typical": est_n * 5, "max": est_n * 7},
+        "total_grounded_calls_typical": est_n * 3,
+        "token_cost_usd_typical": round(est_n * 0.015, 2),
+        "grounding_note": f"Daily cap of {DAILY_SMARTFILL_CAP} keeps all runs inside the free search-grounding tier — bulk runs cost tokens only (~1p/company).",
     }
 
     return {
         "total_universe": total,
         "excluded_non_uk_ie": non_uk_ie,
-        "excluded_non_tech": uk_ie_non_tech,
-        "skipped_already_processed": already_processed,
+        "excluded_non_tech": non_tech,
+        "excluded_too_large": too_large,
+        "skipped_already_smartfilled": already_filled,
         "eligible_count": n,
-        "eligible_names": eligible,
+        "daily_cap": DAILY_SMARTFILL_CAP,
+        "used_today": used_today,
+        "remaining_today": remaining_today,
+        "runnable_now": len(runnable),
+        "eligible_names": runnable,
         "estimate": est,
     }
+
+
+@app.post("/smartenrich/{company_name}")
+async def smartenrich_company(company_name: str):
+    """
+    SmartEnrich: the CHEAP refresh for already-SmartFilled companies.
+    Runs only what's missing or stale:
+      - enrichment only if contacts/website are missing (0-1 grounded call)
+      - CH registry intel always refreshed (free API calls)
+      - CH PDFs re-parsed ONLY if a newer accounts filing exists
+      - re-scores only if Qualified and (previously unscored or new financials)
+    Typically 0-2 Gemini calls vs ~5 for a full SmartFill.
+    """
+    used_today = bq_handler.count_smartfills_today()
+    if used_today >= DAILY_SMARTFILL_CAP:
+        raise HTTPException(status_code=429, detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day). Resets at midnight UTC.")
+
+    company = None
+    for c in bq_handler.get_universe():
+        if c.get("name") == company_name:
+            company = c
+            break
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+
+    from google.cloud import bigquery as bq_lib
+    set_clauses = ["last_smartfill_at = CURRENT_TIMESTAMP()"]
+    params = [bq_lib.ScalarQueryParameter("name", "STRING", company_name)]
+    actions = []
+
+    # ── 1. Enrichment: only if contact data is missing ──
+    if not (company.get("contact_name") and (company.get("contact_email") or company.get("linkedin_url"))):
+        founder_info = enrichment_agent.enrich_founder_details(company_name)
+        for col, key in [("contact_name", "contact_name"), ("contact_email", "contact_email"),
+                         ("linkedin_url", "linkedin_url"), ("website", "website")]:
+            val = founder_info.get(key)
+            if val:
+                set_clauses.append(f"{col} = CASE WHEN IFNULL({col}, '') = '' THEN @{col} ELSE {col} END")
+                params.append(bq_lib.ScalarQueryParameter(col, "STRING", val))
+        actions.append("enriched missing contacts")
+    else:
+        actions.append("contacts present — enrichment skipped")
+
+    new_financials = False
+    if company.get("ch_company_number"):
+        number = company["ch_company_number"]
+        # ── 2. Registry intel: always refresh (free) ──
+        from services.companies_house_service import (
+            get_psc_summary, get_charges_summary, get_capital_events, _get_company_profile, _get_accounts_filings,
+        )
+        psc = get_psc_summary(number)
+        charges = get_charges_summary(number)
+        capital = get_capital_events(number)
+        profile = _get_company_profile(number) or {}
+        next_due = (profile.get("accounts", {}) or {}).get("next_due") or ""
+        for col, val, typ in [
+            ("ch_psc_summary", psc["psc_summary"], "STRING"),
+            ("ch_ownership_verified", psc["ownership_verified"], "STRING"),
+            ("ch_charges_count", charges["charges_count"], "INT64"),
+            ("ch_charges_summary", charges["charges_summary"], "STRING"),
+            ("ch_last_share_allotment", capital["last_share_allotment"], "STRING"),
+            ("ch_accounts_next_due", next_due, "STRING"),
+        ]:
+            set_clauses.append(f"{col} = @{col}")
+            params.append(bq_lib.ScalarQueryParameter(col, typ, val))
+        actions.append("registry intel refreshed")
+
+        # ── 3. Financials: re-parse ONLY if a newer filing exists ──
+        filings = _get_accounts_filings(number, max_items=1)
+        latest_filing_date = filings[0].get("date", "") if filings else ""
+        known_date = company.get("revenue_y1_date") or ""
+        if latest_filing_date and latest_filing_date > known_date:
+            ch_data = extract_ch_financials(company_name, sector=company.get("sector", ""),
+                                            region=company.get("region", ""),
+                                            description=company.get("description", ""),
+                                            gcs_handler=gcs_handler)
+            if not ch_data.get("error"):
+                new_financials = True
+                for col in ["revenue_y1", "revenue_y2", "revenue_y3", "gross_profit_y1", "gross_profit_y2",
+                            "profit_y1", "profit_y2", "profit_y3", "total_assets_y1", "net_assets_y1", "cash_y1"]:
+                    if ch_data.get(col) is not None:
+                        set_clauses.append(f"{col} = @{col}")
+                        params.append(bq_lib.ScalarQueryParameter(col, "FLOAT64", ch_data.get(col)))
+                for col in ["revenue_y1_date", "revenue_y2_date", "revenue_y3_date", "filing_type", "ch_pdf_path"]:
+                    if ch_data.get(col):
+                        set_clauses.append(f"{col} = @{col}")
+                        params.append(bq_lib.ScalarQueryParameter(col, "STRING", str(ch_data.get(col))))
+                actions.append(f"new accounts parsed (filed {latest_filing_date})")
+        if not new_financials:
+            actions.append("no new filing — PDF parse skipped")
+
+    # ── 4. Re-score: only if Qualified and (unscored or fresh financials) ──
+    if company.get("status") == "Qualified" and (company.get("averroes_fit_score") is None or new_financials):
+        scoring_input = dict(company)
+        scoring_result = score_company(scoring_input)
+        for col in ["averroes_fit_score", "score_employee_growth", "score_revenue_growth",
+                    "score_revenue_size", "score_business_fit", "score_market_sentiment", "revenue_estimate_m"]:
+            set_clauses.append(f"{col} = @{col}")
+            params.append(bq_lib.ScalarQueryParameter(col, "FLOAT64", scoring_result.get(col)))
+        for col in ["score_details", "revenue_band", "revenue_source", "revenue_confidence"]:
+            set_clauses.append(f"{col} = @{col}")
+            params.append(bq_lib.ScalarQueryParameter(col, "STRING", scoring_result.get(col) or ""))
+        actions.append("re-scored")
+    else:
+        actions.append("score kept")
+
+    query = f"UPDATE `{bq_handler.table_id}` SET {', '.join(set_clauses)} WHERE name = @name"
+    try:
+        bq_handler.client.query(query, job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
+
+    bq_handler.log_smartfill(company_name, kind="smartenrich")
+    return {"status": "Success", "company": company_name, "actions": actions}
+
+
+@app.post("/smartfill-refresh-due")
+async def smartfill_refresh_due(limit: int = Query(5, description="Max companies to refresh per invocation")):
+    """
+    Auto-refresh: re-SmartFill companies whose CH accounts-due date has passed
+    since their last fill (fresh financials just landed). Designed to be hit by
+    Cloud Scheduler; processes a few per call to stay inside request timeouts,
+    and always respects the daily cap.
+    """
+    used_today = bq_handler.count_smartfills_today()
+    remaining = max(0, DAILY_SMARTFILL_CAP - used_today)
+    if remaining == 0:
+        return {"status": "Skipped", "reason": "daily cap reached", "refreshed": []}
+
+    from datetime import date
+    today = date.today().isoformat()
+    due = []
+    for c in bq_handler.get_universe():
+        next_due = c.get("ch_accounts_next_due") or ""
+        last_fill = c.get("last_smartfill_at") or ""
+        if next_due and next_due <= today and (not last_fill or str(last_fill)[:10] < next_due):
+            due.append(c.get("name"))
+
+    to_run = due[:min(limit, remaining)]
+    results = []
+    for name in to_run:
+        try:
+            await smartenrich_company(name)
+            results.append({"company": name, "status": "refreshed"})
+        except HTTPException as e:
+            results.append({"company": name, "status": f"error: {e.detail}"})
+            if e.status_code == 429:
+                break
+    return {"status": "Success", "due_total": len(due), "refreshed": results}
 
 
 @app.get("/ch-pdf/{company_name}")

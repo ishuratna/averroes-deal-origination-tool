@@ -219,9 +219,13 @@ export default function Universe() {
       if (bulkCancelRef.current) break;
       setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
       try {
-        await dealApi.smartFill(names[i]);
+        await dealApi.smartFill(names[i], true);  // bulk mode: Too Large skips web-search scoring
         ok++;
-      } catch (e) {
+      } catch (e: any) {
+        if ((e?.message || '').includes('Daily SmartFill limit')) {
+          alert(`Daily cap reached after ${ok} companies — the rest are preserved for tomorrow's run.`);
+          break;
+        }
         failed++;
         console.error(`Bulk SmartFill failed for ${names[i]}`, e);
       }
@@ -585,10 +589,15 @@ export default function Universe() {
               <>
                 <div className="bulk-funnel">
                   <div className="bulk-funnel-row"><span>Total universe</span><b>{bulkEligibility.total_universe}</b></div>
+                  <div className="bulk-funnel-row excluded"><span>Skipped — already SmartFilled</span><b>−{bulkEligibility.skipped_already_smartfilled}</b></div>
                   <div className="bulk-funnel-row excluded"><span>Excluded — not UK/Ireland</span><b>−{bulkEligibility.excluded_non_uk_ie}</b></div>
                   <div className="bulk-funnel-row excluded"><span>Excluded — not tech/software</span><b>−{bulkEligibility.excluded_non_tech}</b></div>
-                  <div className="bulk-funnel-row excluded"><span>Skipped — already SmartFilled</span><b>−{bulkEligibility.skipped_already_processed}</b></div>
-                  <div className="bulk-funnel-row eligible"><span>Eligible for SmartFill</span><b>{bulkEligibility.eligible_count}</b></div>
+                  <div className="bulk-funnel-row excluded"><span>Excluded — over £50M (size filter)</span><b>−{bulkEligibility.excluded_too_large}</b></div>
+                  <div className="bulk-funnel-row eligible"><span>Eligible (new + passes all 3 filters)</span><b>{bulkEligibility.eligible_count}</b></div>
+                  <div className="bulk-funnel-row" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 700 }}>
+                    <span>Daily cap: {bulkEligibility.daily_cap} · used today: {bulkEligibility.used_today}</span>
+                    <b>runs now: {bulkEligibility.runnable_now}</b>
+                  </div>
                 </div>
 
                 <div className="bulk-estimate">
@@ -601,8 +610,8 @@ export default function Universe() {
 
                 <div className="bulk-actions">
                   <button className="bulk-cancel" onClick={closeBulkModal}>Cancel</button>
-                  <button className="bulk-start" onClick={runBulkSmartFill} disabled={bulkEligibility.eligible_count === 0}>
-                    Start — {bulkEligibility.eligible_count} companies
+                  <button className="bulk-start" onClick={runBulkSmartFill} disabled={bulkEligibility.runnable_now === 0}>
+                    Start — {bulkEligibility.runnable_now} companies
                   </button>
                 </div>
               </>
@@ -1031,14 +1040,27 @@ export default function Universe() {
                       </td>
                       <td>
                         <div className="action-btns">
-                          <button className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''}`} disabled={smartFilling === company.name}
+                          <button
+                            className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''} ${company.last_smartfill_at ? 'enrich' : ''}`}
+                            disabled={smartFilling === company.name}
+                            title={company.last_smartfill_at
+                              ? `Last SmartFilled: ${new Date(company.last_smartfill_at).toLocaleString('en-GB')}. SmartEnrich refreshes only what's missing or stale (0–2 AI calls).`
+                              : 'Never SmartFilled — runs the full AI pipeline (~5 calls)'}
                             onClick={async () => {
                               setSmartFilling(company.name);
-                              try { const res = await dealApi.smartFill(company.name); setSmartFillResult(res); await loadData(); }
-                              catch (err: any) { alert(`SmartFill failed: ${err.message}`); }
+                              try {
+                                if (company.last_smartfill_at) {
+                                  const res = await dealApi.smartEnrich(company.name);
+                                  alert(`SmartEnrich: ${(res.actions || []).join(' · ')}`);
+                                } else {
+                                  const res = await dealApi.smartFill(company.name);
+                                  setSmartFillResult(res);
+                                }
+                                await loadData();
+                              } catch (err: any) { alert(`${company.last_smartfill_at ? 'SmartEnrich' : 'SmartFill'} failed: ${err.message}`); }
                               finally { setSmartFilling(null); }
                             }}>
-                            {smartFilling === company.name ? '...' : 'SmartFill'}
+                            {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartEnrich ↻' : 'SmartFill'}
                           </button>
                           <button className="outreach-btn" onClick={() => openOutreach(company)}>Outreach</button>
                         </div>
@@ -1452,6 +1474,8 @@ export default function Universe() {
         .desc-btn:hover { background: #2563eb; color: white; }
         .action-btns { display: flex; gap: 0.35rem; }
         .smartfill-btn { background: transparent; border: 1px solid #2563eb; color: #2563eb; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
+        .smartfill-btn.enrich { border-color: #16a34a; color: #16a34a; }
+        .smartfill-btn.enrich:hover:not(:disabled) { background: #f0fdf4; }
         .smartfill-btn:hover:not(:disabled) { background: #2563eb; color: white; }
         .smartfill-btn.filling { opacity: 0.4; cursor: wait; }
         .outreach-btn { background: transparent; border: 1px solid #d97706; color: #d97706; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }

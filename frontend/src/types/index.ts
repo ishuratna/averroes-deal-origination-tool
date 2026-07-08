@@ -105,6 +105,7 @@ export interface CompanyTarget {
   ch_charges_summary?: string;
   ch_last_share_allotment?: string;
   ch_accounts_next_due?: string;
+  last_smartfill_at?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;

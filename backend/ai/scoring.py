@@ -294,7 +294,7 @@ def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
     return "Too Large"
 
 
-def score_company(company: dict) -> Dict:
+def score_company(company: dict, skip_qualitative_if_too_large: bool = False) -> Dict:
     """
     Score a qualified company on the 5 Averroes fit metrics.
     Uses existing data from the company dict (CH financials, PitchBook data, etc.)
@@ -333,6 +333,28 @@ def score_company(company: dict) -> Dict:
     if rev_size:
         scores["revenue_size"] = rev_size["score"]
         details["revenue_size"] = rev_size
+
+    # ── Cost gate (bulk mode): Too Large band → skip the 3 web-search metrics.
+    # The company stays Qualified but unscored; score on demand via the
+    # individual SmartFill button. Saves ~3 grounded calls per Too Large company.
+    band_now = details.get("revenue_size", {}).get("revenue_band")
+    if skip_qualitative_if_too_large and band_now == "Too Large":
+        logger.info(f"[Scoring] '{company_name}' is Too Large (bulk mode) — skipping web-search metrics")
+        return {
+            "averroes_fit_score": None,
+            "score_employee_growth": None,
+            "score_revenue_growth": scores.get("revenue_growth"),
+            "score_revenue_size": scores.get("revenue_size"),
+            "score_business_fit": None,
+            "score_market_sentiment": None,
+            "score_details": json.dumps(details),
+            "revenue_band": band_now,
+            "revenue_estimate_m": details.get("revenue_size", {}).get("value") if details.get("revenue_size", {}).get("is_estimate") else None,
+            "revenue_source": details.get("revenue_size", {}).get("source"),
+            "revenue_confidence": details.get("revenue_size", {}).get("confidence"),
+            "metrics_available": len(scores),
+            "error": "Skipped web-search scoring: Too Large band (bulk cost gate). Run SmartFill individually to score.",
+        }
 
     # ── Metrics 1, 4, 5: Gemini assessment (employee growth, business fit, market sentiment) ──
     gemini_scores = _gemini_qualitative_scoring(company)
