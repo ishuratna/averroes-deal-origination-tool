@@ -86,7 +86,29 @@ class BigQueryHandler:
         ("revenue_estimate_m", "FLOAT64"),
         ("revenue_source", "STRING"),
         ("revenue_confidence", "STRING"),
+        # Stage timeline: when the company entered its CURRENT stage (drives
+        # kanban sorting + stale flag), plus permanent first-entry timestamps
+        # per stage (never overwritten — the Contacted date survives later moves)
+        ("stage_entered_at", "TIMESTAMP"),
+        ("qualified_at", "TIMESTAMP"),
+        ("contacted_at", "TIMESTAMP"),
+        ("meeting_at", "TIMESTAMP"),
+        ("dd_at", "TIMESTAMP"),
+        ("offer_at", "TIMESTAMP"),
+        ("won_at", "TIMESTAMP"),
+        ("lost_at", "TIMESTAMP"),
     ]
+
+    # Map stage name → its permanent first-entry timestamp column
+    STAGE_TIMESTAMP_COLS = {
+        "Qualified": "qualified_at",
+        "Contacted": "contacted_at",
+        "Meeting": "meeting_at",
+        "DD": "dd_at",
+        "Offer": "offer_at",
+        "Won": "won_at",
+        "Lost": "lost_at",
+    }
 
     def _ensure_expanded_schema(self):
         """Add new columns to the BQ targets table if they don't exist yet. Idempotent."""
@@ -269,8 +291,17 @@ class BigQueryHandler:
             rows = list(job.result())
             old_status = rows[0].status if rows else "Unknown"
 
-            # Update status in targets table
-            update_q = f"UPDATE `{self.table_id}` SET status = @new_status WHERE name = @name"
+            # Update status + stage timeline in targets table:
+            #  - stage_entered_at: reset whenever the stage actually changes
+            #  - per-stage column: stamped on FIRST entry only, preserved forever
+            set_clauses = [
+                "status = @new_status",
+                "stage_entered_at = CASE WHEN IFNULL(status, '') != @new_status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END",
+            ]
+            stage_col = self.STAGE_TIMESTAMP_COLS.get(new_status)
+            if stage_col:
+                set_clauses.append(f"{stage_col} = IFNULL({stage_col}, CURRENT_TIMESTAMP())")
+            update_q = f"UPDATE `{self.table_id}` SET {', '.join(set_clauses)} WHERE name = @name"
             self.client.query(update_q, job_config=bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter("new_status", "STRING", new_status),

@@ -472,6 +472,8 @@ async def smartfill_company(company_name: str):
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
+            stage_entered_at = CASE WHEN IFNULL(status, '') != @status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+            qualified_at = CASE WHEN @status = 'Qualified' THEN IFNULL(qualified_at, CURRENT_TIMESTAMP()) ELSE qualified_at END,
             status = @status,
             website = @website,
             contact_name = @contact_name,
@@ -767,7 +769,9 @@ async def send_outreach(req: OutreachSendRequest):
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}`
-                    SET status = 'Engaged'
+                    SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Engaged' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                        contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
+                        status = 'Engaged'
                     WHERE name = @name AND status != 'Not a Fit'"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("name", "STRING", req.company_name or ""),
@@ -812,7 +816,9 @@ async def remove_from_pipeline(company_name: str, req: RemoveRequest):
     logger.info(f"Removing '{company_name}' from pipeline by {req.created_by}")
     try:
         from google.cloud import bigquery as bq_lib
-        query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit', match_score = 0.0 WHERE name = @name"""
+        query = f"""UPDATE `{bq_handler.table_id}` SET
+                    stage_entered_at = CASE WHEN IFNULL(status, '') != 'Not a Fit' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    status = 'Not a Fit', match_score = 0.0 WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
@@ -1187,12 +1193,17 @@ async def apply_criteria(req: CriteriaApplyRequest):
 
             if qualified_names:
                 names_list = ", ".join([f"'{n}'" for n in qualified_names])
-                query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Qualified' WHERE name IN ({names_list})"""
+                query = f"""UPDATE `{bq_handler.table_id}` SET
+                    stage_entered_at = CASE WHEN IFNULL(status, '') != 'Qualified' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    qualified_at = IFNULL(qualified_at, CURRENT_TIMESTAMP()),
+                    status = 'Qualified' WHERE name IN ({names_list})"""
                 bq_handler.client.query(query).result()
 
             if rejected_names:
                 names_list = ", ".join([f"'{n}'" for n in rejected_names])
-                query = f"""UPDATE `{bq_handler.table_id}` SET status = 'Not a Fit' WHERE name IN ({names_list})"""
+                query = f"""UPDATE `{bq_handler.table_id}` SET
+                    stage_entered_at = CASE WHEN IFNULL(status, '') != 'Not a Fit' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    status = 'Not a Fit' WHERE name IN ({names_list})"""
                 bq_handler.client.query(query).result()
 
             requalify_result = {

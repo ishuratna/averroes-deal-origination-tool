@@ -98,6 +98,15 @@ export interface CompanyTarget {
   revenue_estimate_m?: number;
   revenue_source?: string;
   revenue_confidence?: string;
+  // Stage timeline
+  stage_entered_at?: string;
+  qualified_at?: string;
+  contacted_at?: string;
+  meeting_at?: string;
+  dd_at?: string;
+  offer_at?: string;
+  won_at?: string;
+  lost_at?: string;
 }
 
 export interface ActivityEntry {

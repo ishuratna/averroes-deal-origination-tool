@@ -461,6 +461,14 @@ export default function Home() {
           <section className="kanban-board">
             {PIPELINE_STAGES.map(stage => {
               const stageDeals = filteredPipeline.filter(c => c.status === stage);
+              // Qualified: best fit first. All other stages: latest entry first
+              // (stage_entered_at, falling back to ingested_at for legacy rows).
+              if (stage === 'Qualified') {
+                stageDeals.sort((a, b) => (b.averroes_fit_score ?? -1) - (a.averroes_fit_score ?? -1));
+              } else {
+                const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
+                stageDeals.sort((a, b) => entered(b) - entered(a));
+              }
               return (
                 <div
                   key={stage}
@@ -480,14 +488,16 @@ export default function Home() {
                       stageDeals.map(company => {
                         const nextStage = getNextStage(company.status);
                         const isUpdating = updatingStatus === company.name;
-                        const daysInStage = company.ingested_at
-                          ? Math.floor((Date.now() - new Date(company.ingested_at).getTime()) / (1000 * 60 * 60 * 24))
+                        const stageSince = company.stage_entered_at || company.ingested_at;
+                        const daysInStage = stageSince
+                          ? Math.floor((Date.now() - new Date(stageSince).getTime()) / (1000 * 60 * 60 * 24))
                           : null;
+                        const isStale = daysInStage !== null && daysInStage > 10;
 
                         return (
                           <div
                             key={company.name}
-                            className={`kanban-card ${dragItem === company.name ? 'dragging' : ''}`}
+                            className={`kanban-card ${dragItem === company.name ? 'dragging' : ''} ${isStale ? 'stale' : ''}`}
                             draggable
                             onDragStart={() => handleDragStart(company.name)}
                             onDragEnd={handleDragEnd}
@@ -497,7 +507,9 @@ export default function Home() {
                                 {company.name}
                               </button>
                               {daysInStage !== null && (
-                                <span className="kc-days">{daysInStage}d</span>
+                                <span className={`kc-days ${isStale ? 'stale' : ''}`} title={isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`}>
+                                  {isStale ? '⚠ ' : ''}{daysInStage}d
+                                </span>
                               )}
                             </div>
                             <div className="kc-sector-row">
@@ -1074,6 +1086,8 @@ export default function Home() {
         }
         .kc-name:hover { color: #2563eb; }
         .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 600; background: #f8fafc; padding: 0.1rem 0.4rem; border-radius: 4px; flex-shrink: 0; }
+        .kc-days.stale { color: #dc2626; background: #fee2e2; font-weight: 800; }
+        .kanban-card.stale { border-left: 3px solid #dc2626; }
 
         .kc-sector-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
         .kc-sector { font-size: 0.72rem; color: #64748b; font-weight: 600; margin: 0; text-transform: uppercase; }
