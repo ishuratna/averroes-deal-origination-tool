@@ -18,6 +18,7 @@ from scrapers.investor_scraper import InvestorScraper
 from storage.investor_handler import InvestorBQHandler, INVESTOR_STAGES
 from ai.investor_fill import investor_fill, mine_investors_from_companies
 from services.investor_upload_service import parse_investor_file
+from auth import auth_middleware, auth_enabled, AUTH_CLIENT_ID, ALLOWED_DOMAIN
 from storage.gcs_handler import GCSHandler
 from storage.bq_handler import BigQueryHandler
 from services.excel_service import parse_proprietary_excel
@@ -51,6 +52,11 @@ os.makedirs("data", exist_ok=True)
 
 app = FastAPI(title="Averroes Deal Origination API")
 
+# Google Sign-In authentication (enforced only when GOOGLE_OAUTH_CLIENT_ID is set).
+# Registered BEFORE CORS so CORS is outermost — auth 401/403 responses then
+# carry CORS headers and are readable by the frontend.
+app.middleware("http")(auth_middleware)
+
 # Add CORS Middleware to allow the Next.js frontend to fetch data
 app.add_middleware(
     CORSMiddleware,
@@ -59,6 +65,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if auth_enabled():
+    logger.info(f"Auth ENABLED — allowed domain: @{ALLOWED_DOMAIN}")
+else:
+    logger.warning("Auth DISABLED — set GOOGLE_OAUTH_CLIENT_ID to enforce sign-in")
+
+
+@app.get("/auth/config")
+async def auth_config():
+    """Frontend bootstrap: is auth on, and which OAuth client to use. Public by design."""
+    return {"auth_enabled": auth_enabled(), "client_id": AUTH_CLIENT_ID, "allowed_domain": ALLOWED_DOMAIN}
 
 conf_scraper = ConferenceScraper()
 market_scraper = MarketplaceScraper()

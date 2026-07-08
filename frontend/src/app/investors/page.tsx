@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Investor, INVESTOR_STAGES } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
+import AuthGate from "../../components/AuthGate";
 
 const INVESTOR_DEFS: Record<string, string> = {
   name: "Investor / LP name. Mined from portfolio companies' cap tables, uploaded from PitchBook LP exports, or found via AI search. Hover a name to see the description.",
@@ -28,6 +29,10 @@ const STAGE_COLORS: Record<string, string> = {
 };
 
 export default function Investors() {
+  return <AuthGate><InvestorsInner /></AuthGate>;
+}
+
+function InvestorsInner() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");

@@ -6,6 +6,7 @@ import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand } from "../ty
 import { dealApi } from "../services/api";
 import CompanyDrawer from "../components/CompanyDrawer";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
+import AuthGate from "../components/AuthGate";
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -82,6 +83,10 @@ interface SavedView {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function Home() {
+  return <AuthGate><HomeInner /></AuthGate>;
+}
+
+function HomeInner() {
   const [pipeline, setPipeline] = useState<CompanyTarget[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);

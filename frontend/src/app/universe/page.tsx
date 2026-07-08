@@ -6,6 +6,7 @@ import { CompanyTarget, getRevenueBand } from "../../types";
 import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
 import InfoTip, { DEFS } from "../../components/InfoTip";
+import AuthGate from "../../components/AuthGate";
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -60,6 +61,10 @@ interface SourceStats {
 }
 
 export default function Universe() {
+  return <AuthGate><UniverseInner /></AuthGate>;
+}
+
+function UniverseInner() {
   const [universe, setUniverse] = useState<CompanyTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
