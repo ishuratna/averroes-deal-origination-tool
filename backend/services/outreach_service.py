@@ -71,27 +71,68 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
 
     first_name = contact_name.split()[0] if contact_name and contact_name.strip() else "there"
 
+    # Data richness decides the mode: with substance we personalise;
+    # with a thin record we write a shorter, plainer note and fake nothing.
+    rich_signals = sum(bool(x) for x in [description, sector, keywords, year_founded, employees, financing_status])
+    thin_data = rich_signals < 2
+
+    length_rule = (
+        "3-4 sentences. You know little about this company, so keep it plain and honest — "
+        "a brief cold introduction that leans on who Averroes is, not on faked familiarity."
+        if thin_data else
+        "4-6 sentences. Ground the opening in ONE specific, verifiable detail from the data "
+        "(what they build, who they serve, how long they've been at it)."
+    )
+
     prompt = f"""
-    You are Beatrice Carrara, Partner at Averroes Capital — a growth capital / private equity
-    investor focused on B2B SaaS and tech-enabled services in the UK & Europe.
+    You are Beatrice Carrara, Partner at Averroes Capital, a private equity firm that backs
+    founder-led B2B software companies in the UK and Ireland, typically taking a significant
+    stake and working closely with founders on the next phase of growth.
 
-    Write a SHORT, warm, personalised outreach email to {contact_name or 'the founder'} at {name}.
+    Write an outreach email to {contact_name or 'the founder'} at {name}. You are writing as
+    yourself — an experienced investor a founder would want to hear from — not as a marketer.
 
-    COMPANY INTELLIGENCE (from our database — use this to personalise):
+    WHAT WE KNOW ABOUT THE COMPANY (do not use anything beyond this):
     {company_context}
 
-    EMAIL GUIDELINES:
-    - Tone: Friendly, peer-to-peer, NOT salesy or corporate. Like a fellow founder reaching out.
-    - Length: 4-6 sentences max. Busy founders don't read long emails.
-    - Opening: Reference something SPECIFIC about their company (product, growth, sector position).
-      Do NOT open with "I hope this email finds you well" or "I came across your company".
-    - Value prop: Position as a supportive growth partner, not an acquirer. Emphasise:
-      * Operational support and growth capital
-      * Respect for what they've built
-      * No pressure, just exploring a conversation
-    - CTA: Suggest a brief 15-minute call, keep it low-commitment.
-    - Sign off as: Beatrice Carrara, Partner, Averroes Capital
-    - Do NOT include email headers (To, From, Date) — just subject and body.
+    LENGTH & OPENING: {length_rule}
+
+    HOW A REAL PE PARTNER WRITES (follow all of these):
+    - Plain English. Write like you talk. Short, common words: help, build, grow, run, talk.
+      If a sentence needs reading twice, rewrite it.
+    - Plain, confident, understated. Short sentences. One idea per sentence.
+    - Be honest about intent: Averroes invests in companies like theirs, usually taking a
+      significant stake alongside the founder. Do not disguise this as vague "partnership",
+      and do not lead with acquisition language either.
+    - State a reason for writing that is true: their sector and profile fit what we invest in.
+    - CTA: a short call or coffee, their timing. One sentence. No urgency tricks.
+    - Sign off exactly: Beatrice Carrara\\nPartner, Averroes Capital
+
+    HARD RULES — the email fails review if it breaks any of these:
+    1. NEVER invent facts, numbers, achievements or "news" about the company. If the data
+       doesn't say it, the email doesn't say it.
+    2. NEVER quote their financial figures back at them (revenue, headcount, funding) —
+       citing a founder's own numbers in a cold email reads as surveillance, not diligence.
+       Use the data only to inform what you choose to say.
+    3. Banned phrases and patterns: "I hope this email finds you well", "I came across",
+       "I couldn't help but notice", "I was impressed by", "exciting journey", "resonated",
+       "cutting-edge", "revolutionary", "game-changing", "reach out" (as a noun or verb),
+       "touch base", "synergies". No exclamation marks. No lists of three adjectives.
+    3a. NO em dashes or hyphens used as pauses, anywhere. Not in the subject, not in the
+       body. Use a comma, a full stop, or start a new sentence instead.
+    3b. No business jargon. Banned words: "leverage", "utilise"/"utilize", "ecosystem",
+       "value creation", "deploy capital", "proprietary", "best-in-class", "world-class",
+       "streamline", "scalable", "robust", "holistic", "strategic fit", "unlock".
+       Say the plain version: "use" not "leverage", "grow" not "scale up the business".
+    4. No flattery that isn't earned by a specific data point. Respect reads better than praise.
+    5. Subject line: specific and quiet, like a person wrote it (e.g. "Averroes Capital — {name}"
+       or a plain reference to their space). Never clickbait, never "Quick question".
+    6. Do NOT include email headers (To/From/Date), and never mention databases, research
+       tools, or how you found them.
+
+    VARIETY: Do not follow a template. Vary the opening line, sentence rhythm and structure
+    from other emails you might write — two founders comparing notes should not see the same
+    skeleton. The compliment-positioning-CTA formula is a template; avoid it.
 
     Return ONLY valid JSON with exactly these keys:
     {{"subject": "email subject line", "body": "full email body text"}}
@@ -105,10 +146,12 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
 
         client = genai.Client(api_key=api_key)
 
-        # No Google Search — just Gemini with the data we already have
+        # No Google Search — just Gemini with the data we already have.
+        # Higher temperature for structural variety between drafts.
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
+            config=GenerateContentConfig(temperature=1.0),
         )
 
         text = response.text
