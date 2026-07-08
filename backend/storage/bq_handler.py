@@ -330,7 +330,7 @@ class BigQueryHandler:
 
     # Worst-case grounded (Google Search) Gemini calls per operation type.
     # The shared daily budget guarantees we NEVER cross the free 1,500/day tier.
-    GROUNDING_WEIGHTS = {"smartfill": 3, "smartenrich": 2, "investorfill": 1}
+    GROUNDING_WEIGHTS = {"smartfill": 3, "smartenrich": 2, "investorfill": 1, "newslookup": 1}
 
     def count_smartfills_today(self) -> int:
         """How many SmartFill/SmartEnrich runs have been logged today (UTC)."""
@@ -354,7 +354,7 @@ class BigQueryHandler:
         if not self.client:
             return 0
         query = f"""SELECT action_type, COUNT(*) AS n FROM `{self.activity_table_id}`
-                    WHERE action_type IN ('smartfill', 'smartenrich', 'investorfill')
+                    WHERE action_type IN ('smartfill', 'smartenrich', 'investorfill', 'newslookup')
                       AND DATE(created_at) = CURRENT_DATE()
                     GROUP BY action_type"""
         try:

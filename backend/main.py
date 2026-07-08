@@ -980,11 +980,38 @@ class OutreachSendRequest(BaseModel):
     company_name: Optional[str] = None
 
 
+def _stored_news_signal(company_data: dict) -> str:
+    """
+    Reuse what scoring already found: the market-sentiment (and employee-growth)
+    evidence stored in score_details contains press/award/hiring specifics.
+    Zero cost — this is the primary news source for outreach hooks.
+    """
+    import json as _json
+    raw = company_data.get("score_details")
+    if not raw:
+        return ""
+    try:
+        details = _json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return ""
+    parts = []
+    for key in ("market_sentiment", "employee_growth"):
+        metric = details.get(key) or {}
+        val = (metric.get("value") or "").strip()
+        # Only pass specifics, not generic assessments
+        if val and len(val) > 15 and not val.lower().startswith(("no ", "none", "n/a", "minimal", "little")):
+            parts.append(val)
+    return "; ".join(parts[:2])
+
+
 @app.post("/outreach/draft/{company_name}")
 async def draft_outreach(company_name: str):
-    """Generate a personalised outreach email draft using Gemini AI."""
+    """
+    Personalised outreach draft. News hook priority:
+      1. Signals already captured by scoring (score_details) — free
+      2. One grounded news search — only if nothing stored, budget-enforced
+    """
     logger.info(f"Outreach draft requested for: {company_name}")
-    # Fetch company data from BQ
     company_data = {"name": company_name}
     try:
         for c in bq_handler.get_universe():
@@ -993,7 +1020,23 @@ async def draft_outreach(company_name: str):
                 break
     except Exception:
         pass
-    result = draft_outreach_email(company_data)
+
+    news_hook = _stored_news_signal(company_data)
+    hook_source = "scoring intelligence" if news_hook else ""
+    if not news_hook:
+        try:
+            _enforce_grounding_budget(1, "Outreach news lookup")
+            from services.outreach_service import find_news_hook
+            news_hook = find_news_hook(company_name, company_data.get("website", ""))
+            if news_hook:
+                hook_source = "fresh web search"
+                bq_handler.log_smartfill(company_name, kind="newslookup")
+        except HTTPException:
+            logger.info("News lookup skipped — grounding budget reached; drafting without a hook")
+
+    result = draft_outreach_email(company_data, news_hook=news_hook)
+    result["news_hook"] = news_hook
+    result["news_hook_source"] = hook_source
     return result
 
 

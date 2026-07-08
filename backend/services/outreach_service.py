@@ -20,10 +20,65 @@ SENDER_NAME = os.getenv("OUTREACH_NAME", "Beatrice Carrara")
 SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 
 
-def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
+# Portfolio proof points — real Averroes investments, referenced in outreach.
+# Keep factual and plain; the prompt forbids hype around them.
+PORTFOLIO_PROOF = (
+    "Averroes has backed companies including Glacier and Journey. "
+    "Both have grown strongly since we invested, with our capital and "
+    "hands-on operating support."
+)
+
+
+def find_news_hook(company_name: str, website: str = "") -> str:
     """
-    Use Gemini to draft a personalised outreach email.
-    Uses ONLY the company data already in BQ — no Google Search, saving AI credits.
+    One grounded Gemini search for a SPECIFIC, RECENT signal about the company
+    (last ~60 days): product launch, award, senior hire, customer win, funding.
+    Returns a short factual sentence or "" — never invents.
+    Costs 1 grounded call; the caller enforces the daily budget.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key or not company_name:
+        return ""
+    try:
+        from google import genai
+        from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"""Search for recent news (last 60 days) about the company "{company_name}"{f' ({website})' if website else ''}.
+
+Look for ONE specific, verifiable item a private equity partner could naturally
+mention when writing to the founder: a product launch, award, notable customer,
+senior hire, partnership, or funding announcement.
+
+Return ONLY valid JSON: {{"found": true/false, "hook": "one plain factual sentence with the specific item and rough timing, or empty", "source": "publication/site name or empty"}}
+
+Rules: only items you actually found via search about THIS company. If nothing
+specific and recent, return found=false. Never guess."""
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())], temperature=0.2),
+        )
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        start, end = text.find("{"), text.rfind("}")
+        result = json.loads(text[start:end + 1]) if start != -1 else {}
+        if result.get("found") and result.get("hook"):
+            hook = result["hook"].strip()
+            src = (result.get("source") or "").strip()
+            logger.info(f"[Outreach] News hook for '{company_name}': {hook[:80]}")
+            return f"{hook}" + (f" (via {src})" if src else "")
+        return ""
+    except Exception as e:
+        logger.warning(f"[Outreach] News lookup failed for '{company_name}': {e}")
+        return ""
+
+
+def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, str]:
+    """
+    Use Gemini to draft a personalised outreach email from stored BQ data,
+    plus an optional recent-news hook (found separately — see find_news_hook).
     Returns: {"subject": "...", "body": "...", "to": "..."}
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -94,6 +149,21 @@ def draft_outreach_email(company_data: Dict) -> Dict[str, str]:
 
     WHAT WE KNOW ABOUT THE COMPANY (do not use anything beyond this):
     {company_context}
+
+    {f'RECENT SIGNAL (verified — you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found — do NOT invent one; open with what they build instead.'}
+
+    AVERROES PROOF POINT (real portfolio — use once, plainly):
+    {PORTFOLIO_PROOF}
+
+    EMAIL STRUCTURE (follow this shape, but vary the wording and rhythm):
+    1. Opening line: the recent signal if provided, otherwise one specific thing
+       about what they build or who they serve.
+    2. Why you are writing: their profile fits what Averroes invests in; be honest
+       about typically taking a significant stake.
+    3. ONE plain proof sentence naming Glacier and Journey — e.g. "We backed
+       Glacier and Journey, and both have grown strongly since." No superlatives,
+       no "value creation" language, just the fact.
+    4. CTA: a short call, their timing.
 
     LENGTH & OPENING: {length_rule}
 
