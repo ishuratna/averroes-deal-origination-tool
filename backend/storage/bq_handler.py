@@ -86,6 +86,8 @@ class BigQueryHandler:
         ("revenue_estimate_m", "FLOAT64"),
         ("revenue_source", "STRING"),
         ("revenue_confidence", "STRING"),
+        ("gross_profit_y1", "FLOAT64"),
+        ("gross_profit_y2", "FLOAT64"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),

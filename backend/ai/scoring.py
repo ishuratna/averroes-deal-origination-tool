@@ -85,27 +85,57 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
+# Sector classification for margin/multiplier rules (SIC codes + text signals)
+_SOFTWARE_SICS = ("6201", "6202", "6209", "6311", "6312", "5829")   # software dev, IT consultancy, data, publishing
+_ASSET_HEAVY_SICS = ("64", "68")                                    # financial holding, property
+_SOFTWARE_WORDS = ("saas", "software", "platform", "cloud", "app", "api", "data", "analytics", "ai", "cyber")
+_SERVICES_WORDS = ("consult", "agency", "services", "outsourc", "recruit", "managed")
+
+
+def _classify_sector(company: dict) -> str:
+    """'software' | 'services' | 'asset_heavy' | 'unknown' — from SIC codes, then text."""
+    sics = str(company.get("ch_sic_codes") or "")
+    for code in [s.strip() for s in sics.split(",") if s.strip()]:
+        if code.startswith(_ASSET_HEAVY_SICS):
+            return "asset_heavy"
+        if code.startswith(_SOFTWARE_SICS):
+            return "software"
+    text = f"{company.get('sector', '')} {company.get('keywords', '')} {company.get('description', '')}".lower()
+    if any(w in text for w in _SOFTWARE_WORDS):
+        return "software"
+    if any(w in text for w in _SERVICES_WORDS):
+        return "services"
+    return "unknown"
+
+
+# Business rules (agreed 2026-07): gross margins by sector for the GP→revenue rule
+_GROSS_MARGINS = {"software": 0.80, "services": 0.50, "unknown": 0.70, "asset_heavy": 0.70}
+# Asset-turnover multipliers by sector; asset_heavy = assets say nothing about revenue
+_ASSET_MULTIPLIERS = {"software": 3.0, "services": 2.5, "unknown": 2.0}
+
+
 def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dict]:
     """
-    Estimate annual revenue in £M.
+    Estimate annual revenue in £M. Business rules (agreed with IC, 2026-07):
 
-    Rules:
-      1. Filed/reported revenue always wins outright (CH filings, then PitchBook)
-         → confidence "high", no proxies consulted.
-      2. Otherwise compute ALL available local proxies and take the MEDIAN:
-           - employees × £100K/head (conservative UK B2B SaaS rate)
-           - total assets × 2.5 (tech multiplier)
-           - EBITDA × 6.5
-           - valuation ÷ 6
-           - last financing round × 3
-         Confidence: "medium" if 2+ proxies agree within 2x of each other,
-         otherwise "low".
-      3. If no local signal at all and allow_gemini: Gemini + web search
-         estimate → confidence "low".
+      1. Filed/reported revenue wins outright (CH turnover, then PitchBook) → HIGH.
+      2. Filed GROSS PROFIT overrides all inference: revenue = GP ÷ sector gross
+         margin (software 80%, services 50%, unknown 70%) → MEDIUM (filed data +
+         one assumption). Proxy median still computed as a sanity check and any
+         >2x disagreement is noted in the provenance.
+      3. Otherwise MEDIAN of local proxies:
+           employees × £100K/head · assets × sector multiplier (software 3.0,
+           services 2.5, unknown 2.0; skipped for holding/property companies) ·
+           EBITDA × 6.5 · valuation ÷ 6 · last round × 3
+         Cash rule: if cash > 60% of total assets (post-fundraise signature),
+         assets minus cash is used instead.
+         Confidence: MEDIUM if 2+ proxies within 2x, else LOW.
+      4. Gemini + web search joins the median whenever local confidence is LOW
+         (not only when nothing exists). Alone, it stays LOW.
 
     Returns {"rev_m", "source", "confidence", "is_estimate"} or None.
     """
-    # 1. Actual revenue — CH filings (raw GBP → £M), then PitchBook
+    # ── Rule 1: actual revenue ──
     rev = _safe_float(company.get("revenue_y1"))
     if rev is not None:
         return {"rev_m": rev / 1_000_000, "source": "CH filings", "confidence": "high", "is_estimate": False}
@@ -114,7 +144,9 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
     if rev is not None:
         return {"rev_m": rev, "source": "PitchBook", "confidence": "high", "is_estimate": False}
 
-    # 2. Local proxies — compute everything we have, take the median
+    sector = _classify_sector(company)
+
+    # ── Rule 3 proxies (computed early so the GP rule can sanity-check against them) ──
     proxies = []  # (estimate_m, label)
 
     employees = _safe_float(company.get("employees")) or _safe_float(company.get("employees_ch"))
@@ -122,8 +154,16 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
         proxies.append((employees * 0.1, f"employees ({int(employees)} × £100K)"))
 
     assets = _safe_float(company.get("total_assets_y1"))
-    if assets is not None:
-        proxies.append((assets / 1_000_000 * 2.5, "total assets × 2.5"))
+    if assets is not None and sector != "asset_heavy":
+        assets_m = assets / 1_000_000
+        cash = _safe_float(company.get("cash_y1"))
+        label_extra = ""
+        if cash is not None and cash > 0.6 * assets:
+            assets_m = max(0.0, (assets - cash) / 1_000_000)  # post-fundraise cash pile
+            label_extra = ", cash-adjusted"
+        if assets_m > 0:
+            mult = _ASSET_MULTIPLIERS.get(sector, 2.0)
+            proxies.append((assets_m * mult, f"assets × {mult} ({sector}{label_extra})"))
 
     ebitda = _safe_float(company.get("estimated_ebitda"))
     if ebitda is not None:
@@ -137,22 +177,51 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
     if last_round is not None:
         proxies.append((last_round * 3, "last round × 3"))
 
-    if proxies:
-        values = sorted(p[0] for p in proxies)
-        n = len(values)
-        median = values[n // 2] if n % 2 == 1 else (values[n // 2 - 1] + values[n // 2]) / 2
+    def _median(vals):
+        vals = sorted(vals)
+        n = len(vals)
+        return vals[n // 2] if n % 2 == 1 else (vals[n // 2 - 1] + vals[n // 2]) / 2
 
-        # Confidence: medium if 2+ proxies agree within 2x, else low
-        confidence = "low"
-        if n >= 2 and values[-1] <= values[0] * 2:
-            confidence = "medium"
+    # ── Rule 2: filed gross profit overrides inference ──
+    gp = _safe_float(company.get("gross_profit_y1"))
+    if gp is not None:
+        margin = _GROSS_MARGINS.get(sector, 0.70)
+        gp_rev = (gp / 1_000_000) / margin
+        source = f"gross profit ÷ {margin:.0%} margin ({sector}, filed accounts)"
+        if proxies:
+            proxy_median = _median([p[0] for p in proxies])
+            if proxy_median > 0 and (gp_rev / proxy_median > 2 or proxy_median / gp_rev > 2):
+                source += f"; note: proxy median disagrees (£{proxy_median:.1f}M)"
+        logger.info(f"[Revenue] '{company.get('name')}' £{gp_rev:.1f}M from filed gross profit ({sector})")
+        return {"rev_m": gp_rev, "source": source, "confidence": "medium", "is_estimate": True}
+
+    # ── Rule 3: median of proxies ──
+    if proxies:
+        values = [p[0] for p in proxies]
+        median = _median(values)
+        svals = sorted(values)
+        confidence = "medium" if (len(values) >= 2 and svals[-1] <= svals[0] * 2) else "low"
+
+        # ── Rule 4: weak jury → Gemini joins the median ──
+        if confidence == "low" and allow_gemini:
+            g = _gemini_revenue_estimate(company)
+            if g is not None:
+                values.append(g)
+                proxies.append((g, "Gemini + web search"))
+                median = _median(values)
+                # Re-check agreement including the web estimate
+                close = sorted(values)
+                if len(values) >= 2 and any(
+                    close[i + 1] <= close[i] * 2 for i in range(len(close) - 1)
+                ):
+                    confidence = "medium"
 
         labels = ", ".join(p[1] for p in proxies)
-        source = f"median of {n} prox{'ies' if n > 1 else 'y'} ({labels})"
+        source = f"median of {len(proxies)} prox{'ies' if len(proxies) > 1 else 'y'} ({labels})"
         logger.info(f"[Revenue] '{company.get('name')}' estimated £{median:.1f}M ({confidence}) from: {labels}")
         return {"rev_m": median, "source": source, "confidence": confidence, "is_estimate": True}
 
-    # 3. Last resort: Gemini + web search
+    # ── Rule 4 fallback: nothing local at all ──
     if allow_gemini:
         gemini_estimate = _gemini_revenue_estimate(company)
         if gemini_estimate is not None:

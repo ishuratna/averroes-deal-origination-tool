@@ -323,6 +323,10 @@ EXTRACT THE FOLLOWING (set to null if not present in the document):
 
 2. PROFIT / LOSS BEFORE TAX — Look for "Profit/(loss) before taxation", "Profit before tax"
 
+2b. GROSS PROFIT — Look for "Gross profit" in the P&L. IMPORTANT: many small/filleted
+   accounts hide turnover but still show gross profit — extract it whenever present,
+   it is our best path to estimating revenue.
+
 3. TOTAL ASSETS — Look in the Balance Sheet for "Total assets"
 
 4. NET ASSETS — "Net assets", "Total net assets", or "Total assets less current liabilities" minus long-term liabilities
@@ -352,6 +356,8 @@ Return ONLY valid JSON:
     "revenue_prior": null or number,
     "profit_current": null or number,
     "profit_prior": null or number,
+    "gross_profit_current": null or number,
+    "gross_profit_prior": null or number,
     "total_assets_current": null or number,
     "total_assets_prior": null or number,
     "net_assets_current": null or number,
@@ -738,6 +744,7 @@ def extract_ch_financials(
                 "total_assets": parsed.get("total_assets_current"),
                 "net_assets": parsed.get("net_assets_current"),
                 "cash": parsed.get("cash_current"),
+                "gross_profit": parsed.get("gross_profit_current"),
             }))
 
         # Prior year from this filing (comparative figures)
@@ -749,6 +756,7 @@ def extract_ch_financials(
                 "total_assets": parsed.get("total_assets_prior"),
                 "net_assets": parsed.get("net_assets_prior"),
                 "cash": parsed.get("cash_prior"),
+                "gross_profit": parsed.get("gross_profit_prior"),
             }))
 
     # Deduplicate by period end date (prefer the current-year extraction)
@@ -766,6 +774,7 @@ def extract_ch_financials(
         result[f"revenue_{suffix}"] = data.get("revenue")
         result[f"revenue_{suffix}_date"] = date
         result[f"profit_{suffix}"] = data.get("profit")
+        result[f"gross_profit_{suffix}"] = data.get("gross_profit")
         if i == 0:
             result["profit_y1_date"] = date
             result["total_assets_y1"] = data.get("total_assets")
