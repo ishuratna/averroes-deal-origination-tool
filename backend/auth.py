@@ -25,7 +25,10 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-AUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+# OAuth client IDs are public identifiers (they ship in the browser bundle),
+# so a baked-in default is safe. Env var still overrides for rotation.
+_DEFAULT_CLIENT_ID = "890361705054-c5glgcq0029d5o447t114kl19hmvc8lo.apps.googleusercontent.com"
+AUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", _DEFAULT_CLIENT_ID).strip()
 ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "averroescapital.com").strip().lower()
 ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()}
 
