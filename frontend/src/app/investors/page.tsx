@@ -124,7 +124,13 @@ export default function Investors() {
       if (bulkCancelRef.current) break;
       setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
       try { await dealApi.investorFill(names[i]); ok++; }
-      catch (e) { failed++; console.error(`Bulk InvestorFill failed for ${names[i]}`, e); }
+      catch (e: any) {
+        if ((e?.message || '').includes('budget') || (e?.message || '').includes('limit')) {
+          alert(`Daily free-tier budget reached after ${ok} investors — the rest are preserved for tomorrow.`);
+          break;
+        }
+        failed++; console.error(`Bulk InvestorFill failed for ${names[i]}`, e);
+      }
       await new Promise(r => setTimeout(r, 1500));
     }
     setBulkProgress({ done: ok + failed, total: names.length, current: '', ok, failed });

@@ -328,8 +328,12 @@ class BigQueryHandler:
             logger.error(f"Failed to update status for {company_name}: {e}")
             return False
 
+    # Worst-case grounded (Google Search) Gemini calls per operation type.
+    # The shared daily budget guarantees we NEVER cross the free 1,500/day tier.
+    GROUNDING_WEIGHTS = {"smartfill": 3, "smartenrich": 2, "investorfill": 1}
+
     def count_smartfills_today(self) -> int:
-        """How many SmartFill runs have been logged today (UTC). Powers the daily cost cap."""
+        """How many SmartFill/SmartEnrich runs have been logged today (UTC)."""
         if not self.client:
             return 0
         query = f"""SELECT COUNT(*) AS n FROM `{self.activity_table_id}`
@@ -339,6 +343,27 @@ class BigQueryHandler:
             return int(rows[0].n) if rows else 0
         except Exception as e:
             logger.error(f"Failed to count today's smartfills: {e}")
+            return 0
+
+    def grounded_calls_used_today(self) -> int:
+        """
+        Worst-case grounded search calls consumed today across ALL AI operations
+        (SmartFill ×3, SmartEnrich ×2, InvestorFill ×1). Conservative by design:
+        assumes every run used its maximum, so the free tier can never be crossed.
+        """
+        if not self.client:
+            return 0
+        query = f"""SELECT action_type, COUNT(*) AS n FROM `{self.activity_table_id}`
+                    WHERE action_type IN ('smartfill', 'smartenrich', 'investorfill')
+                      AND DATE(created_at) = CURRENT_DATE()
+                    GROUP BY action_type"""
+        try:
+            total = 0
+            for row in self.client.query(query).result():
+                total += self.GROUNDING_WEIGHTS.get(row.action_type, 3) * int(row.n)
+            return total
+        except Exception as e:
+            logger.error(f"Failed to count grounded calls: {e}")
             return 0
 
     def log_smartfill(self, company_name: str, kind: str = "smartfill") -> bool:

@@ -384,22 +384,38 @@ async def upload_custom_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Daily cost cap — keeps grounded Gemini calls inside the free 1,500/day quota.
-# Configurable without deploy: gcloud run services update averroes-deal-backend
-#   --update-env-vars DAILY_SMARTFILL_CAP=600 (never use --set-env-vars)
-DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))
+# ── Cost protection: paid search-grounding is NEVER allowed ──────────────────
+# Google gives 1,500 free grounded prompts/day. A shared weighted budget across
+# ALL AI operations (SmartFill ×3 worst case, SmartEnrich ×2, InvestorFill ×1)
+# is enforced before any AI run. Both knobs are env vars (change with
+# --update-env-vars, never --set-env-vars):
+DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))      # SmartFill/Enrich runs per day
+DAILY_GROUNDING_BUDGET = int(os.getenv("DAILY_GROUNDING_BUDGET", "1400"))  # grounded calls, 100 safety buffer
+
+
+def _enforce_grounding_budget(weight: int, operation: str):
+    """Reject the run if it could push today's grounded calls past the free tier."""
+    used = bq_handler.grounded_calls_used_today()
+    if used + weight > DAILY_GROUNDING_BUDGET:
+        raise HTTPException(
+            status_code=429,
+            detail=(f"Daily free-tier grounding budget protection: {used}/{DAILY_GROUNDING_BUDGET} "
+                    f"grounded calls used today — {operation} would exceed it. "
+                    f"Paid grounding is never used; resets at midnight UTC."),
+        )
 
 
 @app.post("/smartfill/{company_name}")
 async def smartfill_company(company_name: str, bulk: bool = Query(False, description="Bulk mode: skips web-search scoring for Too Large companies (cost gate)")):
     """SmartFill: Qualify (UK/Ireland + Tech) + enrich founder/LinkedIn/website."""
-    # ── Daily cost cap ──
+    # ── Daily cost caps: run cap + shared grounding budget ──
     used_today = bq_handler.count_smartfills_today()
     if used_today >= DAILY_SMARTFILL_CAP:
         raise HTTPException(
             status_code=429,
             detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day, keeps AI search calls in the free tier). Resets at midnight UTC — {used_today} used today.",
         )
+    _enforce_grounding_budget(3, "SmartFill")
     logger.info(f"SmartFill triggered for: {company_name} ({used_today + 1}/{DAILY_SMARTFILL_CAP} today)")
     company_data = {"name": company_name}
     try:
@@ -743,6 +759,7 @@ async def smartenrich_company(company_name: str):
     used_today = bq_handler.count_smartfills_today()
     if used_today >= DAILY_SMARTFILL_CAP:
         raise HTTPException(status_code=429, detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day). Resets at midnight UTC.")
+    _enforce_grounding_budget(2, "SmartEnrich")
 
     company = None
     for c in bq_handler.get_universe():
@@ -1189,18 +1206,25 @@ async def investorfill_eligible(skip_researched: bool = Query(True, description=
         eligible.append(inv.get("name"))
 
     n = len(eligible)
+    # Trim to today's remaining free-tier grounding budget (1 grounded call each)
+    grounding_used = bq_handler.grounded_calls_used_today()
+    grounding_remaining = max(0, DAILY_GROUNDING_BUDGET - grounding_used)
+    runnable = eligible[:grounding_remaining]
     return {
         "total_investors": total,
         "excluded_outside_mandate": excluded_mandate,
         "excluded_no_relevant_strategy": excluded_strategy,
         "skipped_already_researched": skipped_researched,
         "eligible_count": n,
-        "eligible_names": eligible,
+        "grounding_budget": DAILY_GROUNDING_BUDGET,
+        "grounding_used_today": grounding_used,
+        "runnable_now": len(runnable),
+        "eligible_names": runnable,
         "estimate": {
             "gemini_calls_per_investor": 1,
-            "total_gemini_calls": n,
-            "token_cost_usd_typical": round(n * 0.006, 2),
-            "grounding_note": "1 grounded search call per investor. First ~1,500/day free; beyond that $35/1K adds ~$0.035/investor.",
+            "total_gemini_calls": len(runnable),
+            "token_cost_usd_typical": round(len(runnable) * 0.006, 2),
+            "grounding_note": "1 grounded call per investor, deducted from the shared daily free-tier budget — paid grounding is never used.",
         },
     }
 
@@ -1211,6 +1235,8 @@ async def investorfill(investor_name: str):
     InvestorFill: Gemini + Google Search researches the investor —
     type, AUM, ticket size, contacts + 4-criteria LP fit score.
     """
+    _enforce_grounding_budget(1, "InvestorFill")
+
     # Pull existing context (portfolio overlap helps the search)
     context = {}
     try:
@@ -1247,6 +1273,12 @@ async def investorfill(investor_name: str):
 
     if not investor_handler.update_enrichment(investor_name, result):
         raise HTTPException(status_code=500, detail="Database update failed")
+
+    # Count this run against the shared grounding budget (best-effort)
+    try:
+        bq_handler.log_smartfill(investor_name, kind="investorfill")
+    except Exception as e:
+        logger.warning(f"Failed to log investorfill run: {e}")
 
     return {"status": "Success", "investor": investor_name, **result}
 
