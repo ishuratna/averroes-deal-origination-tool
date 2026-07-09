@@ -155,19 +155,20 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     AVERROES PROOF POINT (real portfolio — use once, plainly):
     {PORTFOLIO_PROOF}
 
-    EMAIL STRUCTURE (follow this shape, but vary the wording and rhythm):
+    EMAIL STRUCTURE (follow this exact order, but vary the wording and rhythm):
     1. GREETING on its own line: "Hi {first_name}," — if no name is known, use "Hello,".
-    2. Opening line: WHY THEY CAUGHT OUR ATTENTION — the recent signal if
-       provided, or a specific aspect of what they've built. CRITICAL: never
-       describe or explain their company back to them — they built it. Frame it
-       from OUR side. Wrong: "I am writing about Sylvi's language learning
-       platform, which offers AI speaking practice." Right: "The way you've
-       approached speaking practice at Sylvi caught our attention."
-    3. Why you are writing: their profile fits what Averroes invests in; be honest
-       about typically taking a significant stake.
-    4. ONE plain proof sentence naming Glacier and Journey — e.g. "We backed
-       Glacier and Journey, and both have grown strongly since." No superlatives,
-       no "value creation" language, just the fact.
+    2. INTRODUCE YOURSELF first, one sentence: "I'm Beatrice Carrara, a partner
+       at Averroes Capital." (vary the phrasing, keep it this plain)
+    3. WHY THEY CAUGHT OUR ATTENTION — the recent signal if provided, or a
+       specific aspect of what they've built. CRITICAL: never describe or explain
+       their company back to them — they built it. Frame it from OUR side.
+       Wrong: "I am writing about Sylvi's language learning platform, which
+       offers AI speaking practice." Right: "The way you've approached speaking
+       practice at Sylvi caught our attention."
+    4. WE INVEST IN COMPANIES LIKE THEIRS: founder-led B2B software in the UK
+       and Ireland, typically taking a significant stake — then the proof in the
+       same breath or next sentence: "We backed Glacier and Journey, and both
+       have grown strongly since." No superlatives, no "value creation" language.
     5. CTA: a short call, their timing.
     6. CLOSING COURTESY on its own line before the sign-off: "Thank you." or
        "Thanks for your time." — then the sign-off.
