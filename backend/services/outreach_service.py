@@ -132,11 +132,11 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     thin_data = rich_signals < 2
 
     length_rule = (
-        "80-110 words. You know little about this company, so skip the observation "
-        "sentence entirely and keep it a brief, honest introduction."
+        "80-110 words. You know little about this company, so keep the observation to "
+        "one honest sentence at most and lean on who Averroes is."
         if thin_data else
-        "120-170 words across two short paragraphs plus the background block. Ground the "
-        "observation in specific, verifiable detail from the data or the recent signal."
+        "140-190 words. Spend the extra length on the observation (structure item 3): "
+        "depth there is what separates this email from every other investor's."
     )
 
     prompt = f"""
@@ -152,41 +152,39 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
     {f'RECENT SIGNAL (verified, you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found. Do NOT invent one; open with what they build instead.'}
 
-    EMAIL STRUCTURE (modelled on real KKR/TA/Highland founder outreach; follow
-    this shape and order, vary the wording naturally):
+    EMAIL STRUCTURE (follow this exact order; vary the wording naturally.
+    Depth modelled on real KKR/TA/Highland founder outreach):
 
-    PARAGRAPH 1 (the personal part):
     1. GREETING: "Hi {first_name}," (if no name is known, use "Hello,").
-    2. WHO I AM, with a specialisation angle when the data allows it:
-       "I am a Partner at Averroes Capital, a London-based growth equity
-       investor focused on founder-led technology businesses" and, where the
-       sector is known, tie it in ("where I lead our work in [their space]"
-       style, only if natural).
-    3. WHY THEM: "We have been following {name}" or "I recently came across
-       {name}", plus ONE informed observation that shows you understand their
-       PROBLEM SPACE, not just their product. The best move is a market
-       insight: e.g. "improving direct sales against the OTAs is genuinely
-       hard, which is why the way you've built X stood out." Ground it in the
-       data or the recent signal. Never describe their company back to them.
-       If the data is thin, skip the observation rather than faking one.
-
-    PARAGRAPH 2 (intent + ask):
-    4. RELATIONSHIP FRAMING WITH HUMILITY: "We fully recognise this may not be
-       on the agenda right now. Our approach is to get to know the founders of
-       companies we admire early, so we can be helpful at the right time."
-       (vary the wording)
-    5. CTA: "Would you have 20-30 minutes for an introductory call in the
-       coming weeks? I would love to hear where you see {name} going."
-
-    PARAGRAPH 3 (background block, 2-3 sentences, factual):
-    6. "For some background on us:" Averroes is a London-based growth equity
-       investor in founder-led software companies across the UK and Ireland.
-       We take meaningful stakes and support portfolio companies hands-on with
-       operations, not just capital. We have backed companies including Glacier
-       and Journey, both of which have grown strongly since we invested.
-       (Use only these facts. NEVER invent fund sizes, AUM figures or numbers.)
-
-    7. CLOSE: "Look forward to hearing from you," then the sign-off exactly:
+    2. HOW WE FOUND THEM, one sentence: "I recently came across {name} and
+       thought it looked really interesting." or "I was reading about {name}
+       recently and the work you're doing caught my attention." (vary)
+    3. THE OBSERVATION, 2-3 sentences with real depth. This is where most
+       drafts fail by being shallow. Show you understand their PROBLEM SPACE:
+       why the problem is genuinely hard or economically significant, and then
+       what specifically about their approach stood out. Best-in-class example
+       of the move: "Improving direct sales against the host of OTAs and
+       metasearches is tricky, so we think there is a huge opportunity in
+       improving hotel performance. The way you've built X around that stood
+       out." Ground everything in the data or the recent signal. Never
+       describe their company back to them; they built it.
+       If the data is thin, keep this to one honest sentence or skip it.
+    4. WHO I AM: "I am a Partner at Averroes Capital, a London-based growth
+       equity investor focused on founder-led technology businesses. We
+       typically get involved where a company has a proven product and is
+       looking at the next stage of growth."
+    5. CREDIBILITY + SUPPORT, 1-2 sentences: we support portfolio companies
+       hands-on with operations, not just capital, and we have backed companies
+       including Glacier and Journey, both of which have grown strongly since
+       we invested. (Use only these facts. NEVER invent fund sizes, AUM
+       figures, or any numbers.)
+    6. HUMILITY + CURIOSITY: "I appreciate this may not be a priority right
+       now, but I would love to learn more about what you are building at
+       {name} and where you see the opportunity going." (a good variation is
+       the longer-relationship framing: "our approach is to get to know
+       founders early so we can be helpful at the right time")
+    7. CTA: "Would you be open to a 20-minute call in the coming weeks?"
+    8. SIGN-OFF, exactly:
        Best,
        Beatrice
 
