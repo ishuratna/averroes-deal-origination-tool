@@ -298,11 +298,17 @@ function UniverseInner() {
     } finally { setOutreachLoading(false); }
   };
 
-  const handleSendOutreach = () => {
-    if (!outreachDraft) return;
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(outreachDraft.to)}&su=${encodeURIComponent(outreachDraft.subject)}&body=${encodeURIComponent(outreachDraft.body)}`;
-    window.open(gmailUrl, '_blank');
-    setOutreachSent(true);
+  const [outreachSending, setOutreachSending] = useState(false);
+  const handleSendOutreach = async () => {
+    if (!outreachDraft?.to) return;
+    setOutreachSending(true);
+    try {
+      await dealApi.sendOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.company);
+      setOutreachSent(true);
+      await loadData();  // stage bumps to Engaged
+    } catch (err: any) {
+      alert(`Send failed: ${err.message}`);
+    } finally { setOutreachSending(false); }
   };
 
   const handleCopyDraft = () => {
@@ -542,9 +548,9 @@ function UniverseInner() {
               ) : outreachSent ? (
                 <div className="outreach-sent">
                   <div className="sent-icon">&#10003;</div>
-                  <h4>Draft Opened in Gmail</h4>
-                  <p>Your outreach to <strong>{outreachDraft?.to}</strong> is ready in Gmail.</p>
-                  <p className="sent-sub">Review and hit Send in the Gmail compose window.</p>
+                  <h4>Email Sent</h4>
+                  <p>Sent to <strong>{outreachDraft?.to}</strong> from Beatrice Carrara &lt;beatrice@averroescapital.com&gt;.</p>
+                  <p className="sent-sub">The company&apos;s stage has moved to Engaged.</p>
                 </div>
               ) : outreachDraft ? (
                 <div className="outreach-form">
@@ -561,7 +567,7 @@ function UniverseInner() {
                     <textarea rows={12} value={outreachDraft.body} onChange={(e) => setOutreachDraft({...outreachDraft, body: e.target.value})} />
                   </div>
                   <div className="form-row from-row">
-                    <span className="from-label">From: Beatrice Carrara &lt;iratna@averroescapital.com&gt;</span>
+                    <span className="from-label">From: Beatrice Carrara &lt;beatrice@averroescapital.com&gt;</span>
                   </div>
                 </div>
               ) : null}
@@ -573,7 +579,10 @@ function UniverseInner() {
                 <>
                   <button className="outreach-cancel-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Cancel</button>
                   <button className="outreach-copy-btn" onClick={handleCopyDraft}>Copy Draft</button>
-                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={!outreachDraft.to}>Open in Gmail</button>
+                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={!outreachDraft.to || outreachSending}
+                    title={!outreachDraft.to ? 'No recipient email — type one above or run SmartFill to find contacts' : ''}>
+                    {outreachSending ? 'Sending…' : 'Send Email'}
+                  </button>
                 </>
               ) : null}
             </div>
