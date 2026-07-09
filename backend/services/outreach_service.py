@@ -1,7 +1,7 @@
 """
 Outreach Service
 Generates personalised PE/growth capital outreach emails using Gemini AI.
-Uses company data already saved in BQ (from SmartFill) — no extra Google Search calls.
+Uses company data already saved in BQ (from SmartFill) - no extra Google Search calls.
 """
 import os
 import json
@@ -20,7 +20,7 @@ SENDER_NAME = os.getenv("OUTREACH_NAME", "Beatrice Carrara")
 SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 
 
-# Portfolio proof points — real Averroes investments, referenced in outreach.
+# Portfolio proof points - real Averroes investments, referenced in outreach.
 # Keep factual and plain; the prompt forbids hype around them.
 PORTFOLIO_PROOF = (
     "Averroes has backed companies including Glacier and Journey. "
@@ -33,7 +33,7 @@ def find_news_hook(company_name: str, website: str = "") -> str:
     """
     One grounded Gemini search for a SPECIFIC, RECENT signal about the company
     (last ~60 days): product launch, award, senior hire, customer win, funding.
-    Returns a short factual sentence or "" — never invents.
+    Returns a short factual sentence or "" - never invents.
     Costs 1 grounded call; the caller enforces the daily budget.
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -78,7 +78,7 @@ specific and recent, return found=false. Never guess."""
 def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, str]:
     """
     Use Gemini to draft a personalised outreach email from stored BQ data,
-    plus an optional recent-news hook (found separately — see find_news_hook).
+    plus an optional recent-news hook (found separately - see find_news_hook).
     Returns: {"subject": "...", "body": "...", "to": "..."}
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -132,7 +132,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     thin_data = rich_signals < 2
 
     length_rule = (
-        "3-4 sentences. You know little about this company, so keep it plain and honest — "
+        "3-4 sentences. You know little about this company, so keep it plain and honest: "
         "a brief cold introduction that leans on who Averroes is, not on faked familiarity."
         if thin_data else
         "4-6 sentences. Ground the opening in ONE specific, verifiable detail from the data "
@@ -145,33 +145,33 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     stake and working closely with founders on the next phase of growth.
 
     Write an outreach email to {contact_name or 'the founder'} at {name}. You are writing as
-    yourself — an experienced investor a founder would want to hear from — not as a marketer.
+    yourself, an experienced investor a founder would want to hear from, not as a marketer.
 
     WHAT WE KNOW ABOUT THE COMPANY (do not use anything beyond this):
     {company_context}
 
-    {f'RECENT SIGNAL (verified — you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found — do NOT invent one; open with what they build instead.'}
+    {f'RECENT SIGNAL (verified, you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found. Do NOT invent one; open with what they build instead.'}
 
-    AVERROES PROOF POINT (real portfolio — use once, plainly):
+    AVERROES PROOF POINT (real portfolio, use once, plainly):
     {PORTFOLIO_PROOF}
 
     EMAIL STRUCTURE (follow this exact order, but vary the wording and rhythm):
-    1. GREETING on its own line: "Hi {first_name}," — if no name is known, use "Hello,".
+    1. GREETING on its own line: "Hi {first_name}," (if no name is known, use "Hello,").
     2. INTRODUCE YOURSELF first, one sentence: "I'm Beatrice Carrara, a partner
        at Averroes Capital." (vary the phrasing, keep it this plain)
-    3. WHY THEY CAUGHT OUR ATTENTION — the recent signal if provided, or a
+    3. WHY THEY CAUGHT OUR ATTENTION: the recent signal if provided, or a
        specific aspect of what they've built. CRITICAL: never describe or explain
-       their company back to them — they built it. Frame it from OUR side.
+       their company back to them. They built it. Frame it from OUR side.
        Wrong: "I am writing about Sylvi's language learning platform, which
        offers AI speaking practice." Right: "The way you've approached speaking
        practice at Sylvi caught our attention."
     4. WE INVEST IN COMPANIES LIKE THEIRS: founder-led B2B software in the UK
-       and Ireland, typically taking a significant stake — then the proof in the
+       and Ireland, typically taking a significant stake. Then the proof in the
        same breath or next sentence: "We backed Glacier and Journey, and both
        have grown strongly since." No superlatives, no "value creation" language.
     5. CTA: a short call, their timing.
     6. CLOSING COURTESY on its own line before the sign-off: "Thank you." or
-       "Thanks for your time." — then the sign-off.
+       "Thanks for your time." Then the sign-off.
 
     LENGTH & OPENING: {length_rule}
 
@@ -186,10 +186,10 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     - CTA: a short call or coffee, their timing. One sentence. No urgency tricks.
     - Sign off exactly: Beatrice Carrara\\nPartner, Averroes Capital
 
-    HARD RULES — the email fails review if it breaks any of these:
+    HARD RULES (the email fails review if it breaks any of these):
     1. NEVER invent facts, numbers, achievements or "news" about the company. If the data
        doesn't say it, the email doesn't say it.
-    2. NEVER quote their financial figures back at them (revenue, headcount, funding) —
+    2. NEVER quote their financial figures back at them (revenue, headcount, funding).
        citing a founder's own numbers in a cold email reads as surveillance, not diligence.
        Use the data only to inform what you choose to say.
     3. Banned phrases and patterns: "I hope this email finds you well", "I came across",
@@ -203,13 +203,13 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        "streamline", "scalable", "robust", "holistic", "strategic fit", "unlock".
        Say the plain version: "use" not "leverage", "grow" not "scale up the business".
     4. No flattery that isn't earned by a specific data point. Respect reads better than praise.
-    5. Subject line: specific and quiet, like a person wrote it (e.g. "Averroes Capital — {name}"
+    5. Subject line: specific and quiet, like a person wrote it (e.g. "Averroes Capital, {name}"
        or a plain reference to their space). Never clickbait, never "Quick question".
     6. Do NOT include email headers (To/From/Date), and never mention databases, research
        tools, or how you found them.
 
     VARIETY: Do not follow a template. Vary the opening line, sentence rhythm and structure
-    from other emails you might write — two founders comparing notes should not see the same
+    from other emails you might write. Two founders comparing notes should not see the same
     skeleton. The compliment-positioning-CTA formula is a template; avoid it.
 
     Return ONLY valid JSON with exactly these keys:
@@ -224,7 +224,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
         client = genai.Client(api_key=api_key)
 
-        # No Google Search — just Gemini with the data we already have.
+        # No Google Search - just Gemini with the data we already have.
         # Higher temperature for structural variety between drafts.
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -244,7 +244,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
         result = json.loads(text)
         return {
-            "subject": result.get("subject", f"Quick intro — Averroes Capital x {name}"),
+            "subject": result.get("subject", f"Averroes Capital, {name}"),
             "body": result.get("body", ""),
             "to": contact_email or "",
             "contact_name": contact_name or "",
@@ -258,7 +258,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     """
     Draft a personalised LP introduction email using stored investor data
-    (PitchBook fields + InvestorFill research). No Google Search — saves credits.
+    (PitchBook fields + InvestorFill research). No Google Search - saves credits.
     """
     api_key = os.getenv("GEMINI_API_KEY")
 
@@ -283,10 +283,10 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     lp_context = "\n".join(context_parts) if context_parts else f"Investor: {name}"
 
     fallback = {
-        "subject": f"Introduction — Averroes Capital (UK lower-mid-market software)",
+        "subject": f"Introduction from Averroes Capital",
         "body": (f"Dear {contact_name.split()[0] if contact_name.strip() else 'colleague'},\n\n"
                  f"I lead investor relations at Averroes Capital, a UK private equity firm focused on founder-led "
-                 f"B2B software companies with £2.5–10M revenue — a segment we believe is structurally underserved.\n\n"
+                 f"B2B software companies with £2.5-10M revenue, a segment we believe is underserved.\n\n"
                  f"Given {name}'s activity in private markets, I thought a brief introduction could be mutually interesting. "
                  f"Would you be open to a short call in the coming weeks?\n\n"
                  f"Best regards,\nBeatrice Carrara\nPartner, Averroes Capital"),
@@ -298,13 +298,13 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
         return fallback
 
     prompt = f"""
-    You are Beatrice Carrara, Partner at Averroes Capital — a UK lower-mid-market private
+    You are Beatrice Carrara, Partner at Averroes Capital, a UK lower-mid-market private
     equity firm investing in founder-led B2B SaaS and software companies (£2.5-10M revenue).
 
     Write a SHORT, professional LP introduction email to {contact_name or 'the principal'}
-    at {name} — a potential LIMITED PARTNER (investor in our fund / co-investor in deals).
+    at {name}, a potential LIMITED PARTNER (investor in our fund / co-investor in deals).
 
-    INVESTOR INTELLIGENCE (from our database — use to personalise):
+    INVESTOR INTELLIGENCE (from our database, use to personalise):
     {lp_context}
 
     EMAIL GUIDELINES:
@@ -318,7 +318,7 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     - No hyperbole, no "exciting opportunity" language. Understated and credible.
     - CTA: offer a short introductory call or to share our strategy note.
     - Sign off: Beatrice Carrara, Partner, Averroes Capital
-    - No email headers — just subject and body.
+    - No email headers. Just subject and body.
 
     Return ONLY valid JSON: {{"subject": "...", "body": "..."}} with \\n for line breaks.
     """
@@ -379,7 +379,7 @@ def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
         return {"status": "sent", "to": to, "subject": subject}
 
     except smtplib.SMTPAuthenticationError:
-        logger.error("Gmail SMTP auth failed — check App Password")
+        logger.error("Gmail SMTP auth failed - check App Password")
         return {"status": "error", "detail": "Gmail authentication failed. Check OUTREACH_SMTP_PASSWORD."}
     except Exception as e:
         logger.error(f"Email send failed: {e}")
@@ -397,15 +397,15 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"Hi {first_name},\n\n"
         f"I've been following {name}'s progress and I'm impressed by what you've built. "
         f"At Averroes Capital, we partner with founder-led B2B tech companies in the UK & Europe "
-        f"to support their next phase of growth — whether that's scaling, expanding, or simply "
+        f"to support their next phase of growth, whether that's scaling, expanding, or simply "
         f"having a like-minded investor in your corner.\n\n"
-        f"Would you be open to a brief 15-minute chat? No pressure at all — happy to work "
+        f"Would you be open to a brief 15-minute chat? No pressure at all. Happy to work "
         f"around your schedule.\n\n"
         f"Best,\nBeatrice Carrara\nPartner, Averroes Capital"
     )
 
     return {
-        "subject": f"{first_name} — quick intro from Averroes Capital",
+        "subject": f"Averroes Capital, introduction",
         "body": body,
         "to": contact_email or "",
         "contact_name": contact_name or "",
