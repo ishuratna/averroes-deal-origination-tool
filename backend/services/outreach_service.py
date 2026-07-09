@@ -156,14 +156,21 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     {PORTFOLIO_PROOF}
 
     EMAIL STRUCTURE (follow this shape, but vary the wording and rhythm):
-    1. Opening line: the recent signal if provided, otherwise one specific thing
-       about what they build or who they serve.
-    2. Why you are writing: their profile fits what Averroes invests in; be honest
+    1. GREETING on its own line: "Hi {first_name}," — if no name is known, use "Hello,".
+    2. Opening line: WHY THEY CAUGHT OUR ATTENTION — the recent signal if
+       provided, or a specific aspect of what they've built. CRITICAL: never
+       describe or explain their company back to them — they built it. Frame it
+       from OUR side. Wrong: "I am writing about Sylvi's language learning
+       platform, which offers AI speaking practice." Right: "The way you've
+       approached speaking practice at Sylvi caught our attention."
+    3. Why you are writing: their profile fits what Averroes invests in; be honest
        about typically taking a significant stake.
-    3. ONE plain proof sentence naming Glacier and Journey — e.g. "We backed
+    4. ONE plain proof sentence naming Glacier and Journey — e.g. "We backed
        Glacier and Journey, and both have grown strongly since." No superlatives,
        no "value creation" language, just the fact.
-    4. CTA: a short call, their timing.
+    5. CTA: a short call, their timing.
+    6. CLOSING COURTESY on its own line before the sign-off: "Thank you." or
+       "Thanks for your time." — then the sign-off.
 
     LENGTH & OPENING: {length_rule}
 
