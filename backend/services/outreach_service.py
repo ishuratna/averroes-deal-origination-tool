@@ -166,12 +166,15 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        offers AI speaking practice." Right: "The way you've approached speaking
        practice at Sylvi caught our attention."
     4. WE INVEST IN COMPANIES LIKE THEIRS: founder-led B2B software in the UK
-       and Ireland, typically taking a significant stake. Then the proof in the
-       same breath or next sentence: "We backed Glacier and Journey, and both
-       have grown strongly since." No superlatives, no "value creation" language.
-    5. CTA: a short call, their timing.
-    6. CLOSING COURTESY on its own line before the sign-off: "Thank you." or
-       "Thanks for your time." Then the sign-off.
+       and Ireland. Then the proof in the same breath or next sentence: "We
+       backed Glacier and Journey, and both have grown strongly since." No
+       superlatives, no "value creation" language. Do not mention stake size
+       here; the CTA carries the intent.
+    5. CTA, this exact shape (vary the wording only lightly):
+       "If you are looking for a buyout or need growth capital to scale, I'd be
+       glad to discuss further over a call."
+    6. Then on its own line: "Look forward to hearing from you."
+    7. CLOSING COURTESY on its own line: "Thank you." Then the sign-off.
 
     LENGTH & OPENING: {length_rule}
 
@@ -179,11 +182,10 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     - Plain English. Write like you talk. Short, common words: help, build, grow, run, talk.
       If a sentence needs reading twice, rewrite it.
     - Plain, confident, understated. Short sentences. One idea per sentence.
-    - Be honest about intent: Averroes invests in companies like theirs, usually taking a
-      significant stake alongside the founder. Do not disguise this as vague "partnership",
-      and do not lead with acquisition language either.
+    - Be honest about intent: the CTA names it plainly ("a buyout or growth capital").
+      Do not disguise it as vague "partnership", and do not repeat the intent twice.
     - State a reason for writing that is true: their sector and profile fit what we invest in.
-    - CTA: a short call or coffee, their timing. One sentence. No urgency tricks.
+    - No urgency tricks anywhere.
     - Sign off exactly: Beatrice Carrara\\nPartner, Averroes Capital
 
     HARD RULES (the email fails review if it breaks any of these):
