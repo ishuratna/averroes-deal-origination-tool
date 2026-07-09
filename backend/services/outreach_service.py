@@ -166,10 +166,11 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        offers AI speaking practice." Right: "The way you've approached speaking
        practice at Sylvi caught our attention."
     4. WE INVEST IN COMPANIES LIKE THEIRS: founder-led B2B software in the UK
-       and Ireland. Then the proof in the same breath or next sentence: "We
-       backed Glacier and Journey, and both have grown strongly since." No
-       superlatives, no "value creation" language. Do not mention stake size
-       here; the CTA carries the intent.
+       and Ireland. Then the proof in the same breath or next sentence, and it
+       must credit BOTH capital and hands-on operational support: "We backed
+       Glacier and Journey, and both have grown strongly with our capital and
+       operational support." No superlatives, no "value creation" language.
+       Do not mention stake size here; the CTA carries the intent.
     5. CTA, this exact shape (vary the wording only lightly):
        "If you are looking for a buyout or need growth capital to scale, I'd be
        glad to discuss further over a call."
