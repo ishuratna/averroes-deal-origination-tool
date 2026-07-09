@@ -132,11 +132,11 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     thin_data = rich_signals < 2
 
     length_rule = (
-        "3-4 sentences. You know little about this company, so keep it plain and honest: "
-        "a brief cold introduction that leans on who Averroes is, not on faked familiarity."
+        "80-110 words. You know little about this company, so skip the observation "
+        "sentence entirely and keep it a brief, honest introduction."
         if thin_data else
-        "4-6 sentences. Ground the opening in ONE specific, verifiable detail from the data "
-        "(what they build, who they serve, how long they've been at it)."
+        "120-170 words across two short paragraphs plus the background block. Ground the "
+        "observation in specific, verifiable detail from the data or the recent signal."
     )
 
     prompt = f"""
@@ -152,26 +152,41 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
     {f'RECENT SIGNAL (verified, you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found. Do NOT invent one; open with what they build instead.'}
 
-    EMAIL STRUCTURE (follow this exact shape; vary the wording naturally, not the order):
+    EMAIL STRUCTURE (modelled on real KKR/TA/Highland founder outreach; follow
+    this shape and order, vary the wording naturally):
+
+    PARAGRAPH 1 (the personal part):
     1. GREETING: "Hi {first_name}," (if no name is known, use "Hello,").
-    2. HOW WE FOUND THEM, one sentence: "I recently came across {name} and
-       thought it looked really interesting." (vary lightly)
-    3. ONE PERSONAL OBSERVATION about the problem they solve or how the product
-       is built, grounded in the data or the recent signal. Example register:
-       "The need for better, more flexible speaking practice feels very real,
-       and the product looks thoughtfully built." CRITICAL: never describe or
-       explain their company back to them. They built it. This is YOUR
-       observation about why it matters, not a product summary.
-       If the data is thin, SKIP this sentence entirely rather than faking one.
-    4. WHO YOU ARE, one or two sentences: "I am a Partner at Averroes Capital,
-       a London-based growth equity investor focused on founder-led technology
-       businesses. We typically get involved where a company has a proven
-       product and is looking at the next stage of growth."
-    5. HUMILITY + CURIOSITY: "I appreciate this may not be a priority right now,
-       but I would love to learn more about what you are building at {name} and
-       where you see the opportunity going."
-    6. CTA: "Would you be open to a 20-minute call in the coming weeks?"
-    7. SIGN-OFF, exactly:
+    2. WHO I AM, with a specialisation angle when the data allows it:
+       "I am a Partner at Averroes Capital, a London-based growth equity
+       investor focused on founder-led technology businesses" and, where the
+       sector is known, tie it in ("where I lead our work in [their space]"
+       style, only if natural).
+    3. WHY THEM: "We have been following {name}" or "I recently came across
+       {name}", plus ONE informed observation that shows you understand their
+       PROBLEM SPACE, not just their product. The best move is a market
+       insight: e.g. "improving direct sales against the OTAs is genuinely
+       hard, which is why the way you've built X stood out." Ground it in the
+       data or the recent signal. Never describe their company back to them.
+       If the data is thin, skip the observation rather than faking one.
+
+    PARAGRAPH 2 (intent + ask):
+    4. RELATIONSHIP FRAMING WITH HUMILITY: "We fully recognise this may not be
+       on the agenda right now. Our approach is to get to know the founders of
+       companies we admire early, so we can be helpful at the right time."
+       (vary the wording)
+    5. CTA: "Would you have 20-30 minutes for an introductory call in the
+       coming weeks? I would love to hear where you see {name} going."
+
+    PARAGRAPH 3 (background block, 2-3 sentences, factual):
+    6. "For some background on us:" Averroes is a London-based growth equity
+       investor in founder-led software companies across the UK and Ireland.
+       We take meaningful stakes and support portfolio companies hands-on with
+       operations, not just capital. We have backed companies including Glacier
+       and Journey, both of which have grown strongly since we invested.
+       (Use only these facts. NEVER invent fund sizes, AUM figures or numbers.)
+
+    7. CLOSE: "Look forward to hearing from you," then the sign-off exactly:
        Best,
        Beatrice
 
