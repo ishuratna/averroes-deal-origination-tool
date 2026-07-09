@@ -64,7 +64,7 @@ Both reset at midnight UTC (counted from the activity_log). Bulk runners stop gr
 | `DAILY_SMARTFILL_CAP` | 450 | Run cap |
 | `DAILY_GROUNDING_BUDGET` | 1400 | Free-tier grounding guarantee |
 | `OUTREACH_SMTP_PASSWORD` | **not set** | Gmail App Password — outreach sends fail until configured |
-| `OUTREACH_EMAIL` / `OUTREACH_NAME` | iratna@… / Beatrice Carrara | Outreach sender |
+| `OUTREACH_EMAIL` / `OUTREACH_NAME` | beatrice@averroescapital.com / Beatrice Carrara | Outreach sender |
 
 View current values:
 `gcloud run services describe averroes-deal-backend --region=europe-west1 --project=averroes-deal-origination --format='value(spec.template.spec.containers[0].env)'`

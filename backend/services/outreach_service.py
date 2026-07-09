@@ -15,7 +15,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # ── Sender config (env vars on Cloud Run) ──────────────────────────────────────
-SENDER_EMAIL = os.getenv("OUTREACH_EMAIL", "iratna@averroescapital.com")
+SENDER_EMAIL = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
 SENDER_NAME = os.getenv("OUTREACH_NAME", "Beatrice Carrara")
 SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 
