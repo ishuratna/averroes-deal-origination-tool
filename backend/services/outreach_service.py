@@ -159,15 +159,25 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     2. HOW WE FOUND THEM, one sentence: "I recently came across {name} and
        thought it looked really interesting." or "I was reading about {name}
        recently and the work you're doing caught my attention." (vary)
-    3. THE OBSERVATION, STRICTLY 2 sentences, no more. This is where most
-       drafts fail by being shallow. Sentence one: why the problem is genuinely
-       hard or economically significant. Sentence two: what specifically about
-       their approach stood out. Best-in-class example of the move: "Improving
-       direct sales against the host of OTAs and metasearches is tricky, so we
-       think there is a huge opportunity in improving hotel performance. The
-       way you've built X around that stood out." Ground everything in the data
-       or the recent signal. Never describe their company back to them; they
-       built it. If the data is thin, keep this to one honest sentence or skip it.
+    3. THE OBSERVATION, STRICTLY 2 sentences, no more. Both sentences are
+       written from AVERROES' point of view as an investor watching the space,
+       never as someone explaining the company to its own founder.
+       Sentence one: OUR investment belief about the problem space: "We believe
+       {the problem} is a big pain point for {who suffers it} and the potential
+       there is huge." State it as our conviction (we believe / we think / we
+       have long thought), tied to why an investor cares: big market, real
+       pain, underserved.
+       Sentence two: the observer stance on THEM: "I have been watching how
+       {name} is solving this through {their specific approach}." or "I have
+       been following how you approach this with {specific angle}." One
+       concrete detail from the data, framed as what caught our eye, not as a
+       description of their business.
+       Example of the move: "We believe hotels losing direct bookings to OTAs
+       is a huge pain point and the prize for fixing it is large. I have been
+       watching how BookingX is tackling this through direct-channel pricing
+       tools." Ground everything in the data or the recent signal. Never
+       describe their company back to them; they built it. If the data is
+       thin, keep this to one honest sentence or skip it.
     4. WHO I AM: "I am a Partner at Averroes Capital, a London-based growth
        equity investor focused on founder-led technology businesses. We
        typically get involved where a company has a proven product and is
