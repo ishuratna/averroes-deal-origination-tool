@@ -548,6 +548,12 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     website = founder_info.get("website", "")
     description = founder_info.get("description", "")
 
+    # Internal test row: enrichment must NEVER change its contact — the test
+    # loop depends on it staying pinned to the test inbox.
+    if company_data.get("source") == "Internal Test":
+        founder_info["contact_email"] = TEST_RECIPIENT
+        founder_info["contact_name"] = "Averroes Admin (Test)"
+
     # Step 3: Companies House financials (UK/Ireland only)
     ch_data = {}
     if qual.get("is_uk_ireland"):
@@ -1314,6 +1320,7 @@ def _reset_test_company(company_name: str) -> bool:
     from google.cloud import bigquery as bq_lib
     query = f"""UPDATE `{bq_handler.table_id}` SET
         status = 'Qualified',
+        contact_email = '{TEST_RECIPIENT}',
         stage_entered_at = CURRENT_TIMESTAMP(),
         qualified_at = CURRENT_TIMESTAMP(),
         contacted_at = NULL, meeting_at = NULL, dd_at = NULL,
@@ -1412,13 +1419,18 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     from services.email_sync_service import sync_mailbox, classify_reply
     from google.cloud import bigquery as bq_lib
 
-    # Known contacts: email → entity
+    # Known contacts: email → entity. A company is reachable via its contact
+    # email AND any address we actually drafted/sent outreach to — if we
+    # emailed an address, a reply from it must match the company even when
+    # SmartFill later changed the contact on file.
     known = {}
     for c in bq_handler.get_universe():
-        em = (c.get("contact_email") or "").strip().lower()
-        if em:
-            known[em] = {"type": "company", "name": c.get("name"), "status": c.get("status"),
-                         "is_test": c.get("source") == "Internal Test"}
+        entry = {"type": "company", "name": c.get("name"), "status": c.get("status"),
+                 "is_test": c.get("source") == "Internal Test"}
+        for em in {(c.get("contact_email") or "").strip().lower(),
+                   (c.get("outreach_draft_to") or "").strip().lower()}:
+            if em:
+                known[em] = entry
     for inv in investor_handler.get_all():
         em = (inv.get("contact_email") or "").strip().lower()
         if em:
