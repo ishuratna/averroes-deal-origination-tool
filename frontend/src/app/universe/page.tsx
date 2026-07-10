@@ -1024,7 +1024,7 @@ function UniverseInner() {
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
-                    <tr key={i}>
+                    <tr key={i} className={company.source === 'Internal Test' ? 'test-row' : ''}>
                       <td className="company-cell">
                         <button className="company-name-btn" onClick={() => setDrawerCompany(company)}>{company.name}</button>
                       </td>
@@ -1481,6 +1481,8 @@ function UniverseInner() {
         .band-badge.band-target-band { background: #dcfce7; color: #166534; }
         .band-badge.band-too-early { background: #fef3c7; color: #92400e; }
         .band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
+        .crm-table tr.test-row td { background: #fef3c7 !important; }
+        .crm-table tr.test-row .company-name-btn::after { content: ' 🧪'; }
         .rev-estimate { color: #64748b; font-style: italic; cursor: help; }
         .est-tag { font-size: 0.62rem; color: #94a3b8; font-style: normal; }
 

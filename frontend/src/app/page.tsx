@@ -502,7 +502,7 @@ function HomeInner() {
                         return (
                           <div
                             key={company.name}
-                            className={`kanban-card ${dragItem === company.name ? 'dragging' : ''} ${isStale ? 'stale' : ''}`}
+                            className={`kanban-card ${dragItem === company.name ? 'dragging' : ''} ${isStale ? 'stale' : ''} ${company.source === 'Internal Test' ? 'test-card' : ''}`}
                             draggable
                             onDragStart={() => handleDragStart(company.name)}
                             onDragEnd={handleDragEnd}
@@ -1099,6 +1099,7 @@ function HomeInner() {
         .kc-days.stale { color: #dc2626; background: #fee2e2; font-weight: 800; }
         .kc-reply { font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.1rem 0.35rem; border-radius: 4px; flex-shrink: 0; cursor: help; }
         .kanban-card.stale { border-left: 3px solid #dc2626; }
+        .kanban-card.test-card { background: #fffbeb; border-color: #f59e0b; }
 
         .kc-sector-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
         .kc-sector { font-size: 0.72rem; color: #64748b; font-weight: 600; margin: 0; text-transform: uppercase; }
