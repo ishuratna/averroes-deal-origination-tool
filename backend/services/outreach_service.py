@@ -375,7 +375,7 @@ SIG_PHONE = os.getenv("SIGNATURE_PHONE", "+44 7384 357070")
 SIG_EMAIL = os.getenv("SIGNATURE_EMAIL", "beatrice@averroescapital.com")
 SIG_LOGO_URL = os.getenv("SIGNATURE_LOGO_URL", "")  # hosted Averroes logo, optional
 
-# Body ends with "Best," — the signature follows directly beneath it
+# Body ends with "Best,"; the signature follows directly beneath it
 SIGNATURE_TEXT = f"\n{SIG_NAME}\n{SIG_TITLE}\n{SIG_PHONE} | {SIG_EMAIL}"
 
 SIGNATURE_HTML = f"""
