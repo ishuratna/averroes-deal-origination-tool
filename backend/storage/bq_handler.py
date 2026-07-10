@@ -94,6 +94,9 @@ class BigQueryHandler:
         ("outreach_draft_body", "STRING"),
         ("outreach_draft_to", "STRING"),
         ("outreach_drafted_at", "TIMESTAMP"),
+        # Email reply intelligence (from the Gmail sync)
+        ("last_reply_at", "TIMESTAMP"),
+        ("reply_classification", "STRING"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),
@@ -374,6 +377,68 @@ class BigQueryHandler:
     def log_smartfill(self, company_name: str, kind: str = "smartfill") -> bool:
         """Record a SmartFill/SmartEnrich run in the activity log (feeds the daily cap counter)."""
         return self._log_activity(company_name, kind, "system", note_text=f"{kind} run")
+
+    def _ensure_email_log_table(self):
+        """Create the email_log table if missing. Called lazily on first sync."""
+        table_id = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            self.client.get_table(table_id)
+        except Exception:
+            schema = [bigquery.SchemaField(n, t) for n, t in [
+                ("message_id", "STRING"), ("thread_id", "STRING"), ("direction", "STRING"),
+                ("counterparty_email", "STRING"), ("counterparty_name", "STRING"),
+                ("entity_type", "STRING"), ("entity_name", "STRING"),
+                ("subject", "STRING"), ("snippet", "STRING"),
+                ("classification", "STRING"), ("summary", "STRING"),
+                ("sent_at", "TIMESTAMP"), ("synced_at", "TIMESTAMP"),
+            ]]
+            self.client.create_table(bigquery.Table(table_id, schema=schema))
+            logger.info("Created email_log table")
+        return table_id
+
+    def get_logged_message_ids(self) -> set:
+        """Message-IDs already in the log (dedup for re-syncs)."""
+        if not self.client:
+            return set()
+        table_id = self._ensure_email_log_table()
+        try:
+            rows = self.client.query(f"SELECT message_id FROM `{table_id}`").result()
+            return {r.message_id for r in rows}
+        except Exception as e:
+            logger.error(f"Failed to load logged message ids: {e}")
+            return set()
+
+    def save_email_log(self, entries: List[Dict]) -> int:
+        """DML-insert new email log entries. Returns inserted count."""
+        if not self.client or not entries:
+            return 0
+        table_id = self._ensure_email_log_table()
+        inserted = 0
+        for e in entries:
+            q = f"""INSERT INTO `{table_id}`
+                (message_id, thread_id, direction, counterparty_email, counterparty_name,
+                 entity_type, entity_name, subject, snippet, classification, summary, sent_at, synced_at)
+                VALUES (@mid, @tid, @dir, @cemail, @cname, @etype, @ename, @subj, @snip, @cls, @summ, @sent, CURRENT_TIMESTAMP())"""
+            params = [
+                bigquery.ScalarQueryParameter("mid", "STRING", e.get("message_id") or ""),
+                bigquery.ScalarQueryParameter("tid", "STRING", e.get("thread_id") or ""),
+                bigquery.ScalarQueryParameter("dir", "STRING", e.get("direction") or ""),
+                bigquery.ScalarQueryParameter("cemail", "STRING", e.get("counterparty_email") or ""),
+                bigquery.ScalarQueryParameter("cname", "STRING", e.get("counterparty_name") or ""),
+                bigquery.ScalarQueryParameter("etype", "STRING", e.get("entity_type") or ""),
+                bigquery.ScalarQueryParameter("ename", "STRING", e.get("entity_name") or ""),
+                bigquery.ScalarQueryParameter("subj", "STRING", e.get("subject") or ""),
+                bigquery.ScalarQueryParameter("snip", "STRING", e.get("snippet") or ""),
+                bigquery.ScalarQueryParameter("cls", "STRING", e.get("classification") or ""),
+                bigquery.ScalarQueryParameter("summ", "STRING", e.get("summary") or ""),
+                bigquery.ScalarQueryParameter("sent", "TIMESTAMP", e.get("sent_at")),
+            ]
+            try:
+                self.client.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+                inserted += 1
+            except Exception as ex:
+                logger.error(f"Email log insert failed: {ex}")
+        return inserted
 
     def add_activity_note(self, company_name: str, note_text: str, created_by: str = "Ishu Ratna") -> bool:
         """Add a note to a company's activity log."""

@@ -511,6 +511,11 @@ function HomeInner() {
                               <button className="kc-name" onClick={() => setDrawerCompany(company)}>
                                 {company.name}
                               </button>
+                              {company.last_reply_at && (
+                                <span className="kc-reply" title={`Replied ${new Date(company.last_reply_at).toLocaleDateString('en-GB')}${company.reply_classification ? ` — ${company.reply_classification.replace('_', ' ')}` : ''}`}>
+                                  ✉
+                                </span>
+                              )}
                               {daysInStage !== null && (
                                 <span className={`kc-days ${isStale ? 'stale' : ''}`} title={isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`}>
                                   {isStale ? '⚠ ' : ''}{daysInStage}d
@@ -1092,6 +1097,7 @@ function HomeInner() {
         .kc-name:hover { color: #2563eb; }
         .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 600; background: #f8fafc; padding: 0.1rem 0.4rem; border-radius: 4px; flex-shrink: 0; }
         .kc-days.stale { color: #dc2626; background: #fee2e2; font-weight: 800; }
+        .kc-reply { font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.1rem 0.35rem; border-radius: 4px; flex-shrink: 0; cursor: help; }
         .kanban-card.stale { border-left: 3px solid #dc2626; }
 
         .kc-sector-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }

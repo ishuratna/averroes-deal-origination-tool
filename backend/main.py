@@ -1186,6 +1186,92 @@ class CriteriaApplyRequest(BaseModel):
     requalify: Optional[bool] = True
 
 
+# ── Email communications log ─────────────────────────────────────────────────
+
+@app.post("/email/sync")
+async def sync_emails(days: int = Query(30, description="How many days back to scan")):
+    """
+    Sync Beatrice's Gmail (IMAP, same App Password as sending) against known
+    contacts in companies + LPs. Logs exchanges, classifies replies with AI,
+    stamps last_reply_at, and auto-advances Engaged → Contacted on reply.
+    """
+    from services.email_sync_service import sync_mailbox, classify_reply
+    from google.cloud import bigquery as bq_lib
+
+    # Known contacts: email → entity
+    known = {}
+    for c in bq_handler.get_universe():
+        em = (c.get("contact_email") or "").strip().lower()
+        if em:
+            known[em] = {"type": "company", "name": c.get("name"), "status": c.get("status")}
+    for inv in investor_handler.get_all():
+        em = (inv.get("contact_email") or "").strip().lower()
+        if em:
+            known[em] = {"type": "investor", "name": inv.get("name"), "status": inv.get("status")}
+    if not known:
+        return {"status": "Complete", "message": "No known contact emails in the database yet."}
+
+    try:
+        entries = sync_mailbox(known, days=days)
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mailbox sync failed: {e}")
+
+    # Dedup against already-logged messages
+    seen = bq_handler.get_logged_message_ids()
+    new_entries = [e for e in entries if e.get("message_id") not in seen]
+
+    replies = [e for e in new_entries if e["direction"] == "received"]
+    advanced, classified = [], 0
+
+    for r in replies[:25]:  # classification bounded per sync run
+        result = classify_reply(r["subject"], r["snippet"], r["entity_name"])
+        if result:
+            r["classification"] = result.get("classification", "")
+            r["summary"] = result.get("summary", "")
+            classified += 1
+
+    inserted = bq_handler.save_email_log(new_entries)
+
+    # Reply intelligence: stamp records, log activity, auto-advance companies
+    for r in replies:
+        ename, etype = r["entity_name"], r["entity_type"]
+        cls = r.get("classification") or "unclassified"
+        note = f"Reply received: \"{r['subject']}\" ({cls})" + (f" — {r.get('summary')}" if r.get("summary") else "")
+        try:
+            if etype == "company":
+                q = f"""UPDATE `{bq_handler.table_id}` SET
+                        last_reply_at = @ts, reply_classification = @cls WHERE name = @name"""
+                bq_handler.client.query(q, job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("ts", "TIMESTAMP", r["sent_at"]),
+                    bq_lib.ScalarQueryParameter("cls", "STRING", cls),
+                    bq_lib.ScalarQueryParameter("name", "STRING", ename),
+                ])).result()
+                bq_handler.add_activity_note(ename, note, created_by="email-sync")
+                # Auto-advance: a reply means dialogue — Engaged → Contacted
+                if known.get(r["counterparty_email"], {}).get("status") == "Engaged":
+                    bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                    advanced.append(ename)
+            else:
+                investor_handler.add_note(ename, note)
+        except Exception as e:
+            logger.warning(f"Reply processing failed for {ename}: {e}")
+
+    return {
+        "status": "Success",
+        "scanned_days": days,
+        "known_contacts": len(known),
+        "messages_matched": len(entries),
+        "new_logged": inserted,
+        "replies_found": len(replies),
+        "replies_classified": classified,
+        "auto_advanced": advanced,
+        "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified). "
+                   + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
+    }
+
+
 # ── Investor (LP) Database Endpoints ─────────────────────────────────────────
 
 class InvestorStatusRequest(BaseModel):

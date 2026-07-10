@@ -207,6 +207,14 @@ export const dealApi = {
     return data;
   },
 
+  async syncEmails(days: number = 30): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/email/sync?days=${days}`, { method: 'POST' });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Email sync failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Email sync failed'); }
+    return data;
+  },
+
   async getSmartFillEligible(): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/smartfill/eligible`);
     if (!response.ok) throw new Error('Failed to load SmartFill eligibility');
