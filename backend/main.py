@@ -1221,6 +1221,46 @@ async def send_outreach(req: OutreachSendRequest):
     return result
 
 
+# ── Temporary diagnostic: Internal Test row state (no secrets exposed) ──────
+
+@app.get("/diag/test-loop")
+async def diag_test_loop():
+    """State of the Internal Test company + its email log. Unauthenticated but
+    exposes ONLY the internal test row — remove once the loop is verified."""
+    out = {"build_marker": "selfheal-2026-07-10-a"}
+    row = None
+    try:
+        for c in bq_handler.get_universe():
+            if c.get("source") == "Internal Test":
+                row = c
+                break
+    except Exception as e:
+        out["universe_error"] = str(e)
+    if not row:
+        out["test_row"] = None
+        return out
+    out["test_row"] = {k: (str(row.get(k)) if row.get(k) is not None else None) for k in (
+        "name", "status", "source", "contact_email", "outreach_draft_to",
+        "outreach_drafted_at", "outreach_sent_at", "last_reply_at",
+        "reply_classification", "stage_entered_at", "qualified_at", "contacted_at")}
+    try:
+        from google.cloud import bigquery as bq_lib
+        table_id = f"{bq_handler.project_id}.{bq_handler.dataset_id}.email_log"
+        q = f"""SELECT direction, subject, counterparty_email, entity_name, classification,
+                       CAST(sent_at AS STRING) AS sent_at
+                FROM `{table_id}`
+                WHERE entity_name = @name OR LOWER(counterparty_email) = @em
+                ORDER BY sent_at DESC LIMIT 10"""
+        rows = bq_handler.client.query(q, job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("name", "STRING", row.get("name") or ""),
+            bq_lib.ScalarQueryParameter("em", "STRING", (row.get("contact_email") or "").lower()),
+        ])).result()
+        out["email_log"] = [dict(r) for r in rows]
+    except Exception as e:
+        out["email_log_error"] = str(e)
+    return out
+
+
 # ── Deal Lifecycle Endpoints ─────────────────────────────────────────────────
 
 class StatusUpdateRequest(BaseModel):

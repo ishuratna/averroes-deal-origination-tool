@@ -35,7 +35,7 @@ AUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", _DEFAULT_CLIENT_ID).strip()
 ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "averroescapital.com").strip().lower()
 ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()}
 
-EXEMPT_PATHS = {"/", "/auth/config", "/auth/session"}
+EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/diag/test-loop"}
 EXEMPT_PREFIXES = ("/ch-pdf/",)
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────
