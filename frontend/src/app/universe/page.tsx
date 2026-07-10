@@ -627,7 +627,7 @@ function UniverseInner() {
                   <div className="bulk-funnel-row excluded"><span>Excluded — over £50M (size filter)</span><b>−{bulkEligibility.excluded_too_large}</b></div>
                   <div className="bulk-funnel-row eligible"><span>Eligible (new + passes all 3 filters)</span><b>{bulkEligibility.eligible_count}</b></div>
                   <div className="bulk-funnel-row" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 700 }}>
-                    <span>Daily cap: {bulkEligibility.daily_cap} · used today: {bulkEligibility.used_today}</span>
+                    <span>Batch: {bulkEligibility.batch_limit || 25}/run · daily cap: {bulkEligibility.daily_cap} · used today: {bulkEligibility.used_today}</span>
                     <b>runs now: {bulkEligibility.runnable_now}</b>
                   </div>
                 </div>

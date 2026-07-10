@@ -17,6 +17,13 @@ function _sessionRedirect(): Promise<Response> {
 function _tokenValid(token: string | null): boolean {
   if (!token) return false;
   try {
+    if (token.startsWith('avr.')) {
+      // 12h session token: avr.<b64(email|exp)>.<sig>
+      const b64 = token.slice(4).split('.')[0];
+      const payload = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+      const exp = parseInt(payload.split('|').pop() || '0', 10) * 1000;
+      return exp > Date.now() + 30_000;
+    }
     const payload = JSON.parse(atob(token.split('.')[1]));
     return !payload.exp || payload.exp * 1000 > Date.now() + 30_000;
   } catch { return false; }

@@ -76,6 +76,23 @@ async def auth_config():
     """Frontend bootstrap: is auth on, and which OAuth client to use. Public by design."""
     return {"auth_enabled": auth_enabled(), "client_id": AUTH_CLIENT_ID, "allowed_domain": ALLOWED_DOMAIN}
 
+
+class SessionRequest(BaseModel):
+    credential: str
+
+
+@app.post("/auth/session")
+async def create_session(req: SessionRequest):
+    """Exchange a fresh Google ID token (1h life) for a 12h session token."""
+    from auth import issue_session_token
+    try:
+        token, exp = issue_session_token(req.credential)
+        return {"session_token": token, "exp": exp}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Sign-in could not be verified")
+
 conf_scraper = ConferenceScraper()
 market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
@@ -733,7 +750,10 @@ async def smartfill_eligible():
     used_today = bq_handler.count_smartfills_today()
     remaining_today = max(0, DAILY_SMARTFILL_CAP - used_today)
     n = len(eligible)
-    runnable = eligible[:remaining_today]
+    # Bulk runs process at most 25 companies per press — keeps runs short
+    # (~15 min), reviewable, and safely within one session.
+    BULK_BATCH_LIMIT = 25
+    runnable = eligible[:min(BULK_BATCH_LIMIT, remaining_today)]
 
     est_n = len(runnable)
     est = {
@@ -755,6 +775,7 @@ async def smartfill_eligible():
         "daily_cap": DAILY_SMARTFILL_CAP,
         "used_today": used_today,
         "remaining_today": remaining_today,
+        "batch_limit": BULK_BATCH_LIMIT,
         "runnable_now": len(runnable),
         "eligible_names": runnable,
         "estimate": est,

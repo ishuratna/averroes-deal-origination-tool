@@ -11,17 +11,28 @@ import { API_BASE_URL } from "../services/api";
 
 const TOKEN_KEY = "averroes_id_token";
 
+export function tokenExpiry(token: string): number | null {
+  try {
+    if (token.startsWith("avr.")) {
+      // Our 12h session token: avr.<b64(email|exp)>.<sig>
+      const b64 = token.slice(4).split(".")[0];
+      const payload = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
+      return parseInt(payload.split("|").pop() || "0", 10) * 1000;
+    }
+    // Google ID token (JWT)
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return 0;
+  }
+}
+
 export function getStoredToken(): string | null {
   if (typeof window === "undefined") return null;
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return null;
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    if (payload.exp && payload.exp * 1000 < Date.now() + 30_000) {
-      localStorage.removeItem(TOKEN_KEY);
-      return null;
-    }
-  } catch {
+  const exp = tokenExpiry(token);
+  if (exp !== null && exp < Date.now() + 30_000) {
     localStorage.removeItem(TOKEN_KEY);
     return null;
   }
@@ -71,13 +82,25 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       if (!google?.accounts?.id) return;
       google.accounts.id.initialize({
         client_id: config.client_id,
-        callback: (resp: any) => {
-          if (resp.credential) {
+        callback: async (resp: any) => {
+          if (!resp.credential) { setError("Sign-in failed. Try again."); return; }
+          // Exchange the 1-hour Google token for our 12-hour session token,
+          // so long bulk runs are never interrupted by expiry.
+          try {
+            const r = await fetch(`${API_BASE_URL}/auth/session`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ credential: resp.credential }),
+            });
+            const d = await r.json();
+            if (r.ok && d.session_token) {
+              localStorage.setItem(TOKEN_KEY, d.session_token);
+            } else {
+              localStorage.setItem(TOKEN_KEY, resp.credential); // fallback: 1h Google token
+            }
+          } catch {
             localStorage.setItem(TOKEN_KEY, resp.credential);
-            window.location.reload();
-          } else {
-            setError("Sign-in failed — try again.");
           }
+          window.location.reload();
         },
       });
       google.accounts.id.renderButton(document.getElementById("gsi-btn"), {
