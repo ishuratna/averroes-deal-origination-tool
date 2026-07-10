@@ -169,12 +169,12 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        from Averroes' point of view as an investor watching the space, never
        as someone explaining the company to its own founder.
        Sentence one, the observer stance: "We have been following {name} for
-       some time and really like {the specific thing that caught our eye:
-       their approach, a product choice, how they serve a market}." One
+       some time and really like <the specific thing that caught our eye:
+       their approach, a product choice, how they serve a market>." One
        concrete detail from the data, framed as what we like, not as a
        description of their business.
-       Sentence two, our conviction: "We believe {the problem} is a real pain
-       point for {who suffers it} and the potential in solving it is huge."
+       Sentence two, our conviction: "We believe <the problem> is a real pain
+       point for <who suffers it> and the potential in solving it is huge."
        State it as our belief (we believe / we think), tied to why an
        investor cares: big market, real pain, underserved.
        Example of the move: "We have been following BookingX for some time
