@@ -1267,7 +1267,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                     bq_lib.ScalarQueryParameter("cls", "STRING", cls),
                     bq_lib.ScalarQueryParameter("name", "STRING", ename),
                 ])).result()
-                bq_handler.add_activity_note(ename, note, created_by="email-sync")
+                # Log with the email's ACTUAL received time, not the sync time
+                bq_handler._log_activity(ename, "note", "email-sync",
+                                         note_text=note, event_time=r["sent_at"])
                 # Auto-advance: a reply means dialogue — Engaged → Contacted
                 if known.get(r["counterparty_email"], {}).get("status") == "Engaged":
                     bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")

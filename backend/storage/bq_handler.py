@@ -476,25 +476,32 @@ class BigQueryHandler:
             return []
 
     def _log_activity(self, company_name: str, action_type: str, created_by: str,
-                      old_status: str = "", new_status: str = "", note_text: str = "") -> bool:
-        """Insert a row into the activity_log table."""
+                      old_status: str = "", new_status: str = "", note_text: str = "",
+                      event_time: str = None) -> bool:
+        """
+        Insert a row into the activity_log table.
+        event_time: ISO timestamp of when the event ACTUALLY happened (e.g. when
+        an email was received) — defaults to now for real-time events.
+        """
         try:
+            ts_expr = "@event_time" if event_time else "CURRENT_TIMESTAMP()"
             query = f"""
                 INSERT INTO `{self.activity_table_id}`
                 (id, company_name, action_type, old_status, new_status, note_text, created_by, created_at)
-                VALUES (@id, @company_name, @action_type, @old_status, @new_status, @note_text, @created_by, CURRENT_TIMESTAMP())
+                VALUES (@id, @company_name, @action_type, @old_status, @new_status, @note_text, @created_by, {ts_expr})
             """
-            self.client.query(query, job_config=bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("id", "STRING", str(uuid.uuid4())),
-                    bigquery.ScalarQueryParameter("company_name", "STRING", company_name),
-                    bigquery.ScalarQueryParameter("action_type", "STRING", action_type),
-                    bigquery.ScalarQueryParameter("old_status", "STRING", old_status),
-                    bigquery.ScalarQueryParameter("new_status", "STRING", new_status),
-                    bigquery.ScalarQueryParameter("note_text", "STRING", note_text),
-                    bigquery.ScalarQueryParameter("created_by", "STRING", created_by),
-                ]
-            )).result()
+            params = [
+                bigquery.ScalarQueryParameter("id", "STRING", str(uuid.uuid4())),
+                bigquery.ScalarQueryParameter("company_name", "STRING", company_name),
+                bigquery.ScalarQueryParameter("action_type", "STRING", action_type),
+                bigquery.ScalarQueryParameter("old_status", "STRING", old_status),
+                bigquery.ScalarQueryParameter("new_status", "STRING", new_status),
+                bigquery.ScalarQueryParameter("note_text", "STRING", note_text),
+                bigquery.ScalarQueryParameter("created_by", "STRING", created_by),
+            ]
+            if event_time:
+                params.append(bigquery.ScalarQueryParameter("event_time", "TIMESTAMP", event_time))
+            self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
             return True
         except Exception as e:
             logger.error(f"Failed to log activity for {company_name}: {e}")
