@@ -132,11 +132,13 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     thin_data = rich_signals < 2
 
     length_rule = (
-        "80-110 words. You know little about this company, so keep the observation to "
-        "one honest sentence at most and lean on who Averroes is."
+        "90-115 words. You know little about this company, so keep the follow + "
+        "conviction paragraph (structure item 4) to one honest sentence and lean "
+        "on who Averroes is."
         if thin_data else
-        "140-190 words. Spend the extra length on the observation (structure item 3): "
-        "depth there is what separates this email from every other investor's."
+        "120-160 words. Spend the extra length on the follow + conviction "
+        "paragraph (structure item 4): specificity there is what separates this "
+        "email from every other investor's."
     )
 
     prompt = f"""
@@ -150,50 +152,48 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     WHAT WE KNOW ABOUT THE COMPANY (do not use anything beyond this):
     {company_context}
 
-    {f'RECENT SIGNAL (verified, you may open with this): {news_hook}' if news_hook else 'RECENT SIGNAL: none found. Do NOT invent one; open with what they build instead.'}
+    {f'RECENT SIGNAL (verified, you may use it in structure item 4): {news_hook}' if news_hook else 'RECENT SIGNAL: none found. Do NOT invent one; ground item 4 in the company data instead.'}
 
-    EMAIL STRUCTURE (follow this exact order; vary the wording naturally.
-    Depth modelled on real KKR/TA/Highland founder outreach):
+    EMAIL STRUCTURE (follow this exact order and paragraphing; vary the
+    wording naturally where noted, never the order):
 
     1. GREETING: "Hi {first_name}," (if no name is known, use "Hello,").
-    2. HOW WE FOUND THEM, one sentence: "I recently came across {name} and
-       thought it looked really interesting." or "I was reading about {name}
-       recently and the work you're doing caught my attention." (vary)
-    3. THE OBSERVATION, STRICTLY 2 sentences, no more. Both sentences are
-       written from AVERROES' point of view as an investor watching the space,
-       never as someone explaining the company to its own founder.
-       Sentence one: OUR investment belief about the problem space: "We believe
-       {the problem} is a big pain point for {who suffers it} and the potential
-       there is huge." State it as our conviction (we believe / we think / we
-       have long thought), tied to why an investor cares: big market, real
-       pain, underserved.
-       Sentence two: the observer stance on THEM: "I have been watching how
-       {name} is solving this through {their specific approach}." or "I have
-       been following how you approach this with {specific angle}." One
-       concrete detail from the data, framed as what caught our eye, not as a
+    2. PLEASANTRY, own line: "Hope you are having a great day." (light
+       variations fine: "Hope your week is going well.")
+    3. WHO I AM, own paragraph, comes BEFORE anything about their company:
+       "I am a Partner at Averroes Capital, a London-based growth equity
+       investor focused on founder-led technology businesses. We typically
+       get involved where a company has a proven product and is looking at
+       the next stage of growth."
+    4. FOLLOW + CONVICTION, own paragraph, STRICTLY 2 sentences, both written
+       from Averroes' point of view as an investor watching the space, never
+       as someone explaining the company to its own founder.
+       Sentence one, the observer stance: "We have been following {name} for
+       some time and really like {the specific thing that caught our eye:
+       their approach, a product choice, how they serve a market}." One
+       concrete detail from the data, framed as what we like, not as a
        description of their business.
-       Example of the move: "We believe hotels losing direct bookings to OTAs
-       is a huge pain point and the prize for fixing it is large. I have been
-       watching how BookingX is tackling this through direct-channel pricing
-       tools." Ground everything in the data or the recent signal. Never
-       describe their company back to them; they built it. If the data is
-       thin, keep this to one honest sentence or skip it.
-    4. WHO I AM: "I am a Partner at Averroes Capital, a London-based growth
-       equity investor focused on founder-led technology businesses. We
-       typically get involved where a company has a proven product and is
-       looking at the next stage of growth."
-    5. CREDIBILITY + SUPPORT, 1-2 sentences: we support portfolio companies
-       hands-on with operations, not just capital, and we have backed companies
-       including Glacier and Journey, both of which have grown strongly since
-       we invested. (Use only these facts. NEVER invent fund sizes, AUM
-       figures, or any numbers.)
-    6. HUMILITY + CURIOSITY: "I appreciate this may not be a priority right
-       now, but I would love to learn more about what you are building at
-       {name} and where you see the opportunity going." (a good variation is
-       the longer-relationship framing: "our approach is to get to know
-       founders early so we can be helpful at the right time")
-    7. CTA: "Would you be open to a 20-minute call in the coming weeks?"
-    8. SIGN-OFF: end the body with exactly "Best," on its own line and NOTHING
+       Sentence two, our conviction: "We believe {the problem} is a real pain
+       point for {who suffers it} and the potential in solving it is huge."
+       State it as our belief (we believe / we think), tied to why an
+       investor cares: big market, real pain, underserved.
+       Example of the move: "We have been following BookingX for some time
+       and really like the way you give hotels direct-channel pricing tools.
+       We believe hotels losing direct bookings to OTAs is a real pain point
+       and the potential in fixing it is huge."
+       Ground everything in the data or the recent signal. If the data is
+       thin, keep this to one honest sentence.
+    5. PORTFOLIO PROOF, own paragraph: "At Averroes, we have backed similar
+       companies such as Journey and Glacier, and helped them scale with
+       hands-on operational support alongside capital." (Use only these
+       facts. NEVER invent fund sizes, AUM figures, or any numbers.)
+    6. HUMILITY + CURIOSITY, own paragraph: "I appreciate this may not be a
+       priority right now, but I would love to learn more about what you are
+       building at {name} and where you see the opportunity going."
+    7. CTA, own paragraph: "If this sounds interesting, would you be open to
+       a quick 20-minute call in the next couple of weeks?"
+    8. CLOSING LINE, own line: "Look forward to hearing back from you."
+    9. SIGN-OFF: end the body with exactly "Best," on its own line and NOTHING
        after it. Do not write a name. The full signature (Maria Beatrice
        Carrara, Partner, phone, email) is appended automatically on send.
 
@@ -206,7 +206,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     - Tone: warm, low-pressure, genuinely curious. You are opening a relationship,
       not making an offer. No urgency tricks anywhere.
     - State a reason for writing that is true: their profile fits what we invest in.
-    - Sign off exactly as: Best,\\nBeatrice
+    - Sign off exactly as "Best," alone, per structure item 9. Never add a name.
 
     HARD RULES (the email fails review if it breaks any of these):
     1. NEVER invent facts, numbers, achievements or "news" about the company. If the data
@@ -435,15 +435,22 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
     contact_email = company_data.get("contact_email", "")
     first_name = contact_name.split()[0] if contact_name else "Hi"
 
+    greeting = f"Hi {first_name}," if contact_name else "Hello,"
     body = (
-        f"Hi {first_name},\n\n"
-        f"I've been following {name}'s progress and I'm impressed by what you've built. "
-        f"At Averroes Capital, we partner with founder-led B2B tech companies in the UK & Europe "
-        f"to support their next phase of growth, whether that's scaling, expanding, or simply "
-        f"having a like-minded investor in your corner.\n\n"
-        f"Would you be open to a brief 15-minute chat? No pressure at all. Happy to work "
-        f"around your schedule.\n\n"
-        f"Best,\nBeatrice Carrara\nPartner, Averroes Capital"
+        f"{greeting}\n\n"
+        f"Hope you are having a great day.\n\n"
+        f"I am a Partner at Averroes Capital, a London-based growth equity investor "
+        f"focused on founder-led technology businesses. We typically get involved where "
+        f"a company has a proven product and is looking at the next stage of growth.\n\n"
+        f"We have been following {name} for some time and like what you are building.\n\n"
+        f"At Averroes, we have backed similar companies such as Journey and Glacier, "
+        f"and helped them scale with hands-on operational support alongside capital.\n\n"
+        f"I appreciate this may not be a priority right now, but I would love to learn "
+        f"more about what you are building at {name} and where you see the opportunity going.\n\n"
+        f"If this sounds interesting, would you be open to a quick 20-minute call in the "
+        f"next couple of weeks?\n\n"
+        f"Look forward to hearing back from you.\n\n"
+        f"Best,"
     )
 
     return {
