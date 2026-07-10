@@ -8,6 +8,8 @@ import CompanyDrawer from "../../components/CompanyDrawer";
 import InfoTip, { DEFS } from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
 import OutreachModal from "../../components/OutreachModal";
+import SyncEmailsButton from "../../components/SyncEmailsButton";
+import { outreachButtonState } from "../../lib/outreach";
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -81,7 +83,6 @@ function UniverseInner() {
   const [showSources, setShowSources] = useState(false);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
-  const [syncingEmails, setSyncingEmails] = useState(false);
 
   // Bulk SmartFill
   const [bulkEligibility, setBulkEligibility] = useState<any | null>(null);
@@ -820,16 +821,7 @@ function UniverseInner() {
             <button className="bulk-smartfill-btn" onClick={openBulkSmartFill} disabled={bulkLoadingEligibility || bulkRunning}>
               {bulkLoadingEligibility ? 'Checking...' : bulkRunning ? 'Running...' : '⚡ Bulk SmartFill'}
             </button>
-            <button className="sources-btn" disabled={syncingEmails}
-              title="Read Beatrice's mailbox (IMAP), log exchanges with known contacts, classify replies, auto-advance stages"
-              onClick={async () => {
-                setSyncingEmails(true);
-                try { const r = await dealApi.syncEmails(30); alert(r.message || 'Email sync complete.'); await loadData(); }
-                catch (e: any) { alert(`Email sync failed: ${e.message}`); }
-                finally { setSyncingEmails(false); }
-              }}>
-              {syncingEmails ? 'Syncing…' : '✉ Sync Emails'}
-            </button>
+            <SyncEmailsButton onSynced={loadData} />
             <div className="search-box">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#94a3b8" strokeWidth="1.5"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round"/></svg>
               <input type="text" placeholder="Search universe..." value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setActiveViewId(null); }} />
@@ -1026,16 +1018,12 @@ function UniverseInner() {
                             }}>
                             {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartEnrich ↻' : 'SmartFill'}
                           </button>
-                          <button
-                            className={`outreach-btn ${company.outreach_sent_at ? 'sent' : company.outreach_drafted_at ? 'drafted' : ''}`}
-                            title={company.outreach_sent_at
-                              ? `Email sent ${new Date(company.outreach_sent_at).toLocaleString('en-GB')} — click to view the sent draft or send a follow-up`
-                              : company.outreach_drafted_at
-                              ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating`
-                              : 'Generate an AI outreach draft'}
-                            onClick={() => openOutreach(company)}>
-                            {company.outreach_sent_at ? 'Email Sent ✓' : company.outreach_drafted_at ? 'Review & Send' : 'Outreach'}
-                          </button>
+                          {(() => { const ob = outreachButtonState(company); return (
+                            <button className={`outreach-btn ${ob.cls}`} title={ob.title}
+                              onClick={() => openOutreach(company)}>
+                              {ob.label}
+                            </button>
+                          ); })()}
                         </div>
                       </td>
                     </tr>

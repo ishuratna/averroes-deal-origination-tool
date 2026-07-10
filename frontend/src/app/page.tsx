@@ -8,6 +8,8 @@ import CompanyDrawer from "../components/CompanyDrawer";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
+import SyncEmailsButton from "../components/SyncEmailsButton";
+import { outreachButtonState } from "../lib/outreach";
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -118,7 +120,6 @@ function HomeInner() {
   // Company drawer
   const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
   const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
-  const [syncingEmails, setSyncingEmails] = useState(false);
 
   // Saved views
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -344,16 +345,7 @@ function HomeInner() {
             <p className="subtitle">{filteredPipeline.length} active deals across {Object.values(stageCounts).filter(v => v > 0).length} stages</p>
           </div>
           <div className="header-right">
-            <button className="sync-emails-btn" disabled={syncingEmails}
-              title="Read Beatrice's mailbox (IMAP), log exchanges with known contacts, classify replies, auto-advance stages"
-              onClick={async () => {
-                setSyncingEmails(true);
-                try { const r = await dealApi.syncEmails(30); alert(r.message || 'Email sync complete.'); await loadData(); }
-                catch (e: any) { alert(`Email sync failed: ${e.message}`); }
-                finally { setSyncingEmails(false); }
-              }}>
-              {syncingEmails ? 'Syncing…' : '✉ Sync Emails'}
-            </button>
+            <SyncEmailsButton onSynced={loadData} />
             <div className="view-toggle">
               <button className={`toggle-btn ${viewMode === 'kanban' ? 'active' : ''}`} onClick={() => setViewMode('kanban')}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z" fill="currentColor" opacity={viewMode === 'kanban' ? 1 : 0.4}/></svg>
@@ -607,16 +599,12 @@ function HomeInner() {
 
                             {/* Row 5 — primary action: outreach (draft never changes
                                 the stage; only a successful send moves the card) */}
-                            <button
-                              className={`kc-outreach ${company.outreach_sent_at ? 'sent' : company.outreach_drafted_at ? 'drafted' : ''}`}
-                              title={company.outreach_sent_at
-                                ? `Email sent ${new Date(company.outreach_sent_at).toLocaleString('en-GB')} — click to view the sent draft or send a follow-up`
-                                : company.outreach_drafted_at
-                                ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating`
-                                : 'Generate an AI outreach draft (does not change the stage)'}
-                              onClick={() => setOutreachTarget(company)}>
-                              {company.outreach_sent_at ? '✓ Email Sent' : company.outreach_drafted_at ? '✉ Review & Send' : '✉ Outreach'}
-                            </button>
+                            {(() => { const ob = outreachButtonState(company); return (
+                              <button className={`kc-outreach ${ob.cls}`} title={ob.title}
+                                onClick={() => setOutreachTarget(company)}>
+                                {ob.label}
+                              </button>
+                            ); })()}
 
                             {/* Row 6 — secondary actions */}
                             <div className="kc-actions">
@@ -856,15 +844,6 @@ function HomeInner() {
         .subtitle { color: #94a3b8; font-size: 0.88rem; font-weight: 500; margin: 0; }
 
         .header-right { display: flex; align-items: center; gap: 1rem; }
-
-        .sync-emails-btn {
-          display: flex; align-items: center; gap: 0.4rem;
-          padding: 0.5rem 0.9rem; background: #fff; border: 1px solid #e2e8f0;
-          border-radius: 8px; font-size: 0.82rem; font-weight: 700; color: #475569;
-          cursor: pointer; transition: border-color 0.15s, color 0.15s;
-        }
-        .sync-emails-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
-        .sync-emails-btn:disabled { opacity: 0.5; cursor: wait; }
 
         .view-toggle {
           display: flex;
