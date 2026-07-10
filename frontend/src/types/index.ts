@@ -106,6 +106,7 @@ export interface CompanyTarget {
   ch_last_share_allotment?: string;
   ch_accounts_next_due?: string;
   last_smartfill_at?: string;
+  unfit_reason?: string;
   outreach_draft_subject?: string;
   outreach_draft_body?: string;
   outreach_draft_to?: string;

@@ -459,19 +459,91 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     except Exception:
         pass
 
-    # Step 1: Qualify via hard filters (Gemini if available, else keywords)
+    # Step 1: Qualify via hard filters (Gemini if available, else keywords).
+    # COST GATE: this runs FIRST, before any grounded search calls. If the
+    # company fails the 3 hard filters (geography / industry / size), it is
+    # marked Not a Fit with the reason stored, and ALL expensive work
+    # (founder enrichment, Companies House extraction, fit scoring) is skipped.
     qual = qualify_company_with_gemini(company_data)
     new_status = qual["status"]
-
-    # Step 2: Enrich with founder details + company description
-    founder_info = enrichment_agent.enrich_founder_details(company_name)
-    website = founder_info.get("website", "")
-    description = founder_info.get("description", "")
 
     # Extract size info
     size_bucket = qual.get("size_bucket", "")
     size_confidence = qual.get("size_confidence", "")
     size_reason = qual.get("size_reason", "")
+
+    if not qual["qualified"]:
+        # Cheap local revenue-band estimate (no AI spend) so the band column
+        # still populates for rejected companies.
+        gated_band, gated_est, gated_src, gated_conf = None, None, None, None
+        try:
+            est = estimate_revenue_m(dict(company_data), allow_gemini=False)
+            if est:
+                gated_band = compute_revenue_band(est["rev_m"])
+                gated_src = est["source"]
+                gated_conf = est["confidence"]
+                if est["is_estimate"]:
+                    gated_est = round(est["rev_m"], 2)
+        except Exception as e:
+            logger.warning(f"Gated revenue estimate failed for {company_name}: {e}")
+
+        try:
+            from google.cloud import bigquery as bq_lib
+            gate_query = f"""UPDATE `{bq_handler.table_id}` SET
+                last_smartfill_at = CURRENT_TIMESTAMP(),
+                stage_entered_at = CASE WHEN IFNULL(status, '') != 'Not a Fit' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                status = 'Not a Fit',
+                unfit_reason = @reason,
+                size_bucket = @size_bucket,
+                revenue_band = @revenue_band,
+                revenue_estimate_m = @revenue_estimate_m,
+                revenue_source = @revenue_source,
+                revenue_confidence = @revenue_confidence
+                WHERE name = @name"""
+            bq_handler.client.query(gate_query, job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("reason", "STRING", qual.get("reason", "Failed hard filters")),
+                bq_lib.ScalarQueryParameter("size_bucket", "STRING", size_bucket or ""),
+                bq_lib.ScalarQueryParameter("revenue_band", "STRING", gated_band or ""),
+                bq_lib.ScalarQueryParameter("revenue_estimate_m", "FLOAT64", gated_est),
+                bq_lib.ScalarQueryParameter("revenue_source", "STRING", gated_src or ""),
+                bq_lib.ScalarQueryParameter("revenue_confidence", "STRING", gated_conf or ""),
+                bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+            ])).result()
+        except Exception as e:
+            logger.error(f"SmartFill gate BQ update failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+
+        # Log as a gated run: counts toward the daily run cap but consumes
+        # ZERO grounded-search budget (the qualification call is ungrounded).
+        try:
+            bq_handler.log_smartfill(company_name, kind="smartfill_gated")
+        except Exception as e:
+            logger.warning(f"Failed to log gated smartfill run: {e}")
+
+        logger.info(f"SmartFill GATED for '{company_name}': {qual.get('reason')} — skipped enrichment/CH/scoring")
+        return {
+            "status": "Success",
+            "company": company_name,
+            "new_status": "Not a Fit",
+            "gated": True,
+            "is_uk_ireland": qual["is_uk_ireland"],
+            "is_tech": qual["is_tech"],
+            "size_bucket": size_bucket,
+            "size_qualified": qual.get("size_qualified"),
+            "size_confidence": size_confidence,
+            "size_reason": size_reason,
+            "reason": qual["reason"],
+            "revenue_band": gated_band,
+            "revenue_estimate_m": gated_est,
+            "revenue_source": gated_src,
+            "revenue_confidence": gated_conf,
+        }
+
+    # Step 2: Enrich with founder details + company description (grounded —
+    # only reached when the company passed all hard filters)
+    founder_info = enrichment_agent.enrich_founder_details(company_name)
+    website = founder_info.get("website", "")
+    description = founder_info.get("description", "")
 
     # Step 3: Companies House financials (UK/Ireland only)
     ch_data = {}
@@ -538,6 +610,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             stage_entered_at = CASE WHEN IFNULL(status, '') != @status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
             qualified_at = CASE WHEN @status = 'Qualified' THEN IFNULL(qualified_at, CURRENT_TIMESTAMP()) ELSE qualified_at END,
             status = @status,
+            unfit_reason = '',
             website = @website,
             contact_name = @contact_name,
             contact_email = @contact_email,
@@ -1157,8 +1230,10 @@ async def remove_from_pipeline(company_name: str, req: RemoveRequest):
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
                     stage_entered_at = CASE WHEN IFNULL(status, '') != 'Not a Fit' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
-                    status = 'Not a Fit', match_score = 0.0 WHERE name = @name"""
+                    status = 'Not a Fit', match_score = 0.0,
+                    unfit_reason = @reason WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("reason", "STRING", f"Manually removed from pipeline by {req.created_by}"),
             bq_lib.ScalarQueryParameter("name", "STRING", company_name),
         ])
         bq_handler.client.query(query, job_config=job_config).result()

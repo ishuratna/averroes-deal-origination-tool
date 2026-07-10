@@ -7,6 +7,7 @@ import { dealApi } from "../services/api";
 import CompanyDrawer from "../components/CompanyDrawer";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 import AuthGate from "../components/AuthGate";
+import OutreachModal from "../components/OutreachModal";
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -38,16 +39,23 @@ function growthCategory(c: CompanyTarget): 'fast' | 'steady' | 'unknown' {
 
 // ── Stage helpers ────────────────────────────────────────────────────────────
 
-const PIPELINE_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer'] as const;
+// Engaged sits between Qualified and Contacted: outreach email sent, awaiting
+// reply. Cards land there automatically on send — never by manual advance.
+const PIPELINE_STAGES = ['Qualified', 'Engaged', 'Contacted', 'Meeting', 'DD', 'Offer'] as const;
 const STAGE_LABELS: Record<string, string> = {
   'Qualified': 'Qualified', 'Contacted': 'Contacted', 'Meeting': 'Meeting',
   'DD': 'Due Diligence', 'Offer': 'Offer', 'Won': 'Won', 'Lost': 'Lost', 'Engaged': 'Engaged',
 };
 
+// Manual advance path skips Engaged (that stage is only entered by sending
+// an outreach email); from Engaged the next manual step is Contacted.
+const NEXT_STAGE: Record<string, string | null> = {
+  'Qualified': 'Contacted', 'Engaged': 'Contacted', 'Contacted': 'Meeting',
+  'Meeting': 'DD', 'DD': 'Offer', 'Offer': null,
+};
+
 function getNextStage(current: string): string | null {
-  const idx = PIPELINE_STAGES.indexOf(current as any);
-  if (idx === -1 || idx >= PIPELINE_STAGES.length - 1) return null;
-  return PIPELINE_STAGES[idx + 1];
+  return NEXT_STAGE[current] ?? null;
 }
 
 function stageColor(stage: string): string {
@@ -109,6 +117,7 @@ function HomeInner() {
 
   // Company drawer
   const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
+  const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
 
   // Saved views
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -507,64 +516,98 @@ function HomeInner() {
                             onDragStart={() => handleDragStart(company.name)}
                             onDragEnd={handleDragEnd}
                           >
+                            {/* Row 1 — identity + timing signals */}
                             <div className="kc-header">
                               <button className="kc-name" onClick={() => setDrawerCompany(company)}>
                                 {company.name}
                               </button>
-                              {company.last_reply_at && (
-                                <span className="kc-reply" title={`Replied ${new Date(company.last_reply_at).toLocaleDateString('en-GB')}${company.reply_classification ? ` — ${company.reply_classification.replace('_', ' ')}` : ''}`}>
-                                  ✉
-                                </span>
-                              )}
-                              {daysInStage !== null && (
-                                <span className={`kc-days ${isStale ? 'stale' : ''}`} title={isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`}>
-                                  {isStale ? '⚠ ' : ''}{daysInStage}d
-                                </span>
-                              )}
+                              <div className="kc-header-badges">
+                                {company.last_reply_at && (
+                                  <span className="kc-reply" title={`Replied ${new Date(company.last_reply_at).toLocaleDateString('en-GB')}${company.reply_classification ? ` — ${company.reply_classification.replace('_', ' ')}` : ''}`}>
+                                    ✉
+                                  </span>
+                                )}
+                                {daysInStage !== null && (
+                                  <span className={`kc-days ${isStale ? 'stale' : ''}`} title={isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`}>
+                                    {isStale ? '⚠ ' : ''}{daysInStage}d
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="kc-sector-row">
-                              <p className="kc-sector">{company.sector || 'Tech'}</p>
-                              {getRevenueBand(company) && (
-                                <span className={`kc-band-badge band-${getRevenueBand(company)!.toLowerCase().replace(/\s+/g, '-')}`}>
-                                  {getRevenueBand(company)}
-                                </span>
-                              )}
-                              {company.averroes_fit_score != null && (
-                                <span className={`kc-fit-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}>
-                                  {Math.round(company.averroes_fit_score * 100)}
-                                </span>
-                              )}
-                            </div>
+                            <p className="kc-meta">
+                              {company.sector || 'Tech'}
+                              {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
+                            </p>
 
-                            <div className="kc-metrics">
-                              {company.estimated_ebitda ? (
-                                <span className="kc-metric">
-                                  <span className="kc-metric-label">EBITDA</span>
-                                  <span className="kc-metric-value">&pound;{company.estimated_ebitda}M</span>
-                                </span>
-                              ) : company.revenue_m ? (
-                                <span className="kc-metric">
-                                  <span className="kc-metric-label">Revenue</span>
-                                  <span className="kc-metric-value">&pound;{company.revenue_m}M</span>
-                                </span>
-                              ) : company.revenue_estimate_m ? (
-                                <span className="kc-metric">
-                                  <span className="kc-metric-label">Revenue</span>
-                                  <span className="kc-metric-value">~&pound;{company.revenue_estimate_m.toFixed(1)}M (est.)</span>
-                                </span>
-                              ) : null}
-                              {company.employees ? (
-                                <span className="kc-metric">
-                                  <span className="kc-metric-label">Team</span>
-                                  <span className="kc-metric-value">{company.employees}</span>
-                                </span>
-                              ) : null}
-                            </div>
-
-                            {sanitizeContact(company.contact_name) && (
-                              <p className="kc-contact">{sanitizeContact(company.contact_name)}</p>
+                            {/* Row 2 — assessment badges */}
+                            {(getRevenueBand(company) || company.averroes_fit_score != null) && (
+                              <div className="kc-badge-row">
+                                {getRevenueBand(company) && (
+                                  <span className={`kc-band-badge band-${getRevenueBand(company)!.toLowerCase().replace(/\s+/g, '-')}`}>
+                                    {getRevenueBand(company)}
+                                  </span>
+                                )}
+                                {company.averroes_fit_score != null && (
+                                  <span className={`kc-fit-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}
+                                    title="Averroes fit score">
+                                    Fit {Math.round(company.averroes_fit_score * 100)}
+                                  </span>
+                                )}
+                              </div>
                             )}
 
+                            {/* Row 3 — financial snapshot */}
+                            {(() => {
+                              const revM = company.revenue_y1 ? company.revenue_y1 / 1e6 : company.revenue_m || null;
+                              const revEst = !revM && company.revenue_estimate_m ? company.revenue_estimate_m : null;
+                              const team = company.employees || company.employees_ch || null;
+                              if (!revM && !revEst && !company.estimated_ebitda && !team) return null;
+                              return (
+                                <div className="kc-metrics">
+                                  {(revM || revEst) && (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">Revenue</span>
+                                      <span className="kc-metric-value">{revM ? `£${revM.toFixed(1)}M` : `~£${revEst!.toFixed(1)}M`}{revEst ? <em className="kc-est"> est.</em> : null}</span>
+                                    </span>
+                                  )}
+                                  {company.estimated_ebitda ? (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">EBITDA</span>
+                                      <span className="kc-metric-value">&pound;{company.estimated_ebitda}M</span>
+                                    </span>
+                                  ) : null}
+                                  {team ? (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">Team</span>
+                                      <span className="kc-metric-value">{team}</span>
+                                    </span>
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Row 4 — contact */}
+                            {sanitizeContact(company.contact_name) && (
+                              <div className="kc-contact-row">
+                                <span className="kc-avatar">{sanitizeContact(company.contact_name)!.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase()}</span>
+                                <span className="kc-contact">{sanitizeContact(company.contact_name)}</span>
+                              </div>
+                            )}
+
+                            {/* Row 5 — primary action: outreach (draft never changes
+                                the stage; only a successful send moves the card) */}
+                            <button
+                              className={`kc-outreach ${company.outreach_sent_at ? 'sent' : company.outreach_drafted_at ? 'drafted' : ''}`}
+                              title={company.outreach_sent_at
+                                ? `Email sent ${new Date(company.outreach_sent_at).toLocaleString('en-GB')} — click to view the sent draft or send a follow-up`
+                                : company.outreach_drafted_at
+                                ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating`
+                                : 'Generate an AI outreach draft (does not change the stage)'}
+                              onClick={() => setOutreachTarget(company)}>
+                              {company.outreach_sent_at ? '✓ Email Sent' : company.outreach_drafted_at ? '✉ Review & Send' : '✉ Outreach'}
+                            </button>
+
+                            {/* Row 6 — secondary actions */}
                             <div className="kc-actions">
                               {nextStage && (
                                 <button
@@ -579,7 +622,7 @@ function HomeInner() {
                               <button className="kc-note" onClick={() => setNoteModal({ company: company.name })}>
                                 + Note
                               </button>
-                              <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating}>
+                              <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating} title="Mark Lost">
                                 &times;
                               </button>
                               <button className="kc-remove" onClick={() => handleRemoveFromPipeline(company.name)} disabled={isUpdating} title="Remove from pipeline">
@@ -706,6 +749,9 @@ function HomeInner() {
           await handleAdvanceStage(name, status);
         }}
       />
+
+      {/* Outreach Modal (shared with the Universe page) */}
+      <OutreachModal company={outreachTarget} onClose={() => setOutreachTarget(null)} onSent={loadData} />
 
       {/* Note Modal */}
       {noteModal && (
@@ -1070,56 +1116,88 @@ function HomeInner() {
         .kanban-card {
           background: #fff;
           border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          padding: 0.85rem;
+          border-radius: 10px;
+          padding: 0.9rem 0.95rem 0.75rem;
           cursor: grab;
-          transition: all 0.15s;
+          transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
           user-select: none;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
-        .kanban-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-color: #cbd5e1; }
+        .kanban-card:hover { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08); border-color: #cbd5e1; transform: translateY(-1px); }
         .kanban-card.dragging { opacity: 0.5; transform: rotate(2deg); }
 
-        .skeleton-kanban { height: 100px; background: #e2e8f0; animation: pulse 1.5s infinite; }
+        .skeleton-kanban { height: 120px; background: #e2e8f0; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-        .kc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.25rem; }
+        .kc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.4rem; }
+        .kc-header-badges { display: flex; gap: 0.3rem; align-items: center; flex-shrink: 0; }
         .kc-name {
-          font-size: 0.88rem;
-          font-weight: 700;
+          font-size: 0.9rem;
+          font-weight: 800;
           color: #0f172a;
           background: none;
           border: none;
           padding: 0;
           cursor: pointer;
           text-align: left;
-          line-height: 1.2;
+          line-height: 1.25;
+          letter-spacing: -0.01em;
         }
         .kc-name:hover { color: #2563eb; }
-        .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 600; background: #f8fafc; padding: 0.1rem 0.4rem; border-radius: 4px; flex-shrink: 0; }
-        .kc-days.stale { color: #dc2626; background: #fee2e2; font-weight: 800; }
-        .kc-reply { font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.1rem 0.35rem; border-radius: 4px; flex-shrink: 0; cursor: help; }
+        .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 700; background: #f8fafc; border: 1px solid #f1f5f9; padding: 0.1rem 0.4rem; border-radius: 999px; flex-shrink: 0; }
+        .kc-days.stale { color: #dc2626; background: #fee2e2; border-color: #fecaca; font-weight: 800; }
+        .kc-reply { font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.1rem 0.4rem; border-radius: 999px; flex-shrink: 0; cursor: help; }
         .kanban-card.stale { border-left: 3px solid #dc2626; }
         .kanban-card.test-card { background: #fffbeb; border-color: #f59e0b; }
 
-        .kc-sector-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
-        .kc-sector { font-size: 0.72rem; color: #64748b; font-weight: 600; margin: 0; text-transform: uppercase; }
-        .kc-fit-badge { font-size: 0.65rem; font-weight: 800; padding: 0.1rem 0.4rem; border-radius: 4px; color: white; }
+        .kc-meta { font-size: 0.68rem; color: #94a3b8; font-weight: 700; margin: 0.15rem 0 0; text-transform: uppercase; letter-spacing: 0.06em; }
+
+        .kc-badge-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        .kc-fit-badge { font-size: 0.62rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; color: white; letter-spacing: 0.02em; }
         .kc-fit-badge.high { background: #16a34a; }
         .kc-fit-badge.mid { background: #d97706; }
         .kc-fit-badge.low { background: #dc2626; }
-        .kc-band-badge { font-size: 0.58rem; font-weight: 800; padding: 0.1rem 0.4rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+        .kc-band-badge { font-size: 0.58rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
         .kc-band-badge.band-target-band { background: #dcfce7; color: #166534; }
         .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
         .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
 
-        .kc-metrics { display: flex; gap: 0.75rem; margin-bottom: 0.5rem; }
-        .kc-metric { display: flex; flex-direction: column; }
-        .kc-metric-label { font-size: 0.6rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; }
-        .kc-metric-value { font-size: 0.82rem; font-weight: 700; color: #0f172a; }
+        .kc-metrics {
+          display: flex;
+          gap: 0;
+          margin-top: 0.6rem;
+          padding: 0.45rem 0;
+          border-top: 1px solid #f1f5f9;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .kc-metric { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 0.6rem; border-left: 1px solid #f1f5f9; }
+        .kc-metric:first-child { padding-left: 0; border-left: none; }
+        .kc-metric-label { font-size: 0.58rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.1rem; }
+        .kc-metric-value { font-size: 0.84rem; font-weight: 800; color: #0f172a; white-space: nowrap; }
+        .kc-est { font-size: 0.62rem; color: #94a3b8; font-weight: 600; font-style: normal; }
 
-        .kc-contact { font-size: 0.72rem; color: #64748b; margin: 0 0 0.5rem; }
+        .kc-contact-row { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.55rem; }
+        .kc-avatar {
+          width: 20px; height: 20px; border-radius: 50%; background: #eff6ff; color: #2563eb;
+          font-size: 0.55rem; font-weight: 800; display: inline-flex; align-items: center;
+          justify-content: center; flex-shrink: 0; letter-spacing: 0.02em;
+        }
+        .kc-contact { font-size: 0.74rem; color: #475569; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        .kc-actions { display: flex; gap: 0.35rem; align-items: center; margin-top: 0.25rem; }
+        .kc-outreach {
+          display: block; width: 100%; margin-top: 0.6rem;
+          background: transparent; border: 1px solid #d97706; color: #d97706;
+          padding: 0.35rem 0.5rem; border-radius: 6px;
+          font-size: 0.7rem; font-weight: 800; cursor: pointer; text-align: center;
+          transition: background 0.15s, color 0.15s;
+        }
+        .kc-outreach:hover { background: #d97706; color: #fff; }
+        .kc-outreach.drafted { border-color: #8b5cf6; color: #8b5cf6; }
+        .kc-outreach.drafted:hover { background: #f5f3ff; color: #7c3aed; }
+        .kc-outreach.sent { border-color: #bbf7d0; color: #16a34a; background: #f0fdf4; }
+        .kc-outreach.sent:hover { background: #dcfce7; }
+
+        .kc-actions { display: flex; gap: 0.35rem; align-items: center; margin-top: 0.5rem; }
         .kc-advance {
           flex: 1;
           background: none;

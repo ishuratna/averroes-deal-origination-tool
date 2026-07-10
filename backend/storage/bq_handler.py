@@ -89,6 +89,8 @@ class BigQueryHandler:
         ("gross_profit_y1", "FLOAT64"),
         ("gross_profit_y2", "FLOAT64"),
         ("last_smartfill_at", "TIMESTAMP"),
+        # Why the company failed the hard filters (shown on hover in the UI)
+        ("unfit_reason", "STRING"),
         # Persisted outreach draft (review-and-send flow)
         ("outreach_draft_subject", "STRING"),
         ("outreach_draft_body", "STRING"),
@@ -346,7 +348,7 @@ class BigQueryHandler:
         if not self.client:
             return 0
         query = f"""SELECT COUNT(*) AS n FROM `{self.activity_table_id}`
-                    WHERE action_type IN ('smartfill', 'smartenrich') AND DATE(created_at) = CURRENT_DATE()"""
+                    WHERE action_type IN ('smartfill', 'smartenrich', 'smartfill_gated') AND DATE(created_at) = CURRENT_DATE()"""
         try:
             rows = list(self.client.query(query).result())
             return int(rows[0].n) if rows else 0

@@ -96,7 +96,8 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
           </div>
           <div className="drawer-company-header">
             <h2 className="drawer-company-name">{company.name}</h2>
-            <span className="drawer-status-badge" style={{ background: stageColor(company.status) }}>
+            <span className="drawer-status-badge" style={{ background: stageColor(company.status) }}
+              title={company.status === 'Not a Fit' && company.unfit_reason ? company.unfit_reason : undefined}>
               {company.status}
             </span>
           </div>
@@ -107,7 +108,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
             </a>
           )}
           {company.description && (
-            <p className="drawer-description">{company.description}</p>
+            <p className="drawer-description" title="Full description is in the Overview tab under About">{company.description}</p>
           )}
         </div>
 
@@ -151,6 +152,14 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                   <span className="stat-value">{company.year_founded || '—'}</span>
                 </div>
               </div>
+
+              {/* About — structured description */}
+              {company.description && (
+                <>
+                  <SectionHeading title="About" />
+                  <DescriptionBlock text={company.description} />
+                </>
+              )}
 
               {/* Averroes Fit Score Breakdown */}
               {company.averroes_fit_score != null && (
@@ -650,7 +659,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
           line-height: 1.6;
           margin: 0;
           display: -webkit-box;
-          -webkit-line-clamp: 3;
+          -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
         }
@@ -1065,6 +1074,82 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
         }
       `}</style>
     </>
+  );
+}
+
+
+/* ── Description Block Component ──
+   Turns a raw description blob into structured, readable content:
+   • splits on newlines into paragraphs
+   • detects bullet lines (•, -, *) and renders them as a proper list
+   • breaks one giant paragraph into readable paragraphs at sentence
+     boundaries so long AI-generated descriptions don't render as a wall */
+function DescriptionBlock({ text }: { text?: string | null }) {
+  if (!text) return null;
+  const clean = text.replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
+  const rawLines = clean.split(/\n+/).map(l => l.trim()).filter(Boolean);
+
+  type Block = { type: 'p' | 'ul'; items: string[] };
+  let blocks: Block[] = [];
+  for (const line of rawLines) {
+    const m = line.match(/^[•\-\*]\s+(.*)$/);
+    if (m) {
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === 'ul') last.items.push(m[1]);
+      else blocks.push({ type: 'ul', items: [m[1]] });
+    } else {
+      blocks.push({ type: 'p', items: [line] });
+    }
+  }
+
+  // One giant paragraph → split at sentence boundaries into ~2-3 sentence paragraphs
+  if (blocks.length === 1 && blocks[0].type === 'p' && blocks[0].items[0].length > 420) {
+    const sentences = blocks[0].items[0].match(/[^.!?]+[.!?]+["')\]]*\s*/g) || [blocks[0].items[0]];
+    const paras: string[] = [];
+    let cur = '';
+    for (const s of sentences) {
+      cur += s;
+      if (cur.length > 260) { paras.push(cur.trim()); cur = ''; }
+    }
+    if (cur.trim()) paras.push(cur.trim());
+    blocks = paras.map(p => ({ type: 'p' as const, items: [p] }));
+  }
+
+  return (
+    <div className="desc-block">
+      {blocks.map((b, i) =>
+        b.type === 'ul' ? (
+          <ul key={i} className="desc-list">
+            {b.items.map((item, j) => <li key={j}>{item}</li>)}
+          </ul>
+        ) : (
+          <p key={i} className="desc-para">{b.items[0]}</p>
+        )
+      )}
+
+      <style jsx>{`
+        .desc-block { display: flex; flex-direction: column; gap: 0.55rem; }
+        .desc-para {
+          font-size: 0.84rem;
+          color: #334155;
+          line-height: 1.7;
+          margin: 0;
+        }
+        .desc-list {
+          margin: 0;
+          padding-left: 1.1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+        }
+        .desc-list li {
+          font-size: 0.84rem;
+          color: #334155;
+          line-height: 1.6;
+        }
+        .desc-list li::marker { color: #2563eb; }
+      `}</style>
+    </div>
   );
 }
 

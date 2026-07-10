@@ -7,6 +7,7 @@ import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
 import InfoTip, { DEFS } from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
+import OutreachModal from "../../components/OutreachModal";
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -72,9 +73,6 @@ function UniverseInner() {
   const [smartFilling, setSmartFilling] = useState<string | null>(null);
   const [smartFillResult, setSmartFillResult] = useState<any | null>(null);
   const [outreachTarget, setOutreachTarget] = useState<any | null>(null);
-  const [outreachDraft, setOutreachDraft] = useState<{to: string; subject: string; body: string; company: string} | null>(null);
-  const [outreachLoading, setOutreachLoading] = useState(false);
-  const [outreachSent, setOutreachSent] = useState(false);
 
   // Drawer
   const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
@@ -303,58 +301,7 @@ function UniverseInner() {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const generateDraft = async (company: any) => {
-    setOutreachLoading(true);
-    try {
-      const draft = await dealApi.draftOutreach(company.name);
-      setOutreachDraft({
-        to: draft.to || company.contact_email || '',
-        subject: draft.subject || '',
-        body: draft.body || '',
-        company: company.name,
-      });
-    } catch (err: any) {
-      alert(`Failed to generate draft: ${err.message}`);
-      setOutreachTarget(null);
-    } finally { setOutreachLoading(false); }
-  };
-
-  const openOutreach = async (company: any) => {
-    setOutreachTarget(company);
-    setOutreachDraft(null);
-    setOutreachSent(false);
-    // A previously generated draft opens instantly for review — no regeneration
-    if (company.outreach_drafted_at && company.outreach_draft_body) {
-      setOutreachDraft({
-        to: company.outreach_draft_to || company.contact_email || '',
-        subject: company.outreach_draft_subject || '',
-        body: company.outreach_draft_body || '',
-        company: company.name,
-      });
-      return;
-    }
-    await generateDraft(company);
-  };
-
-  const [outreachSending, setOutreachSending] = useState(false);
-  const handleSendOutreach = async () => {
-    if (!outreachDraft?.to) return;
-    setOutreachSending(true);
-    try {
-      await dealApi.sendOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.company);
-      setOutreachSent(true);
-      await loadData();  // stage bumps to Engaged
-    } catch (err: any) {
-      alert(`Send failed: ${err.message}`);
-    } finally { setOutreachSending(false); }
-  };
-
-  const handleCopyDraft = () => {
-    if (!outreachDraft) return;
-    const text = `To: ${outreachDraft.to}\nSubject: ${outreachDraft.subject}\n\n${outreachDraft.body}`;
-    navigator.clipboard.writeText(text);
-    alert('Draft copied to clipboard!');
-  };
+  const openOutreach = (company: any) => setOutreachTarget(company);
 
   // Saved views
   const activeFilterCount = [filters.vertical !== 'All', filters.region !== 'All', filters.status !== 'All', searchQuery !== ''].filter(Boolean).length;
@@ -568,69 +515,8 @@ function UniverseInner() {
         </div>
       )}
 
-      {/* Outreach Modal */}
-      {outreachTarget && (
-        <div className="modal-overlay" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>
-          <div className="modal-content outreach-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Outreach — {outreachTarget.name}</h3>
-              <button className="modal-close" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>&times;</button>
-            </div>
-            <div className="modal-body">
-              {outreachLoading ? (
-                <div className="outreach-loading">
-                  <div className="spinner"></div>
-                  <p>Drafting personalised email with AI...</p>
-                  <p className="loading-sub">Researching {outreachTarget.name} to craft the perfect intro</p>
-                </div>
-              ) : outreachSent ? (
-                <div className="outreach-sent">
-                  <div className="sent-icon">&#10003;</div>
-                  <h4>Email Sent</h4>
-                  <p>Sent to <strong>{outreachDraft?.to}</strong> from Beatrice Carrara &lt;beatrice@averroescapital.com&gt;.</p>
-                  <p className="sent-sub">The company&apos;s stage has moved to Engaged.</p>
-                </div>
-              ) : outreachDraft ? (
-                <div className="outreach-form">
-                  <div className="form-row">
-                    <label>To</label>
-                    <input type="email" value={outreachDraft.to} onChange={(e) => setOutreachDraft({...outreachDraft, to: e.target.value})} />
-                  </div>
-                  <div className="form-row">
-                    <label>Subject</label>
-                    <input type="text" value={outreachDraft.subject} onChange={(e) => setOutreachDraft({...outreachDraft, subject: e.target.value})} />
-                  </div>
-                  <div className="form-row">
-                    <label>Body</label>
-                    <textarea rows={12} value={outreachDraft.body} onChange={(e) => setOutreachDraft({...outreachDraft, body: e.target.value})} />
-                  </div>
-                  <div className="form-row from-row">
-                    <span className="from-label">From: Beatrice Carrara &lt;beatrice@averroescapital.com&gt; · Full signature (name, title, phone, logo) is added automatically on send</span>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="modal-footer">
-              {outreachSent ? (
-                <button className="modal-ok-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Done</button>
-              ) : outreachDraft && !outreachLoading ? (
-                <>
-                  <button className="outreach-cancel-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Cancel</button>
-                  <button className="outreach-copy-btn" onClick={handleCopyDraft}>Copy Draft</button>
-                  <button className="outreach-copy-btn" onClick={() => generateDraft(outreachTarget)} disabled={outreachSending}
-                    title="Discard this draft and generate a fresh one (uses AI credits)">
-                    Generate New Draft
-                  </button>
-                  <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={!outreachDraft.to || outreachSending}
-                    title={!outreachDraft.to ? 'No recipient email — type one above or run SmartFill to find contacts' : ''}>
-                    {outreachSending ? 'Sending…' : 'Send Email'}
-                  </button>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Outreach Modal (shared component — same one used on the Pipeline) */}
+      <OutreachModal company={outreachTarget} onClose={() => setOutreachTarget(null)} onSent={loadData} />
 
       {/* ── Bulk SmartFill Modal ────────────────────────────────────── */}
       {bulkEligibility && (
@@ -1097,7 +983,7 @@ function UniverseInner() {
                         {['Not a Fit', 'Scraped', 'Uploaded', 'Under Review'].includes(company.status) ? (
                           <span
                             className={`status-badge clickable ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}
-                            title="Click to Qualify anyway (manual override)"
+                            title={`${company.status === 'Not a Fit' && company.unfit_reason ? company.unfit_reason + '\n\n' : ''}Click to Qualify anyway (manual override)`}
                             onClick={() => qualifyAnyway(company)}
                           >
                             {qualifyingName === company.name ? 'Qualifying…' : company.status}
