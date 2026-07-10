@@ -1212,6 +1212,18 @@ async def update_company_status(company_name: str, req: StatusUpdateRequest):
     if req.status not in valid_stages:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_stages}")
 
+    # Internal test row never exits the pipeline — it resets for the next cycle
+    if req.status in ("Lost", "Not a Fit"):
+        try:
+            if _reset_test_company(company_name):
+                bq_handler.add_activity_note(
+                    company_name,
+                    f"Internal test company: '{req.status}' intercepted — reset to a fresh Qualified state (outreach, replies and stage history cleared) for the next test cycle.",
+                    req.created_by)
+                return {"status": "Success", "company": company_name, "new_status": "Qualified", "test_reset": True}
+        except Exception as e:
+            logger.warning(f"Test-company reset check failed for {company_name}: {e}")
+
     success = bq_handler.update_company_status(company_name, req.status, req.created_by)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update status.")
@@ -1222,10 +1234,51 @@ class RemoveRequest(BaseModel):
     created_by: Optional[str] = "Ishu Ratna"
 
 
+# ── Internal test company: never leaves the pipeline ─────────────────────────
+# The row with source='Internal Test' exists purely for end-to-end testing.
+# Any action that would drop it out of the pipeline (Remove, Mark Lost,
+# Not a Fit) instead resets it to a FRESH Qualified state: outreach draft,
+# sent/reply stamps and per-stage timestamps are wiped so the next test
+# cycle starts completely clean. Applies ONLY to Internal Test rows.
+
+def _reset_test_company(company_name: str) -> bool:
+    """Reset the internal test row to a clean Qualified state.
+    Returns True if a reset happened (i.e. the row is the test company)."""
+    from google.cloud import bigquery as bq_lib
+    query = f"""UPDATE `{bq_handler.table_id}` SET
+        status = 'Qualified',
+        stage_entered_at = CURRENT_TIMESTAMP(),
+        qualified_at = CURRENT_TIMESTAMP(),
+        contacted_at = NULL, meeting_at = NULL, dd_at = NULL,
+        offer_at = NULL, won_at = NULL, lost_at = NULL,
+        outreach_draft_subject = NULL, outreach_draft_body = NULL,
+        outreach_draft_to = NULL, outreach_drafted_at = NULL,
+        outreach_sent_at = NULL,
+        last_reply_at = NULL, reply_classification = NULL,
+        unfit_reason = NULL
+        WHERE name = @name AND source = 'Internal Test'"""
+    job = bq_handler.client.query(query, job_config=bq_lib.QueryJobConfig(query_parameters=[
+        bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+    ]))
+    job.result()
+    return bool(job.num_dml_affected_rows)
+
+
 @app.post("/company/{company_name}/remove")
 async def remove_from_pipeline(company_name: str, req: RemoveRequest):
     """Remove a company from the pipeline — sets status to 'Not a Fit' and score to 0."""
     logger.info(f"Removing '{company_name}' from pipeline by {req.created_by}")
+
+    # Internal test row never exits the pipeline — it resets for the next cycle
+    try:
+        if _reset_test_company(company_name):
+            bq_handler.add_activity_note(
+                company_name,
+                "Internal test company: removal intercepted — reset to a fresh Qualified state (outreach, replies and stage history cleared) for the next test cycle.",
+                req.created_by)
+            return {"status": "Success", "company": company_name, "new_status": "Qualified", "test_reset": True}
+    except Exception as e:
+        logger.warning(f"Test-company reset check failed for {company_name}: {e}")
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
