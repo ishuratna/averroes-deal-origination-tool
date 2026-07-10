@@ -358,9 +358,28 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
         return fallback
 
 
+# ── Email signature (appended automatically at send time) ────────────────────
+SIG_NAME = os.getenv("SIGNATURE_NAME", "Maria Beatrice Carrara")
+SIG_TITLE = os.getenv("SIGNATURE_TITLE", "Partner")
+SIG_PHONE = os.getenv("SIGNATURE_PHONE", "+44 7384 357070")
+SIG_EMAIL = os.getenv("SIGNATURE_EMAIL", "bcarrara@averroescapital.com")
+SIG_LOGO_URL = os.getenv("SIGNATURE_LOGO_URL", "")  # hosted Averroes logo, optional
+
+SIGNATURE_TEXT = f"\n\n{SIG_NAME}\n{SIG_TITLE}\n{SIG_PHONE} | {SIG_EMAIL}"
+
+SIGNATURE_HTML = f"""
+<br><br>
+{f'<img src="{SIG_LOGO_URL}" alt="Averroes Capital" style="height:44px; margin-bottom:8px;"><br>' if SIG_LOGO_URL else ''}
+<span style="color:#6b7280;"><b style="color:#374151;">{SIG_NAME}</b><br>
+{SIG_TITLE}<br>
+{SIG_PHONE} | <a href="mailto:{SIG_EMAIL}" style="color:#2563eb;">{SIG_EMAIL}</a></span>
+"""
+
+
 def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
     """
-    Send an email via Gmail SMTP using App Password.
+    Send an email via Gmail SMTP using App Password. Beatrice's signature
+    (name, title, phone, email, logo if configured) is appended automatically.
     Returns {"status": "sent"} or {"status": "error", "detail": "..."}.
     """
     if not SMTP_PASSWORD:
@@ -375,12 +394,12 @@ def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
         msg["To"] = to
         msg["Subject"] = subject
 
-        # Plain text version
-        msg.attach(MIMEText(body, "plain"))
+        # Plain text version + signature
+        msg.attach(MIMEText(body + SIGNATURE_TEXT, "plain"))
 
-        # Simple HTML version (converts newlines to <br>)
+        # HTML version (newlines to <br>) + styled signature
         html_body = body.replace("\n", "<br>")
-        html = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">{html_body}</body></html>"""
+        html = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">{html_body}{SIGNATURE_HTML}</body></html>"""
         msg.attach(MIMEText(html, "html"))
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:

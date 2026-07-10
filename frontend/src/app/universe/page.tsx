@@ -581,7 +581,7 @@ function UniverseInner() {
                     <textarea rows={12} value={outreachDraft.body} onChange={(e) => setOutreachDraft({...outreachDraft, body: e.target.value})} />
                   </div>
                   <div className="form-row from-row">
-                    <span className="from-label">From: Beatrice Carrara &lt;beatrice@averroescapital.com&gt;</span>
+                    <span className="from-label">From: Beatrice Carrara &lt;beatrice@averroescapital.com&gt; · Full signature (name, title, phone, logo) is added automatically on send</span>
                   </div>
                 </div>
               ) : null}
