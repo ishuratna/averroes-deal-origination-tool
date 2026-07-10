@@ -1194,12 +1194,15 @@ async def send_outreach(req: OutreachSendRequest):
     # Log the sent email in BQ (best-effort)
     try:
         from google.cloud import bigquery as bq_lib
+        # The Internal Test row is exempt from the Not-a-Fit guard: sending a
+        # test email always moves it to Engaged so the full loop can be tested
+        # from any starting state.
         query = f"""UPDATE `{bq_handler.table_id}`
                     SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Engaged' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
                         contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
                         outreach_sent_at = CURRENT_TIMESTAMP(),
                         status = 'Engaged'
-                    WHERE name = @name AND status != 'Not a Fit'"""
+                    WHERE name = @name AND (status != 'Not a Fit' OR source = 'Internal Test')"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("name", "STRING", req.company_name or ""),
         ])
@@ -1374,7 +1377,8 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     for c in bq_handler.get_universe():
         em = (c.get("contact_email") or "").strip().lower()
         if em:
-            known[em] = {"type": "company", "name": c.get("name"), "status": c.get("status")}
+            known[em] = {"type": "company", "name": c.get("name"), "status": c.get("status"),
+                         "is_test": c.get("source") == "Internal Test"}
     for inv in investor_handler.get_all():
         em = (inv.get("contact_email") or "").strip().lower()
         if em:
@@ -1422,8 +1426,12 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 # Log with the email's ACTUAL received time, not the sync time
                 bq_handler._log_activity(ename, "note", "email-sync",
                                          note_text=note, event_time=r["sent_at"])
-                # Auto-advance: a reply means dialogue — Engaged → Contacted
-                if known.get(r["counterparty_email"], {}).get("status") == "Engaged":
+                # Auto-advance: a reply means dialogue — Engaged → Contacted.
+                # The Internal Test row advances from ANY pre-Contacted state so
+                # the loop is testable regardless of where it started.
+                sender = known.get(r["counterparty_email"], {})
+                past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
+                if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
                     bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
                     advanced.append(ename)
             else:
