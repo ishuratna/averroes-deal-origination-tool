@@ -119,6 +119,28 @@ function UniverseInner() {
     finally { setLoading(false); }
   }
 
+  // ── Manual qualification override ─────────────────────────────────────────
+
+  const [qualifyingName, setQualifyingName] = useState<string | null>(null);
+
+  async function qualifyAnyway(company: CompanyTarget) {
+    if (qualifyingName) return;
+    const score = company.averroes_fit_score != null ? Math.round(company.averroes_fit_score * 100) : null;
+    const scoreLine = score != null
+      ? `Fit score: ${score}${score < 70 ? ' (below the qualification bar)' : ''}.`
+      : 'This company has not been scored yet.';
+    if (!window.confirm(`${scoreLine}\n\nQualify "${company.name}" anyway? It will move into the pipeline as Qualified.`)) return;
+    setQualifyingName(company.name);
+    try {
+      await dealApi.updateCompanyStatus(company.name, 'Qualified', 'Ishu Ratna (manual override)');
+      await loadData();
+    } catch (e: any) {
+      alert(`Failed to qualify: ${e.message}`);
+    } finally {
+      setQualifyingName(null);
+    }
+  }
+
   // ── Compute source stats from universe data ──────────────────────────────
 
   const sourceStats = useMemo(() => {
@@ -1071,7 +1093,19 @@ function UniverseInner() {
                       <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.total_assets_y1 ? `£${(company.total_assets_y1 / 1e6).toFixed(1)}M` : '—'}</td>
-                      <td><span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span></td>
+                      <td>
+                        {['Not a Fit', 'Scraped', 'Uploaded', 'Under Review'].includes(company.status) ? (
+                          <span
+                            className={`status-badge clickable ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}
+                            title="Click to Qualify anyway (manual override)"
+                            onClick={() => qualifyAnyway(company)}
+                          >
+                            {qualifyingName === company.name ? 'Qualifying…' : company.status}
+                          </span>
+                        ) : (
+                          <span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span>
+                        )}
+                      </td>
                       <td>{company.contact_name || '—'}</td>
                       <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '—'}</td>
                       <td>{company.linkedin_url ? (<a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>) : '—'}</td>
@@ -1476,6 +1510,8 @@ function UniverseInner() {
         .sector-cell { font-weight: 600; color: #0f172a; }
         .num-cell { font-size: 0.82rem; font-variant-numeric: tabular-nums; text-align: right; }
         .status-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .status-badge.clickable { cursor: pointer; border: 1px dashed rgba(0,0,0,0.15); transition: filter 0.15s, box-shadow 0.15s; }
+        .status-badge.clickable:hover { filter: brightness(0.94); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
         .status-badge.qualified { background: #dcfce7; color: #166534; }
         .status-badge.under-review { background: #fef3c7; color: #92400e; }
         .status-badge.uploaded { background: #eff6ff; color: #2563eb; }
