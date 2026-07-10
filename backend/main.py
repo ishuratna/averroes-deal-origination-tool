@@ -423,6 +423,9 @@ async def upload_custom_file(file: UploadFile = File(...)):
 # is enforced before any AI run. Both knobs are env vars (change with
 # --update-env-vars, never --set-env-vars):
 DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))      # SmartFill/Enrich runs per day
+
+# All outreach for the Internal Test company goes to this inbox — always.
+TEST_RECIPIENT = "admin@averroescapital.com"
 DAILY_GROUNDING_BUDGET = int(os.getenv("DAILY_GROUNDING_BUDGET", "1400"))  # grounded calls, 100 safety buffer
 
 
@@ -1115,6 +1118,8 @@ async def draft_outreach(company_name: str):
     except Exception:
         pass
 
+    is_test_company = company_data.get("source") == "Internal Test"
+
     news_hook = _stored_news_signal(company_data)
     hook_source = "scoring intelligence" if news_hook else ""
     if not news_hook:
@@ -1131,6 +1136,10 @@ async def draft_outreach(company_name: str):
     result = draft_outreach_email(company_data, news_hook=news_hook)
     result["news_hook"] = news_hook
     result["news_hook_source"] = hook_source
+
+    # Internal test company: recipient is ALWAYS the test inbox
+    if is_test_company:
+        result["to"] = TEST_RECIPIENT
 
     # Persist the draft so the UI can offer Review & Send without regenerating
     try:
@@ -1163,6 +1172,21 @@ async def draft_outreach(company_name: str):
 @app.post("/outreach/send")
 async def send_outreach(req: OutreachSendRequest):
     """Send an outreach email via Gmail SMTP."""
+    # Internal test company: force the recipient to the test inbox, even if
+    # the To field was edited — a test email must never reach a real founder.
+    to_addr = req.to
+    if req.company_name:
+        try:
+            for c in bq_handler.get_universe():
+                if c.get("name") == req.company_name:
+                    if c.get("source") == "Internal Test" and to_addr != TEST_RECIPIENT:
+                        logger.info(f"Test company send: recipient '{to_addr}' overridden to {TEST_RECIPIENT}")
+                        to_addr = TEST_RECIPIENT
+                    break
+        except Exception:
+            pass
+    req.to = to_addr
+
     logger.info(f"Sending outreach to: {req.to} (company: {req.company_name})")
     result = send_email(req.to, req.subject, req.body)
     if result["status"] == "error":
