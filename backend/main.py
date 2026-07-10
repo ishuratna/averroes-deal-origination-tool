@@ -1439,6 +1439,33 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         except Exception as e:
             logger.warning(f"Reply processing failed for {ename}: {e}")
 
+    # Self-healing pass: replies that were ALREADY logged in a previous sync
+    # (deduped above) but whose company still sits in a pre-reply stage.
+    # Happens when a reply was synced before the stage rules changed, or a
+    # stage update failed mid-run. No new log entries or activity notes —
+    # just the stage advance that should have happened.
+    handled = {r["entity_name"] for r in replies}
+    past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
+    for r in sorted((e for e in entries if e["direction"] == "received"), key=lambda x: x.get("sent_at") or ""):
+        ename = r["entity_name"]
+        if r["entity_type"] != "company" or ename in handled:
+            continue
+        sender = known.get(r["counterparty_email"], {})
+        if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
+            try:
+                # Ensure the reply stamp exists (idempotent), then advance
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET last_reply_at = IFNULL(last_reply_at, @ts) WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("ts", "TIMESTAMP", r["sent_at"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", ename),
+                    ])).result()
+                bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                advanced.append(ename)
+                handled.add(ename)
+            except Exception as e:
+                logger.warning(f"Self-heal advance failed for {ename}: {e}")
+
     return {
         "status": "Success",
         "scanned_days": days,
