@@ -106,6 +106,10 @@ export interface CompanyTarget {
   ch_last_share_allotment?: string;
   ch_accounts_next_due?: string;
   last_smartfill_at?: string;
+  outreach_draft_subject?: string;
+  outreach_draft_body?: string;
+  outreach_draft_to?: string;
+  outreach_drafted_at?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;

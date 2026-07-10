@@ -279,10 +279,7 @@ function UniverseInner() {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const openOutreach = async (company: any) => {
-    setOutreachTarget(company);
-    setOutreachDraft(null);
-    setOutreachSent(false);
+  const generateDraft = async (company: any) => {
     setOutreachLoading(true);
     try {
       const draft = await dealApi.draftOutreach(company.name);
@@ -296,6 +293,23 @@ function UniverseInner() {
       alert(`Failed to generate draft: ${err.message}`);
       setOutreachTarget(null);
     } finally { setOutreachLoading(false); }
+  };
+
+  const openOutreach = async (company: any) => {
+    setOutreachTarget(company);
+    setOutreachDraft(null);
+    setOutreachSent(false);
+    // A previously generated draft opens instantly for review — no regeneration
+    if (company.outreach_drafted_at && company.outreach_draft_body) {
+      setOutreachDraft({
+        to: company.outreach_draft_to || company.contact_email || '',
+        subject: company.outreach_draft_subject || '',
+        body: company.outreach_draft_body || '',
+        company: company.name,
+      });
+      return;
+    }
+    await generateDraft(company);
   };
 
   const [outreachSending, setOutreachSending] = useState(false);
@@ -579,6 +593,10 @@ function UniverseInner() {
                 <>
                   <button className="outreach-cancel-btn" onClick={() => { setOutreachTarget(null); setOutreachDraft(null); }}>Cancel</button>
                   <button className="outreach-copy-btn" onClick={handleCopyDraft}>Copy Draft</button>
+                  <button className="outreach-copy-btn" onClick={() => generateDraft(outreachTarget)} disabled={outreachSending}
+                    title="Discard this draft and generate a fresh one (uses AI credits)">
+                    Generate New Draft
+                  </button>
                   <button className="outreach-send-btn" onClick={handleSendOutreach} disabled={!outreachDraft.to || outreachSending}
                     title={!outreachDraft.to ? 'No recipient email — type one above or run SmartFill to find contacts' : ''}>
                     {outreachSending ? 'Sending…' : 'Send Email'}
@@ -1076,7 +1094,12 @@ function UniverseInner() {
                             }}>
                             {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartEnrich ↻' : 'SmartFill'}
                           </button>
-                          <button className="outreach-btn" onClick={() => openOutreach(company)}>Outreach</button>
+                          <button
+                            className={`outreach-btn ${company.outreach_drafted_at ? 'drafted' : ''}`}
+                            title={company.outreach_drafted_at ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating` : 'Generate an AI outreach draft'}
+                            onClick={() => openOutreach(company)}>
+                            {company.outreach_drafted_at ? 'Review & Send' : 'Outreach'}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1490,6 +1513,8 @@ function UniverseInner() {
         .smartfill-btn { background: transparent; border: 1px solid #2563eb; color: #2563eb; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
         .smartfill-btn.enrich { border-color: #16a34a; color: #16a34a; }
         .smartfill-btn.enrich:hover:not(:disabled) { background: #f0fdf4; }
+        .outreach-btn.drafted { border-color: #8b5cf6; color: #8b5cf6; }
+        .outreach-btn.drafted:hover { background: #f5f3ff; }
         .smartfill-btn:hover:not(:disabled) { background: #2563eb; color: white; }
         .smartfill-btn.filling { opacity: 0.4; cursor: wait; }
         .outreach-btn { background: transparent; border: 1px solid #d97706; color: #d97706; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }

@@ -1037,6 +1037,23 @@ async def draft_outreach(company_name: str):
     result = draft_outreach_email(company_data, news_hook=news_hook)
     result["news_hook"] = news_hook
     result["news_hook_source"] = hook_source
+
+    # Persist the draft so the UI can offer Review & Send without regenerating
+    try:
+        from google.cloud import bigquery as bq_lib
+        q = f"""UPDATE `{bq_handler.table_id}` SET
+                outreach_draft_subject = @s, outreach_draft_body = @b,
+                outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                WHERE name = @name"""
+        bq_handler.client.query(q, job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
+            bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
+            bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or ""),
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ])).result()
+    except Exception as e:
+        logger.warning(f"Failed to persist outreach draft for {company_name}: {e}")
+
     return result
 
 

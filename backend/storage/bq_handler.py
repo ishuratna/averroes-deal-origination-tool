@@ -89,6 +89,11 @@ class BigQueryHandler:
         ("gross_profit_y1", "FLOAT64"),
         ("gross_profit_y2", "FLOAT64"),
         ("last_smartfill_at", "TIMESTAMP"),
+        # Persisted outreach draft (review-and-send flow)
+        ("outreach_draft_subject", "STRING"),
+        ("outreach_draft_body", "STRING"),
+        ("outreach_draft_to", "STRING"),
+        ("outreach_drafted_at", "TIMESTAMP"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),
