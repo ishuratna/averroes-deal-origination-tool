@@ -159,16 +159,15 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     2. HOW WE FOUND THEM, one sentence: "I recently came across {name} and
        thought it looked really interesting." or "I was reading about {name}
        recently and the work you're doing caught my attention." (vary)
-    3. THE OBSERVATION, 2-3 sentences with real depth. This is where most
-       drafts fail by being shallow. Show you understand their PROBLEM SPACE:
-       why the problem is genuinely hard or economically significant, and then
-       what specifically about their approach stood out. Best-in-class example
-       of the move: "Improving direct sales against the host of OTAs and
-       metasearches is tricky, so we think there is a huge opportunity in
-       improving hotel performance. The way you've built X around that stood
-       out." Ground everything in the data or the recent signal. Never
-       describe their company back to them; they built it.
-       If the data is thin, keep this to one honest sentence or skip it.
+    3. THE OBSERVATION, STRICTLY 2 sentences, no more. This is where most
+       drafts fail by being shallow. Sentence one: why the problem is genuinely
+       hard or economically significant. Sentence two: what specifically about
+       their approach stood out. Best-in-class example of the move: "Improving
+       direct sales against the host of OTAs and metasearches is tricky, so we
+       think there is a huge opportunity in improving hotel performance. The
+       way you've built X around that stood out." Ground everything in the data
+       or the recent signal. Never describe their company back to them; they
+       built it. If the data is thin, keep this to one honest sentence or skip it.
     4. WHO I AM: "I am a Partner at Averroes Capital, a London-based growth
        equity investor focused on founder-led technology businesses. We
        typically get involved where a company has a proven product and is
