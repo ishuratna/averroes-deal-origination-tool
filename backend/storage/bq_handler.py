@@ -94,6 +94,7 @@ class BigQueryHandler:
         ("outreach_draft_body", "STRING"),
         ("outreach_draft_to", "STRING"),
         ("outreach_drafted_at", "TIMESTAMP"),
+        ("outreach_sent_at", "TIMESTAMP"),
         # Email reply intelligence (from the Gmail sync)
         ("last_reply_at", "TIMESTAMP"),
         ("reply_classification", "STRING"),

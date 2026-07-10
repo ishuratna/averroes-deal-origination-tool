@@ -1107,10 +1107,14 @@ function UniverseInner() {
                             {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartEnrich ↻' : 'SmartFill'}
                           </button>
                           <button
-                            className={`outreach-btn ${company.outreach_drafted_at ? 'drafted' : ''}`}
-                            title={company.outreach_drafted_at ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating` : 'Generate an AI outreach draft'}
+                            className={`outreach-btn ${company.outreach_sent_at ? 'sent' : company.outreach_drafted_at ? 'drafted' : ''}`}
+                            title={company.outreach_sent_at
+                              ? `Email sent ${new Date(company.outreach_sent_at).toLocaleString('en-GB')} — click to view the sent draft or send a follow-up`
+                              : company.outreach_drafted_at
+                              ? `Draft saved ${new Date(company.outreach_drafted_at).toLocaleString('en-GB')} — opens for review without regenerating`
+                              : 'Generate an AI outreach draft'}
                             onClick={() => openOutreach(company)}>
-                            {company.outreach_drafted_at ? 'Review & Send' : 'Outreach'}
+                            {company.outreach_sent_at ? 'Email Sent ✓' : company.outreach_drafted_at ? 'Review & Send' : 'Outreach'}
                           </button>
                         </div>
                       </td>
@@ -1529,6 +1533,8 @@ function UniverseInner() {
         .smartfill-btn.enrich:hover:not(:disabled) { background: #f0fdf4; }
         .outreach-btn.drafted { border-color: #8b5cf6; color: #8b5cf6; }
         .outreach-btn.drafted:hover { background: #f5f3ff; }
+        .outreach-btn.sent { border-color: #16a34a; color: #16a34a; background: #f0fdf4; }
+        .outreach-btn.sent:hover { background: #dcfce7; }
         .smartfill-btn:hover:not(:disabled) { background: #2563eb; color: white; }
         .smartfill-btn.filling { opacity: 0.4; cursor: wait; }
         .outreach-btn { background: transparent; border: 1px solid #d97706; color: #d97706; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }

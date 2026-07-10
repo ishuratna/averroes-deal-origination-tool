@@ -1075,6 +1075,15 @@ async def draft_outreach(company_name: str):
     except Exception as e:
         logger.warning(f"Failed to persist outreach draft for {company_name}: {e}")
 
+    # Activity log: the draft event, with its metadata
+    try:
+        bq_handler._log_activity(
+            company_name, "note", "system",
+            note_text=f"Outreach draft generated — to: {result.get('to') or 'no email on file'}, subject: \"{result.get('subject', '')}\"" +
+                      (f", news hook: {hook_source}" if hook_source else ""))
+    except Exception as e:
+        logger.warning(f"Failed to log draft activity: {e}")
+
     return result
 
 
@@ -1091,6 +1100,7 @@ async def send_outreach(req: OutreachSendRequest):
         query = f"""UPDATE `{bq_handler.table_id}`
                     SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Engaged' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
                         contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
+                        outreach_sent_at = CURRENT_TIMESTAMP(),
                         status = 'Engaged'
                     WHERE name = @name AND status != 'Not a Fit'"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
@@ -1099,6 +1109,15 @@ async def send_outreach(req: OutreachSendRequest):
         bq_handler.client.query(query, job_config=job_config).result()
     except Exception as e:
         logger.warning(f"Failed to update status after outreach: {e}")
+
+    # Activity log: the send event, with its metadata
+    if req.company_name:
+        try:
+            bq_handler._log_activity(
+                req.company_name, "outreach_sent", "system",
+                note_text=f"Outreach email sent to {req.to} — subject: \"{req.subject}\"")
+        except Exception as e:
+            logger.warning(f"Failed to log send activity: {e}")
     return result
 
 

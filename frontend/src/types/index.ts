@@ -110,6 +110,7 @@ export interface CompanyTarget {
   outreach_draft_body?: string;
   outreach_draft_to?: string;
   outreach_drafted_at?: string;
+  outreach_sent_at?: string;
   last_reply_at?: string;
   reply_classification?: string;
   // Stage timeline
