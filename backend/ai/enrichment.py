@@ -33,14 +33,21 @@ class EnrichmentAgent:
             1. The company's official website URL
             2. The primary founder, co-founder, or current CEO
             3. Their LinkedIn profile URL (must be a direct individual profile link)
-            4. Their most likely professional email address
+            4. Their professional email address, ONLY if it is actually published somewhere
             5. A detailed company summary (1-2 paragraphs)
 
             QUALITY GUIDELINES:
             - Website must be the company's main domain (e.g., https://company.com), not a LinkedIn or Crunchbase page
             - Focus on identifying REAL human names, not generic roles
             - LinkedIn URL must be a real individual profile link, not a company page
-            - Email should follow standard patterns (firstname@company.com)
+            - EMAIL RULE (strict, non-negotiable): only return an email address you actually
+              FOUND in a source: the company website, press coverage, official filings,
+              conference or directory listings. NEVER construct, infer, or guess an address
+              from name patterns such as firstname@company.com or f.lastname@company.com.
+              A guessed email is worse than no email: it bounces or reaches the wrong
+              person. If no published address exists, return "" for contact_email.
+              A published generic company address (hello@, info@) is acceptable as a last
+              resort ONLY if it appears on their site.
             - If you cannot find a field with confidence, return an empty string for that field
 
             COMPANY SUMMARY GUIDELINES:
