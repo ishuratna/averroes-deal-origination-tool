@@ -732,6 +732,17 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     except Exception as e:
         logger.warning(f"Failed to log smartfill run: {e}")
 
+    # Audit trail: where the contact email came from (verified-only policy)
+    if founder_info.get("contact_email"):
+        try:
+            src = founder_info.get("email_source") or "source not stated by the model"
+            bq_handler.add_activity_note(
+                company_name,
+                f"SmartFill contact email: {founder_info['contact_email']} (found at: {src})",
+                "smartfill")
+        except Exception:
+            pass
+
     return {
         "status": "Success",
         "company": company_name,
