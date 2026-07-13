@@ -1000,23 +1000,18 @@ function UniverseInner() {
                             className={`smartfill-btn ${smartFilling === company.name ? 'filling' : ''} ${company.last_smartfill_at ? 'enrich' : ''}`}
                             disabled={smartFilling === company.name}
                             title={company.last_smartfill_at
-                              ? `Last SmartFilled: ${new Date(company.last_smartfill_at).toLocaleString('en-GB')}. SmartEnrich refreshes only what's missing or stale (0–2 AI calls).`
+                              ? `Last SmartFilled: ${new Date(company.last_smartfill_at).toLocaleString('en-GB')}. Runs the full AI pipeline again (~5 calls).`
                               : 'Never SmartFilled — runs the full AI pipeline (~5 calls)'}
                             onClick={async () => {
                               setSmartFilling(company.name);
                               try {
-                                if (company.last_smartfill_at) {
-                                  const res = await dealApi.smartEnrich(company.name);
-                                  alert(`SmartEnrich: ${(res.actions || []).join(' · ')}`);
-                                } else {
-                                  const res = await dealApi.smartFill(company.name);
-                                  setSmartFillResult(res);
-                                }
+                                const res = await dealApi.smartFill(company.name);
+                                setSmartFillResult(res);
                                 await loadData();
-                              } catch (err: any) { alert(`${company.last_smartfill_at ? 'SmartEnrich' : 'SmartFill'} failed: ${err.message}`); }
+                              } catch (err: any) { alert(`SmartFill failed: ${err.message}`); }
                               finally { setSmartFilling(null); }
                             }}>
-                            {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartEnrich ↻' : 'SmartFill'}
+                            {smartFilling === company.name ? '...' : company.last_smartfill_at ? 'SmartFill ↻' : 'SmartFill'}
                           </button>
                           {(() => { const ob = outreachButtonState(company); return (
                             <button className={`outreach-btn ${ob.cls}`} title={ob.title}
