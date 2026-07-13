@@ -1468,7 +1468,8 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     known = {}
     for c in bq_handler.get_universe():
         entry = {"type": "company", "name": c.get("name"), "status": c.get("status"),
-                 "is_test": c.get("source") == "Internal Test"}
+                 "is_test": c.get("source") == "Internal Test",
+                 "stored_cls": c.get("reply_classification") or ""}
         for em in {(c.get("contact_email") or "").strip().lower(),
                    (c.get("outreach_draft_to") or "").strip().lower()}:
             if em:
@@ -1500,6 +1501,41 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             r["classification"] = result.get("classification", "")
             r["summary"] = result.get("summary", "")
             classified += 1
+
+    # Second chance: already-logged replies whose company still shows no
+    # classification (empty snippet at the time, or the AI call failed).
+    # Re-attempt within the same per-run budget of 25 classification calls.
+    reclassified = []
+    budget = 25 - len(replies[:25])
+    if budget > 0:
+        seen_received = [e for e in entries
+                         if e["direction"] == "received" and e.get("message_id") in seen
+                         and e["entity_type"] == "company"]
+        for r in sorted(seen_received, key=lambda x: x.get("sent_at") or "", reverse=True):
+            if budget <= 0:
+                break
+            sender = known.get(r["counterparty_email"], {})
+            if sender.get("stored_cls", "") not in ("", "unclassified"):
+                continue
+            budget -= 1
+            result = classify_reply(r["subject"], r["snippet"], r["entity_name"])
+            if result and result.get("classification"):
+                cls2 = result["classification"]
+                try:
+                    bq_handler.client.query(
+                        f"""UPDATE `{bq_handler.table_id}` SET reply_classification = @cls WHERE name = @name""",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("cls", "STRING", cls2),
+                            bq_lib.ScalarQueryParameter("name", "STRING", r["entity_name"]),
+                        ])).result()
+                    bq_handler._log_activity(
+                        r["entity_name"], "note", "email-sync",
+                        note_text=f"Reply reclassified: \"{r['subject']}\" ({cls2})" + (f" — {result.get('summary')}" if result.get("summary") else ""),
+                        event_time=r["sent_at"])
+                    sender["stored_cls"] = cls2
+                    reclassified.append(f"{r['entity_name']} ({cls2})")
+                except Exception as e:
+                    logger.warning(f"Reclassification update failed for {r['entity_name']}: {e}")
 
     inserted = bq_handler.save_email_log(new_entries)
 
@@ -1569,7 +1605,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "replies_found": len(replies),
         "replies_classified": classified,
         "auto_advanced": advanced,
-        "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified). "
+        "reclassified": reclassified,
+        "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified"
+                   + (f", {len(reclassified)} reclassified" if reclassified else "") + "). "
                    + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
     }
 

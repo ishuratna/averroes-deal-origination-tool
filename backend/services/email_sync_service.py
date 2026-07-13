@@ -35,22 +35,40 @@ def _decode(value) -> str:
         return str(value)
 
 
+def _strip_html(html: str) -> str:
+    """Crude but effective: HTML → readable text."""
+    import re
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", html)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
 def _body_snippet(msg, limit: int = 500) -> str:
-    """Extract a plain-text snippet from an email message."""
+    """
+    Extract a text snippet from an email message.
+    Prefers text/plain; falls back to stripped text/html — HTML-only replies
+    (common from Outlook/branded clients) must still yield text, otherwise
+    the AI classifier has nothing to read and the reply stays unclassified.
+    """
+    html_fallback = ""
     try:
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition", "")):
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        return payload.decode(part.get_content_charset() or "utf-8", errors="replace")[:limit].strip()
-        else:
-            payload = msg.get_payload(decode=True)
-            if payload:
-                return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")[:limit].strip()
+        parts = msg.walk() if msg.is_multipart() else [msg]
+        for part in parts:
+            ctype = part.get_content_type()
+            if "attachment" in str(part.get("Content-Disposition", "")):
+                continue
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            decoded = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            if ctype == "text/plain":
+                return decoded[:limit].strip()
+            if ctype == "text/html" and not html_fallback:
+                html_fallback = _strip_html(decoded)
     except Exception:
         pass
-    return ""
+    return html_fallback[:limit].strip()
 
 
 def _fetch_folder(mail, folder: str, since: str, direction: str, known: Dict[str, dict]) -> List[dict]:
