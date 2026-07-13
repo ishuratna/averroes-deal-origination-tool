@@ -23,7 +23,7 @@ SMTP_PASSWORD = os.getenv("OUTREACH_SMTP_PASSWORD", "")  # Gmail App Password
 # Portfolio proof points - real Averroes investments, referenced in outreach.
 # Keep factual and plain; the prompt forbids hype around them.
 PORTFOLIO_PROOF = (
-    "Averroes has backed companies including Glacier and Journey. "
+    "Averroes has backed companies including Glowday and Journey. "
     "Both have grown strongly since we invested, with our capital and "
     "hands-on operating support."
 )
@@ -184,7 +184,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        Ground everything in the data or the recent signal. If the data is
        thin, keep this to one honest sentence.
     5. PORTFOLIO PROOF, own paragraph: "At Averroes, we have backed similar
-       companies such as Journey and Glacier, and helped them scale with
+       companies such as Journey and Glowday, and helped them scale with
        hands-on operational support alongside capital." (Use only these
        facts. NEVER invent fund sizes, AUM figures, or any numbers.)
     6. HUMILITY + CURIOSITY, own paragraph: "I appreciate this may not be a
@@ -443,7 +443,7 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"focused on founder-led technology businesses. We typically get involved where "
         f"a company has a proven product and is looking at the next stage of growth.\n\n"
         f"We have been following {name} for some time and like what you are building.\n\n"
-        f"At Averroes, we have backed similar companies such as Journey and Glacier, "
+        f"At Averroes, we have backed similar companies such as Journey and Glowday, "
         f"and helped them scale with hands-on operational support alongside capital.\n\n"
         f"I appreciate this may not be a priority right now, but I would love to learn "
         f"more about what you are building at {name} and where you see the opportunity going.\n\n"
