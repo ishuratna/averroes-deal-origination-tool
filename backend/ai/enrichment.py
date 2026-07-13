@@ -40,19 +40,17 @@ class EnrichmentAgent:
             - Website must be the company's main domain (e.g., https://company.com), not a LinkedIn or Crunchbase page
             - Focus on identifying REAL human names, not generic roles
             - LinkedIn URL must be a real individual profile link, not a company page
-            - EMAIL RULE (strict, non-negotiable): only return an email address you actually
-              FOUND in a trustworthy source: the company's own website, press releases,
-              official filings, conference speaker pages, or an article quoting it.
-              Contact-aggregator sites DO NOT COUNT as sources: RocketReach, ContactOut,
-              Lusha, Apollo, SignalHire, Hunter, ZoomInfo and similar sites mostly
-              pattern-guess addresses themselves. An email that appears ONLY on such
-              sites must be treated as unverified: return "" instead.
-              NEVER construct, infer, or guess an address from name patterns such as
-              firstname@company.com or f.lastname@company.com. A guessed email is worse
-              than no email: it bounces or reaches the wrong person.
-              If no properly published address exists, return "" for contact_email.
-              A published generic company address (hello@, info@) is acceptable as a last
-              resort ONLY if it appears on their own site.
+            - EMAIL RULE: only return an email address you actually FOUND in a source.
+              Preferred sources, in order: the company's own website, press releases,
+              official filings, conference speaker pages, articles quoting the address.
+              Contact-aggregator sites (RocketReach, ContactOut, Lusha, Apollo,
+              SignalHire, Hunter, ZoomInfo and similar) ARE acceptable sources, but they
+              are unverified: if the email comes from one of them, say so in email_source.
+              What you must NEVER do is construct or infer an address yourself from name
+              patterns such as firstname@company.com when no source shows it.
+              If no source anywhere shows an address, return "" for contact_email.
+              A published generic company address (hello@, info@) from their own site is
+              acceptable as a last resort.
             - In email_source, state where you found the email (the site/page), or "" if
               no email was returned.
             - If you cannot find a field with confidence, return an empty string for that field
