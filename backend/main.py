@@ -879,12 +879,14 @@ async def smartfill_eligible():
 async def smartenrich_company(company_name: str):
     """
     SmartEnrich: the CHEAP refresh for already-SmartFilled companies.
-    Runs only what's missing or stale:
-      - enrichment only if contacts/website are missing (0-1 grounded call)
+      - contacts: ALWAYS source-checks the stored email (1 grounded call) —
+        confirms, replaces with a sourced address, or clears an unsourceable
+        (likely AI-guessed) one; gaps in name/LinkedIn/website filled, never
+        overwritten
       - CH registry intel always refreshed (free API calls)
       - CH PDFs re-parsed ONLY if a newer accounts filing exists
       - re-scores only if Qualified and (previously unscored or new financials)
-    Typically 0-2 Gemini calls vs ~5 for a full SmartFill.
+    Typically 1-2 Gemini calls vs ~5 for a full SmartFill.
     """
     used_today = bq_handler.count_smartfills_today()
     if used_today >= DAILY_SMARTFILL_CAP:
@@ -904,18 +906,47 @@ async def smartenrich_company(company_name: str):
     params = [bq_lib.ScalarQueryParameter("name", "STRING", company_name)]
     actions = []
 
-    # ── 1. Enrichment: only if contact data is missing ──
-    if not (company.get("contact_name") and (company.get("contact_email") or company.get("linkedin_url"))):
+    # ── 1. Contacts: ALWAYS double-check the email against real sources ──
+    # The stored address may predate the verified-only policy (i.e. it could be
+    # an AI pattern guess). Every SmartEnrich re-runs sourced enrichment and:
+    #   confirms the email if a source shows it, replaces it if a source shows
+    #   a different one, or CLEARS it if no source anywhere publishes one.
+    # The Internal Test row is exempt (contact pinned to the test inbox).
+    if company.get("source") == "Internal Test":
+        actions.append("test row: contact pinned, verification skipped")
+    else:
         founder_info = enrichment_agent.enrich_founder_details(company_name)
-        for col, key in [("contact_name", "contact_name"), ("contact_email", "contact_email"),
-                         ("linkedin_url", "linkedin_url"), ("website", "website")]:
+        found_email = (founder_info.get("contact_email") or "").strip()
+        email_src = founder_info.get("email_source") or "source not stated by the model"
+        stored_email = (company.get("contact_email") or "").strip()
+
+        # Fill gaps in name / LinkedIn / website (never overwrite existing)
+        for col, key in [("contact_name", "contact_name"), ("linkedin_url", "linkedin_url"), ("website", "website")]:
             val = founder_info.get(key)
             if val:
                 set_clauses.append(f"{col} = CASE WHEN IFNULL({col}, '') = '' THEN @{col} ELSE {col} END")
                 params.append(bq_lib.ScalarQueryParameter(col, "STRING", val))
-        actions.append("enriched missing contacts")
-    else:
-        actions.append("contacts present — enrichment skipped")
+
+        note = ""
+        if found_email and found_email.lower() != stored_email.lower():
+            set_clauses.append("contact_email = @contact_email")
+            params.append(bq_lib.ScalarQueryParameter("contact_email", "STRING", found_email))
+            actions.append(f"email updated to sourced address ({email_src})")
+            note = f"SmartEnrich replaced email '{stored_email or '(empty)'}' with sourced address '{found_email}' (found at: {email_src})"
+        elif found_email:
+            actions.append(f"email confirmed against source ({email_src})")
+            note = f"SmartEnrich confirmed email '{found_email}' (found at: {email_src})"
+        elif stored_email:
+            set_clauses.append("contact_email = ''")
+            actions.append("stored email has no source anywhere: cleared as a likely AI guess")
+            note = f"SmartEnrich cleared email '{stored_email}': no published source found anywhere, likely a generated guess"
+        else:
+            actions.append("no published email found")
+        if note:
+            try:
+                bq_handler.add_activity_note(company_name, note, "smartenrich")
+            except Exception:
+                pass
 
     new_financials = False
     if company.get("ch_company_number"):
