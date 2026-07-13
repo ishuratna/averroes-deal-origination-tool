@@ -149,6 +149,13 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     Write an outreach email to {contact_name or 'the founder'} at {name}. You are writing as
     yourself, an experienced investor a founder would want to hear from, not as a marketer.
 
+    COMPANY NAME: the record name above may be a legal or registry name. Everywhere the
+    company appears in the email, including the subject line, use the natural name a person
+    would say out loud. Strip legal suffixes and registry noise (Ltd, Limited, PLC, LLP,
+    Inc, Corp, Co., GmbH, and similar) and fix shouty registry casing: "FIDO TECH LTD"
+    becomes "Fido Tech". Keep genuine brand styling when it is clearly the brand (e.g.
+    "iPlato" stays "iPlato"). Use your judgement; never write the legal suffix in the email.
+
     WHAT WE KNOW ABOUT THE COMPANY (do not use anything beyond this):
     {company_context}
 
