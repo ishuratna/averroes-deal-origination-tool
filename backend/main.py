@@ -1426,8 +1426,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     known = {}
     for c in bq_handler.get_universe():
         entry = {"type": "company", "name": c.get("name"), "status": c.get("status"),
-                 "is_test": c.get("source") == "Internal Test",
-                 "stored_cls": c.get("reply_classification") or ""}
+                 "is_test": c.get("source") == "Internal Test"}
         for em in {(c.get("contact_email") or "").strip().lower(),
                    (c.get("outreach_draft_to") or "").strip().lower()}:
             if em:
@@ -1452,37 +1451,6 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
 
     replies = [e for e in new_entries if e["direction"] == "received"]
     advanced, classified = [], 0
-
-    # Classification decides where a reply moves the company (from Engaged):
-    #   interested / question / other / unclassified → Contacted (dialogue open)
-    #   not_now  → no move (stay Engaged, badge shows the classification)
-    #   declined → Lost (test row: auto-reset to a fresh Qualified instead)
-    def _route_reply(cls: str):
-        c = (cls or "").lower()
-        if c == "declined":
-            return "Lost"
-        if c == "not_now":
-            return None
-        return "Contacted"
-
-    def _apply_reply_routing(ename: str, sender: dict, cls: str) -> str:
-        """Move the company per the reply classification. Returns a label for
-        the sync summary, or '' if nothing moved."""
-        past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
-        eligible = sender.get("status") == "Engaged" or (
-            sender.get("is_test") and sender.get("status") not in past_contact)
-        target = _route_reply(cls)
-        if not (eligible and target):
-            return ""
-        if target == "Lost" and sender.get("is_test"):
-            if _reset_test_company(ename):
-                bq_handler.add_activity_note(
-                    ename, f"Reply classified '{cls}' would mark this Lost; internal test company auto-reset to a fresh Qualified state.",
-                    "email-sync")
-                return f"{ename} (declined, test reset)"
-            return ""
-        bq_handler.update_company_status(ename, target, created_by="email-sync")
-        return f"{ename} ({'declined, marked Lost' if target == 'Lost' else 'moved to Contacted'})"
 
     for r in replies[:25]:  # classification bounded per sync run
         result = classify_reply(r["subject"], r["snippet"], r["entity_name"])
@@ -1510,12 +1478,14 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 # Log with the email's ACTUAL received time, not the sync time
                 bq_handler._log_activity(ename, "note", "email-sync",
                                          note_text=note, event_time=r["sent_at"])
-                # Classification-aware routing: interested/question → Contacted,
-                # not_now → stay, declined → Lost (test row resets instead).
+                # Auto-advance: a reply means dialogue — Engaged → Contacted.
+                # The Internal Test row advances from ANY pre-Contacted state so
+                # the loop is testable regardless of where it started.
                 sender = known.get(r["counterparty_email"], {})
-                moved = _apply_reply_routing(ename, sender, cls)
-                if moved:
-                    advanced.append(moved)
+                past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
+                if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
+                    bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                    advanced.append(ename)
             else:
                 investor_handler.add_note(ename, note)
         except Exception as e:
@@ -1527,26 +1497,26 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # stage update failed mid-run. No new log entries or activity notes —
     # just the stage advance that should have happened.
     handled = {r["entity_name"] for r in replies}
+    past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
     for r in sorted((e for e in entries if e["direction"] == "received"), key=lambda x: x.get("sent_at") or ""):
         ename = r["entity_name"]
         if r["entity_type"] != "company" or ename in handled:
             continue
         sender = known.get(r["counterparty_email"], {})
-        try:
-            # Ensure the reply stamp exists (idempotent), then route using the
-            # classification stored when this reply was first processed.
-            bq_handler.client.query(
-                f"""UPDATE `{bq_handler.table_id}` SET last_reply_at = IFNULL(last_reply_at, @ts) WHERE name = @name""",
-                job_config=bq_lib.QueryJobConfig(query_parameters=[
-                    bq_lib.ScalarQueryParameter("ts", "TIMESTAMP", r["sent_at"]),
-                    bq_lib.ScalarQueryParameter("name", "STRING", ename),
-                ])).result()
-            moved = _apply_reply_routing(ename, sender, sender.get("stored_cls", ""))
-            if moved:
-                advanced.append(moved)
+        if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
+            try:
+                # Ensure the reply stamp exists (idempotent), then advance
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET last_reply_at = IFNULL(last_reply_at, @ts) WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("ts", "TIMESTAMP", r["sent_at"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", ename),
+                    ])).result()
+                bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                advanced.append(ename)
                 handled.add(ename)
-        except Exception as e:
-            logger.warning(f"Self-heal routing failed for {ename}: {e}")
+            except Exception as e:
+                logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
     return {
         "status": "Success",
@@ -1558,7 +1528,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "replies_classified": classified,
         "auto_advanced": advanced,
         "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified). "
-                   + (f"Stage changes: {'; '.join(advanced)}." if advanced else "No stage changes."),
+                   + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
     }
 
 
