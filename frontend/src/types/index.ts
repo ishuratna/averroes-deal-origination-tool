@@ -212,7 +212,7 @@ export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: nu
   else if (company.revenue_m != null && company.revenue_m > 0) revM = company.revenue_m;
   else if (company.revenue_estimate_m != null && company.revenue_estimate_m > 0) revM = company.revenue_estimate_m;
   if (revM == null) return null;
-  if (revM < 5) return 'Too Early';
+  if (revM < 2.5) return 'Too Early';
   if (revM <= 40) return 'Target Band';
   return 'Too Large';
 }

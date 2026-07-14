@@ -423,7 +423,7 @@ async def upload_custom_file(file: UploadFile = File(...)):
 # applies the new £40M size cap to currently-Qualified companies. Guarded by
 # an activity-log marker so it runs exactly once per rule version.
 
-BAND_RULES_VERSION = "band-rules-v3-mandate-15-40m"
+BAND_RULES_VERSION = "band-rules-v3b-2.5-40m"
 _REV_EXPR = ("COALESCE(IF(revenue_y1 > 0, revenue_y1 / 1e6, NULL), "
              "IF(revenue_m > 0, revenue_m, NULL), "
              "IF(revenue_estimate_m > 0, revenue_estimate_m, NULL))")
@@ -442,7 +442,7 @@ def _migrate_band_rules():
         bq_handler.client.query(f"""
             UPDATE `{bq_handler.table_id}` SET revenue_band = CASE
                 WHEN {_REV_EXPR} IS NULL THEN revenue_band
-                WHEN {_REV_EXPR} < 5 THEN 'Too Early'
+                WHEN {_REV_EXPR} < 2.5 THEN 'Too Early'
                 WHEN {_REV_EXPR} <= 40 THEN 'Target Band'
                 ELSE 'Too Large' END
             WHERE TRUE""").result()

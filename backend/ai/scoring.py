@@ -284,12 +284,12 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
 def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
     """
     Classify revenue (£M) into the Averroes deal band.
-    Target Band = £5-40M, the investable envelope for £15-40M equity cheques
-    at 25-100% stakes (core sweet spot £8-20M). Hard qualification cap: £40M.
+    Target Band = £2.5-40M for £15-40M equity cheques at 25-100% stakes
+    (core sweet spot £8-20M). Hard qualification cap: £40M.
     """
     if rev_m is None or rev_m <= 0:
         return None
-    if rev_m < 5:
+    if rev_m < 2.5:
         return "Too Early"
     if rev_m <= 40:
         return "Target Band"
