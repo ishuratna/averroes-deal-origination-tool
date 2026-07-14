@@ -1087,25 +1087,28 @@ function HomeInner() {
 
         .kanban-column {
           background: #f1f5f9;
-          border-radius: 10px;
+          border: 1px solid #e8edf3;
+          border-radius: 12px;
           display: flex;
           flex-direction: column;
           min-height: 400px;
-          transition: all 0.15s;
+          transition: background 0.15s, outline 0.15s;
         }
         .kanban-column.drag-over { background: #e0f2fe; outline: 2px dashed #3b82f6; }
 
         .kanban-column-header {
-          padding: 0.85rem 1rem;
+          padding: 0.8rem 1rem;
           border-top: 3px solid;
-          border-radius: 10px 10px 0 0;
+          border-bottom: 1px solid #e8edf3;
+          border-radius: 12px 12px 0 0;
           display: flex;
           justify-content: space-between;
           align-items: center;
+          background: rgba(255, 255, 255, 0.55);
         }
 
-        .kanban-column-title { font-size: 0.78rem; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.05em; }
-        .kanban-column-count { font-size: 0.72rem; font-weight: 700; color: #94a3b8; background: #fff; padding: 0.15rem 0.5rem; border-radius: 10px; }
+        .kanban-column-title { font-size: 0.74rem; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.07em; }
+        .kanban-column-count { font-size: 0.7rem; font-weight: 800; color: #64748b; background: #fff; padding: 0.15rem 0.55rem; border-radius: 999px; border: 1px solid #e2e8f0; font-variant-numeric: tabular-nums; }
 
         .kanban-cards {
           flex: 1;

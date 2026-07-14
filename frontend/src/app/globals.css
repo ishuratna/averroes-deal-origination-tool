@@ -364,3 +364,31 @@ h3 { font-size: 1.75rem; color: var(--primary-blue); }
   border-style: solid !important;
   transform: translateY(-1px);
 }
+
+/* ═══ Enterprise polish layer (Jul 2026) ═══════════════════════════════════
+   Global refinements applied product-wide: scrollbars, selection, focus
+   rings, numeric typography. Page-level styled-jsx builds on top of this. */
+
+/* Slim, quiet scrollbars everywhere */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; border: 2px solid transparent; background-clip: content-box; }
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+
+/* Brand selection colour */
+::selection { background: #dbeafe; color: #1e3a8a; }
+
+/* Visible, consistent keyboard focus without mouse noise */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 4px; }
+
+/* Financial figures align digit-for-digit in every table */
+table { font-variant-numeric: tabular-nums; }
+
+/* Buttons: consistent typography + press feedback product-wide */
+button { font-family: inherit; letter-spacing: 0.01em; }
+button:not(:disabled):active { transform: translateY(0.5px); }
+
+/* Inputs: consistent placeholder tone */
+input::placeholder, textarea::placeholder { color: #a8b3c4; }

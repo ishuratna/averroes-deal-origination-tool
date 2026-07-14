@@ -1084,11 +1084,12 @@ function UniverseInner() {
         /* Sources button */
         .sources-btn {
           display: flex; align-items: center; gap: 0.5rem;
-          padding: 0.55rem 1rem; background: #fff; border: 1.5px solid #e2e8f0;
-          border-radius: 8px; font-size: 0.85rem; font-weight: 700; color: #0f172a;
+          padding: 0.55rem 1rem; background: #fff; border: 1px solid #e2e8f0;
+          border-radius: 8px; font-size: 0.82rem; font-weight: 700; color: #334155;
           cursor: pointer; transition: all 0.15s;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
-        .sources-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .sources-btn:hover { border-color: #2563eb; color: #2563eb; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12); }
         .sources-badge {
           background: #2563eb; color: #fff; font-size: 0.65rem; font-weight: 800;
           padding: 0.1rem 0.45rem; border-radius: 10px; min-width: 20px; text-align: center;
@@ -1367,18 +1368,22 @@ function UniverseInner() {
         .section-header h3 { font-size: 1.1rem; color: #0f172a; margin: 0; }
         .refresh-btn { background: none; border: 1px solid #e2e8f0; color: #64748b; padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
         .refresh-btn:hover { border-color: #2563eb; color: #2563eb; }
-        .table-scroll-container { overflow-x: auto; }
-        .table-scroll-container::-webkit-scrollbar { height: 6px; }
-        .table-scroll-container::-webkit-scrollbar-track { background: #f8fafc; }
-        .table-scroll-container::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
-        .crm-table { width: 100%; border-collapse: collapse; text-align: left; }
-        .crm-table th { background: #f8fafc; color: #94a3b8; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; padding: 0.75rem 1rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-        .crm-table td { padding: 0.85rem 1rem; border-bottom: 1px solid #f1f5f9; font-size: 0.85rem; color: #475569; white-space: nowrap; }
-        .crm-table tr:hover td { background: #f8fafc; }
+        .table-scroll-container { overflow: auto; max-height: calc(100vh - 215px); border-radius: 0 0 12px 12px; }
+        .crm-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; }
+        .crm-table th {
+          position: sticky; top: 0; z-index: 5;
+          background: #f8fafc; color: #64748b; font-size: 0.66rem; text-transform: uppercase;
+          letter-spacing: 0.09em; font-weight: 800; padding: 0.7rem 1rem;
+          border-bottom: 1px solid #e2e8f0; white-space: nowrap;
+          box-shadow: 0 1px 0 #e2e8f0;
+        }
+        .crm-table td { padding: 0.8rem 1rem; border-bottom: 1px solid #f1f5f9; font-size: 0.85rem; color: #475569; white-space: nowrap; transition: background 0.1s; }
+        .crm-table tbody tr:hover td { background: #f8fafc; }
+        .crm-table tbody tr:last-child td { border-bottom: none; }
         .company-name-btn { background: none; border: none; padding: 0; font-size: 0.88rem; font-weight: 700; color: #0f172a; cursor: pointer; text-align: left; }
         .company-name-btn:hover { color: #2563eb; }
         .score-cell { text-align: center; }
-        .fit-score-badge { font-size: 0.72rem; font-weight: 800; padding: 0.15rem 0.45rem; border-radius: 4px; color: white; }
+        .fit-score-badge { font-size: 0.72rem; font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 999px; color: white; }
         .fit-score-badge.high { background: #16a34a; }
         .fit-score-badge.mid { background: #d97706; }
         .fit-score-badge.low { background: #dc2626; }
@@ -1387,7 +1392,7 @@ function UniverseInner() {
         .website-link:hover { text-decoration: underline; }
         .sector-cell { font-weight: 600; color: #0f172a; }
         .num-cell { font-size: 0.82rem; font-variant-numeric: tabular-nums; text-align: right; }
-        .status-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .status-badge { font-size: 0.62rem; font-weight: 800; padding: 0.25rem 0.55rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em; }
         .status-badge.clickable { cursor: pointer; border: 1px dashed rgba(0,0,0,0.15); transition: filter 0.15s, box-shadow 0.15s; }
         .status-badge.clickable:hover { filter: brightness(0.94); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
         .status-badge.qualified { background: #dcfce7; color: #166534; }

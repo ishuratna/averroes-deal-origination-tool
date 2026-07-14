@@ -233,10 +233,22 @@ function InvestorsInner() {
         <nav className="sidebar-nav">
           <div className="nav-group">
             <span className="group-label">Intelligence</span>
-            <Link href="/" className="nav-item">Deal Pipeline</Link>
-            <Link href="/universe" className="nav-item">Master Universe</Link>
-            <Link href="/investors" className="nav-item active">Investors (LPs)</Link>
-            <Link href="/chat" className="nav-item">Intelligence Chat</Link>
+            <Link href="/" className="nav-item">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z" fill="currentColor" opacity="0.7"/></svg>
+              Deal Pipeline
+            </Link>
+            <Link href="/universe" className="nav-item">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" stroke="currentColor" strokeWidth="1" fill="none"/></svg>
+              Master Universe
+            </Link>
+            <Link href="/investors" className="nav-item active">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>
+              Investors (LPs)
+            </Link>
+            <Link href="/chat" className="nav-item">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3.5C2 2.7 2.7 2 3.5 2h9c.8 0 1.5.7 1.5 1.5v6c0 .8-.7 1.5-1.5 1.5H8l-3.5 3v-3h-1C2.7 11 2 10.3 2 9.5v-6z" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>
+              Intelligence Chat
+            </Link>
           </div>
         </nav>
       </aside>
@@ -618,7 +630,7 @@ function InvestorsInner() {
         .sidebar-nav { padding: 1.25rem 0.75rem; }
         .nav-group { display: flex; flex-direction: column; gap: 0.25rem; }
         .group-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; padding-left: 0.75rem; margin-bottom: 0.5rem; font-weight: 700; }
-        .sidebar-nav :global(.nav-item) { padding: 0.6rem 0.75rem; border-radius: 8px; color: #475569; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+        .sidebar-nav :global(.nav-item) { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 8px; color: #475569; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
         .sidebar-nav :global(.nav-item:hover) { background: #f1f5f9; }
         .sidebar-nav :global(.nav-item.active) { color: #2563eb; background: #eff6ff; }
 
@@ -627,8 +639,8 @@ function InvestorsInner() {
         .page-header h1 { font-size: 1.4rem; color: #0f172a; }
         .subtitle { font-size: 0.8rem; color: #64748b; margin-top: 0.2rem; }
         .header-actions { display: flex; gap: 0.6rem; }
-        .sources-btn { background: #fff; border: 1px solid #e2e8f0; color: #475569; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
-        .sources-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .sources-btn { background: #fff; border: 1px solid #e2e8f0; color: #334155; border-radius: 8px; padding: 0.55rem 1rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); transition: all 0.15s; }
+        .sources-btn:hover { border-color: #2563eb; color: #2563eb; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12); }
         .sources-badge { background: #2563eb; color: #fff; border-radius: 10px; font-size: 0.65rem; padding: 0.05rem 0.45rem; font-weight: 800; }
 
         /* Sources overlay — same template as Master Universe */
@@ -664,14 +676,18 @@ function InvestorsInner() {
         .filter-select { padding: 0.55rem 0.8rem; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.8rem; background: #fff; color: #475569; }
 
         .table-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
-        .table-scroll { overflow-x: auto; }
-        .table-scroll::-webkit-scrollbar { height: 8px; }
-        .table-scroll::-webkit-scrollbar-track { background: #f8fafc; }
-        .table-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .table-scroll { overflow: auto; max-height: calc(100vh - 215px); }
         .inv-table td { white-space: nowrap; }
-        .inv-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-        .inv-table th { background: #f8fafc; text-align: left; padding: 0.6rem 0.8rem; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-        .inv-table td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
+        .inv-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.78rem; }
+        .inv-table th {
+          position: sticky; top: 0; z-index: 5;
+          background: #f8fafc; text-align: left; padding: 0.65rem 0.8rem; font-size: 0.65rem;
+          text-transform: uppercase; letter-spacing: 0.09em; color: #64748b; font-weight: 800;
+          border-bottom: 1px solid #e2e8f0; white-space: nowrap; box-shadow: 0 1px 0 #e2e8f0;
+        }
+        .inv-table td { padding: 0.65rem 0.8rem; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; transition: background 0.1s; }
+        .inv-table tbody tr:hover td { background: #f8fafc; }
+        .inv-table tbody tr:last-child td { border-bottom: none; }
         .name-cell { font-weight: 700; color: #0f172a; white-space: nowrap; }
         .num-cell { white-space: nowrap; }
         .email-cell a { color: #2563eb; text-decoration: none; }
@@ -679,7 +695,7 @@ function InvestorsInner() {
         .source-cell { color: #94a3b8; white-space: nowrap; }
         .empty-row { text-align: center; padding: 3rem !important; color: #94a3b8; }
 
-        .fit-badge { font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 4px; color: #fff; font-size: 0.72rem; }
+        .fit-badge { font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 999px; color: #fff; font-size: 0.72rem; }
         .fit-badge.high { background: #16a34a; }
         .fit-badge.mid { background: #d97706; }
         .fit-badge.low { background: #dc2626; }
@@ -692,7 +708,8 @@ function InvestorsInner() {
         .action-btns { display: flex; gap: 0.35rem; }
         .outreach-btn { background: #fff; border: 1px solid #2563eb; color: #2563eb; border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .outreach-btn:hover:not(:disabled) { background: #eff6ff; }
-        .export-btn { background: #fff; border: 1px solid #e2e8f0; color: #475569; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+        .export-btn { background: #fff; border: 1px solid #e2e8f0; color: #334155; border-radius: 8px; padding: 0.55rem 1rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); transition: all 0.15s; }
+        .export-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12); }
         .export-btn:hover:not(:disabled) { border-color: #16a34a; color: #16a34a; }
         .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .bulkfill-btn { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
