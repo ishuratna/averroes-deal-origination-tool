@@ -146,6 +146,13 @@ export interface PipelineMetrics {
 export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
 export type DealStage = typeof DEAL_STAGES[number];
 
+// Display labels for stored statuses. 'Contacted' is stored in the DB but
+// shown as "Responded" (a reply exists). Never rename the stored value.
+export function displayStatus(status?: string): string {
+  if (!status) return '';
+  return status === 'Contacted' ? 'Responded' : status;
+}
+
 // ── Investor (LP) database ──────────────────────────────────────────────────
 
 export interface Investor {

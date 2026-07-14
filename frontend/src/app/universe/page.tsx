@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from 'next/link';
-import { CompanyTarget, getRevenueBand } from "../../types";
+import { CompanyTarget, getRevenueBand, displayStatus } from "../../types";
 import { dealApi } from "../../services/api";
 import CompanyDrawer from "../../components/CompanyDrawer";
 import InfoTip, { DEFS } from "../../components/InfoTip";
@@ -982,10 +982,10 @@ function UniverseInner() {
                             title={`${company.status === 'Not a Fit' && company.unfit_reason ? company.unfit_reason + '\n\n' : ''}Click to Qualify anyway (manual override)`}
                             onClick={() => qualifyAnyway(company)}
                           >
-                            {qualifyingName === company.name ? 'Qualifying…' : company.status}
+                            {qualifyingName === company.name ? 'Qualifying…' : displayStatus(company.status)}
                           </span>
                         ) : (
-                          <span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{company.status}</span>
+                          <span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{displayStatus(company.status)}</span>
                         )}
                       </td>
                       <td>{company.contact_name || '—'}</td>

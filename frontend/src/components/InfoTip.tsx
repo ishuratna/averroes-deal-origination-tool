@@ -91,8 +91,8 @@ export const DEFS: Record<string, string> = {
   metricMarketSentiment: "Brand and market signals from web search — press coverage, awards, reviews, thought leadership. Strong brand scores 80–100; negative coverage under 20.",
 
   // ── Pipeline stages ──
-  stageQualified: "Passed all 3 hard filters: UK/Ireland geography, technology/SaaS industry, and revenue under £50M. Awaiting first contact.",
-  stageContacted: "Outreach has been made to the founder or company.",
+  stageQualified: "Passed all 3 hard filters: UK/Ireland geography, technology/SaaS industry, and revenue under £40M. Awaiting first contact.",
+  stageContacted: "The founder or company has replied — a two-way dialogue is open. Set automatically when a reply is synced, or manually.",
   stageMeeting: "An intro call or meeting is scheduled or has taken place.",
   stageDD: "Due diligence — reviewing financials, contracts, tech and team in depth.",
   stageOffer: "A term sheet or offer has been put forward.",

@@ -44,8 +44,10 @@ function growthCategory(c: CompanyTarget): 'fast' | 'steady' | 'unknown' {
 // Engaged sits between Qualified and Contacted: outreach email sent, awaiting
 // reply. Cards land there automatically on send — never by manual advance.
 const PIPELINE_STAGES = ['Qualified', 'Engaged', 'Contacted', 'Meeting', 'DD', 'Offer'] as const;
+// NOTE: 'Contacted' stays as the STORED status value (single source of truth,
+// no data migration) — it is DISPLAYED as "Responded" everywhere.
 const STAGE_LABELS: Record<string, string> = {
-  'Qualified': 'Qualified', 'Contacted': 'Contacted', 'Meeting': 'Meeting',
+  'Qualified': 'Qualified', 'Contacted': 'Responded', 'Meeting': 'Meeting',
   'DD': 'Due Diligence', 'Offer': 'Offer', 'Won': 'Won', 'Lost': 'Lost', 'Engaged': 'Engaged',
 };
 

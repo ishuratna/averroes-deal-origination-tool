@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CompanyTarget, ActivityEntry } from '../types';
+import { CompanyTarget, ActivityEntry, displayStatus } from '../types';
 import { dealApi } from '../services/api';
 import InfoTip, { DEFS } from './InfoTip';
 
@@ -98,7 +98,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
             <h2 className="drawer-company-name">{company.name}</h2>
             <span className="drawer-status-badge" style={{ background: stageColor(company.status) }}
               title={company.status === 'Not a Fit' && company.unfit_reason ? company.unfit_reason : undefined}>
-              {company.status}
+              {displayStatus(company.status)}
             </span>
           </div>
           {company.website && (
@@ -546,9 +546,9 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                         </div>
                         {entry.action_type === 'status_change' && (
                           <div className="stage-change">
-                            <span className="stage-chip" style={{ background: stageColor(entry.old_status || '') }}>{entry.old_status}</span>
+                            <span className="stage-chip" style={{ background: stageColor(entry.old_status || '') }}>{displayStatus(entry.old_status)}</span>
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10m-3-3l3 3-3 3" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            <span className="stage-chip" style={{ background: stageColor(entry.new_status || '') }}>{entry.new_status}</span>
+                            <span className="stage-chip" style={{ background: stageColor(entry.new_status || '') }}>{displayStatus(entry.new_status)}</span>
                           </div>
                         )}
                         {entry.note_text && entry.action_type === 'note' && (
