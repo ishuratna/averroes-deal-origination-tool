@@ -1080,26 +1080,78 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
 
 /* ── Description Block Component ──
    Turns a raw description blob into structured, readable content:
+   • detects label/value metadata (even run-together like
+     "sectorinformation technology") and renders it as bold "Label: value"
    • splits on newlines into paragraphs
    • detects bullet lines (•, -, *) and renders them as a proper list
    • breaks one giant paragraph into readable paragraphs at sentence
      boundaries so long AI-generated descriptions don't render as a wall */
+
+const DESC_LABELS = [
+  'emerging spaces', 'industry group', 'financing status', 'business status',
+  'total raised', 'year founded', 'hq location', 'hq country', 'hq city',
+  'also known as', 'legal name', 'verticals', 'keywords', 'industry',
+  'employees', 'ownership', 'competitors', 'founded', 'website', 'location',
+  'revenue', 'sector',
+];
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/* Detect a label/value line. Handles three shapes:
+   "Sector: Information Technology"  (delimited)
+   "Sector"                          (label-only line; value = next line)
+   "sectorinformation technology"    (run-together, no delimiter)          */
+function parseLabelValue(line: string): { label: string; value: string } | null {
+  const norm = line.trim();
+  // Shape 1: explicit "Label: value" with a short, word-y label
+  const m = norm.match(/^([A-Za-z][A-Za-z ]{1,24}):\s*(.+)$/);
+  if (m) return { label: titleCase(m[1].trim()), value: m[2].trim() };
+  const lower = norm.toLowerCase();
+  for (const lab of DESC_LABELS) {
+    if (!lower.startsWith(lab)) continue;
+    const rest = norm.slice(lab.length).replace(/^[:\-–\s]+/, '').trim();
+    // Shape 2: the line IS just the label — caller pairs it with the next line
+    if (!rest) return { label: titleCase(lab), value: '' };
+    // Shape 3: run-together. Only split when it clearly isn't a sentence:
+    // short line, no full stop, few words.
+    if (norm.length <= 60 && !norm.includes('.') && norm.split(/\s+/).length <= 7) {
+      return { label: titleCase(lab), value: rest };
+    }
+  }
+  return null;
+}
+
 function DescriptionBlock({ text }: { text?: string | null }) {
   if (!text) return null;
   const clean = text.replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
   const rawLines = clean.split(/\n+/).map(l => l.trim()).filter(Boolean);
 
-  type Block = { type: 'p' | 'ul'; items: string[] };
+  type Block = { type: 'p' | 'ul' | 'kv'; items: string[]; kv?: Array<{ label: string; value: string }> };
   let blocks: Block[] = [];
-  for (const line of rawLines) {
-    const m = line.match(/^[•\-\*]\s+(.*)$/);
-    if (m) {
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    const bullet = line.match(/^[•\-\*]\s+(.*)$/);
+    if (bullet) {
       const last = blocks[blocks.length - 1];
-      if (last && last.type === 'ul') last.items.push(m[1]);
-      else blocks.push({ type: 'ul', items: [m[1]] });
-    } else {
-      blocks.push({ type: 'p', items: [line] });
+      if (last && last.type === 'ul') last.items.push(bullet[1]);
+      else blocks.push({ type: 'ul', items: [bullet[1]] });
+      continue;
     }
+    let kv = parseLabelValue(line);
+    if (kv && !kv.value && i + 1 < rawLines.length && !parseLabelValue(rawLines[i + 1])) {
+      // Label-only line: consume the next line as its value
+      kv = { label: kv.label, value: rawLines[i + 1] };
+      i++;
+    }
+    if (kv && kv.value) {
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === 'kv') last.kv!.push(kv);
+      else blocks.push({ type: 'kv', items: [], kv: [kv] });
+      continue;
+    }
+    blocks.push({ type: 'p', items: [line] });
   }
 
   // One giant paragraph → split at sentence boundaries into ~2-3 sentence paragraphs
@@ -1122,6 +1174,15 @@ function DescriptionBlock({ text }: { text?: string | null }) {
           <ul key={i} className="desc-list">
             {b.items.map((item, j) => <li key={j}>{item}</li>)}
           </ul>
+        ) : b.type === 'kv' ? (
+          <div key={i} className="desc-kv">
+            {b.kv!.map((pair, j) => (
+              <div key={j} className="desc-kv-row">
+                <span className="desc-kv-label">{pair.label}:</span>
+                <span className="desc-kv-value">{pair.value}</span>
+              </div>
+            ))}
+          </div>
         ) : (
           <p key={i} className="desc-para">{b.items[0]}</p>
         )
@@ -1148,6 +1209,27 @@ function DescriptionBlock({ text }: { text?: string | null }) {
           line-height: 1.6;
         }
         .desc-list li::marker { color: #2563eb; }
+        .desc-kv {
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+          background: #f8fafc;
+          border: 1px solid #f1f5f9;
+          border-radius: 8px;
+          padding: 0.6rem 0.8rem;
+        }
+        .desc-kv-row { display: flex; gap: 0.45rem; align-items: baseline; }
+        .desc-kv-label {
+          font-size: 0.76rem;
+          font-weight: 800;
+          color: #0f172a;
+          flex-shrink: 0;
+        }
+        .desc-kv-value {
+          font-size: 0.82rem;
+          color: #334155;
+          line-height: 1.5;
+        }
       `}</style>
     </div>
   );
