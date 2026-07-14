@@ -1072,6 +1072,71 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
           font-size: 0.68rem;
           color: #94a3b8;
         }
+
+        /* ── Sub-component styles (SectionHeading / DetailRow / ScoreBar /
+           DescriptionBlock) — consolidated here via :global() because child
+           components' own styled-jsx blocks were not reliably emitted in the
+           production build, leaving them unstyled (labels/values ran
+           together, headings fell back to giant global h3). ── */
+
+        .drawer-body :global(.section-heading) {
+          display: flex; align-items: center; gap: 0.5rem;
+          margin: 1.25rem 0 0.5rem; padding-bottom: 0.4rem;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        .drawer-body :global(.section-heading:first-child) { margin-top: 0; }
+        .drawer-body :global(.section-title) {
+          font-size: 0.72rem !important; font-weight: 800; text-transform: uppercase;
+          letter-spacing: 0.06em; color: #0f172a !important; margin: 0 !important; line-height: 1.4;
+        }
+        .drawer-body :global(.section-badge) {
+          font-size: 0.6rem; font-weight: 700; padding: 0.12rem 0.45rem;
+          border-radius: 999px; text-transform: capitalize;
+        }
+
+        .drawer-body :global(.detail-row) {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 0.5rem 0; border-bottom: 1px solid #f8fafc; gap: 1rem;
+        }
+        .drawer-body :global(.detail-row:last-child) { border-bottom: none; }
+        .drawer-body :global(.detail-label) {
+          font-size: 0.76rem; font-weight: 600; color: #64748b; flex-shrink: 0;
+        }
+        .drawer-body :global(.detail-value) {
+          font-size: 0.82rem; font-weight: 600; color: #0f172a; text-align: right;
+          max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .drawer-body :global(.detail-value.empty) { color: #cbd5e1; font-weight: 400; }
+        .drawer-body :global(.detail-value.highlight) { color: #2563eb; font-weight: 700; }
+        .drawer-body :global(.detail-link) { color: #2563eb; text-decoration: none; }
+        .drawer-body :global(.detail-link:hover) { text-decoration: underline; }
+        .drawer-body :global(.ch-pdf-link) {
+          font-size: 0.8rem; font-weight: 600; color: #2563eb; text-decoration: none;
+          display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.6rem;
+          border-radius: 6px; background: #eff6ff; transition: all 0.15s;
+        }
+        .drawer-body :global(.ch-pdf-link:hover) { background: #dbeafe; }
+
+        .drawer-body :global(.score-bar-item) { padding: 0.45rem 0; }
+        .drawer-body :global(.score-bar-header) { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
+        .drawer-body :global(.score-bar-label) { font-size: 0.74rem; font-weight: 600; color: #475569; }
+        .drawer-body :global(.score-bar-pct) { font-size: 0.78rem; font-weight: 800; }
+        .drawer-body :global(.score-bar-track) { height: 6px; background: #f1f5f9; border-radius: 3px; overflow: hidden; }
+        .drawer-body :global(.score-bar-fill) { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+        .drawer-body :global(.score-bar-detail) { font-size: 0.7rem; color: #94a3b8; margin: 0.2rem 0 0; line-height: 1.4; }
+
+        .drawer-body :global(.desc-block) { display: flex; flex-direction: column; gap: 0.55rem; }
+        .drawer-body :global(.desc-para) { font-size: 0.84rem; color: #334155; line-height: 1.7; margin: 0; }
+        .drawer-body :global(.desc-list) { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+        .drawer-body :global(.desc-list li) { font-size: 0.84rem; color: #334155; line-height: 1.6; }
+        .drawer-body :global(.desc-list li::marker) { color: #2563eb; }
+        .drawer-body :global(.desc-kv) {
+          display: flex; flex-direction: column; gap: 0.3rem;
+          background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 8px; padding: 0.6rem 0.8rem;
+        }
+        .drawer-body :global(.desc-kv-row) { display: flex; gap: 0.45rem; align-items: baseline; }
+        .drawer-body :global(.desc-kv-label) { font-size: 0.76rem; font-weight: 800; color: #0f172a; flex-shrink: 0; }
+        .drawer-body :global(.desc-kv-value) { font-size: 0.82rem; color: #334155; line-height: 1.5; }
       `}</style>
     </>
   );
@@ -1188,49 +1253,6 @@ function DescriptionBlock({ text }: { text?: string | null }) {
         )
       )}
 
-      <style jsx>{`
-        .desc-block { display: flex; flex-direction: column; gap: 0.55rem; }
-        .desc-para {
-          font-size: 0.84rem;
-          color: #334155;
-          line-height: 1.7;
-          margin: 0;
-        }
-        .desc-list {
-          margin: 0;
-          padding-left: 1.1rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.3rem;
-        }
-        .desc-list li {
-          font-size: 0.84rem;
-          color: #334155;
-          line-height: 1.6;
-        }
-        .desc-list li::marker { color: #2563eb; }
-        .desc-kv {
-          display: flex;
-          flex-direction: column;
-          gap: 0.3rem;
-          background: #f8fafc;
-          border: 1px solid #f1f5f9;
-          border-radius: 8px;
-          padding: 0.6rem 0.8rem;
-        }
-        .desc-kv-row { display: flex; gap: 0.45rem; align-items: baseline; }
-        .desc-kv-label {
-          font-size: 0.76rem;
-          font-weight: 800;
-          color: #0f172a;
-          flex-shrink: 0;
-        }
-        .desc-kv-value {
-          font-size: 0.82rem;
-          color: #334155;
-          line-height: 1.5;
-        }
-      `}</style>
     </div>
   );
 }
@@ -1249,34 +1271,6 @@ function SectionHeading({ title, badge }: { title: string; badge?: string | null
           {badge}
         </span>
       )}
-      <style jsx>{`
-        .section-heading {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin: 1.25rem 0 0.5rem;
-          padding-bottom: 0.4rem;
-          border-bottom: 1px solid #e2e8f0;
-        }
-        .section-heading:first-child { margin-top: 0; }
-
-        .section-title {
-          font-size: 0.72rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          color: #0f172a;
-          margin: 0;
-        }
-
-        .section-badge {
-          font-size: 0.6rem;
-          font-weight: 700;
-          padding: 0.12rem 0.4rem;
-          border-radius: 3px;
-          text-transform: capitalize;
-        }
-      `}</style>
     </div>
   );
 }
@@ -1300,68 +1294,6 @@ function DetailRow({ label, value, highlight, isLink }: { label: string; value?:
         </span>
       )}
 
-      <style jsx>{`
-        .detail-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0.5rem 0;
-          border-bottom: 1px solid #f8fafc;
-        }
-        .detail-row:last-child { border-bottom: none; }
-
-        .detail-label {
-          font-size: 0.76rem;
-          font-weight: 600;
-          color: #64748b;
-          flex-shrink: 0;
-        }
-
-        .detail-value {
-          font-size: 0.82rem;
-          font-weight: 600;
-          color: #0f172a;
-          text-align: right;
-          max-width: 58%;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .detail-value.empty {
-          color: #cbd5e1;
-          font-weight: 400;
-        }
-
-        .detail-value.highlight {
-          color: #2563eb;
-          font-weight: 700;
-        }
-
-        .detail-link {
-          color: #2563eb;
-          text-decoration: none;
-        }
-        .detail-link:hover { text-decoration: underline; }
-
-        .ch-pdf-link {
-          font-size: 0.8rem;
-          font-weight: 600;
-          color: #2563eb;
-          text-decoration: none;
-          display: inline-flex;
-          align-items: center;
-          gap: 0.3rem;
-          padding: 0.25rem 0.6rem;
-          border-radius: 6px;
-          background: #eff6ff;
-          transition: all 0.15s;
-        }
-        .ch-pdf-link:hover {
-          background: #dbeafe;
-          text-decoration: none;
-        }
-      `}</style>
     </div>
   );
 }
@@ -1388,49 +1320,6 @@ function ScoreBar({ label, tip, score, details }: { label: string; tip?: string;
         <p className="score-bar-detail">{details.explanation}</p>
       )}
 
-      <style jsx>{`
-        .score-bar-item {
-          padding: 0.45rem 0;
-        }
-
-        .score-bar-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 0.25rem;
-        }
-
-        .score-bar-label {
-          font-size: 0.74rem;
-          font-weight: 600;
-          color: #475569;
-        }
-
-        .score-bar-pct {
-          font-size: 0.78rem;
-          font-weight: 800;
-        }
-
-        .score-bar-track {
-          height: 6px;
-          background: #f1f5f9;
-          border-radius: 3px;
-          overflow: hidden;
-        }
-
-        .score-bar-fill {
-          height: 100%;
-          border-radius: 3px;
-          transition: width 0.4s ease;
-        }
-
-        .score-bar-detail {
-          font-size: 0.7rem;
-          color: #94a3b8;
-          margin: 0.2rem 0 0;
-          line-height: 1.4;
-        }
-      `}</style>
     </div>
   );
 }
