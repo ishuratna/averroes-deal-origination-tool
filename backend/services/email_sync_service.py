@@ -71,7 +71,8 @@ def _body_snippet(msg, limit: int = 500) -> str:
     return html_fallback[:limit].strip()
 
 
-def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict]) -> List[dict]:
+def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict],
+                  known_domains: Dict[str, dict] = None) -> List[dict]:
     """
     Fetch messages from one folder, keeping only known-contact exchanges.
     Direction is detected PER MESSAGE (From == our sender → 'sent', else
@@ -103,7 +104,10 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             raw_addr = msg.get("To") if direction == "sent" else msg.get("From")
             counter_name, counter_email = email.utils.parseaddr(raw_addr or "")
             counter_email = (counter_email or "").lower()
-            if counter_email not in known:
+            entity = known.get(counter_email)
+            if not entity and known_domains and "@" in counter_email:
+                entity = known_domains.get(counter_email.split("@")[-1])
+            if not entity:
                 continue
 
             date_hdr = msg.get("Date")
@@ -112,7 +116,6 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             except Exception:
                 sent_at = datetime.now(timezone.utc).isoformat()
 
-            entity = known[counter_email]
             entries.append({
                 "message_id": _decode(msg.get("Message-ID")) or f"{folder}-{msg_id.decode()}",
                 "thread_id": _decode(msg.get("References", "")).split()[0] if msg.get("References") else _decode(msg.get("Message-ID")) or "",
@@ -130,11 +133,15 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
     return entries
 
 
-def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30) -> List[dict]:
+def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
+                 known_domains: Dict[str, dict] = None) -> List[dict]:
     """
     Read Beatrice's mailbox (IMAP, same App Password as sending) and return
     entries for messages exchanged with known contacts only.
     known_contacts: {email_lower: {"type": "company"|"investor", "name": str}}
+    known_domains: {domain_lower: entity} fallback — a reply from ANY address
+    at a company's domain matches that company (e.g. we email hello@x.com,
+    the founder replies from jane@x.com). Free-mail domains excluded upstream.
     """
     sender = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
     password = os.getenv("OUTREACH_SMTP_PASSWORD", "")
@@ -147,11 +154,11 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30) -> List[dict]:
         mail.login(sender, password)
         # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
         # one pass; direction is detected per message inside _fetch_folder.
-        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts)
+        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains)
         if not entries:
             # Fallback for non-Gmail IMAP layouts
-            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts)
-            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts)
+            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains)
+            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains)
         # Dedup by message id (All Mail + fallback can overlap)
         seen_ids, unique = set(), []
         for e in entries:

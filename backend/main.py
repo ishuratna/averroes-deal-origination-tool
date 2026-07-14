@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query, File, UploadFile
@@ -1583,7 +1584,19 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # email AND any address we actually drafted/sent outreach to — if we
     # emailed an address, a reply from it must match the company even when
     # SmartFill later changed the contact on file.
-    known = {}
+    _FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com",
+                  "yahoo.co.uk", "icloud.com", "aol.com", "live.com", "protonmail.com",
+                  "proton.me", "me.com", "msn.com"}
+
+    def _dom(s: str) -> str:
+        s = (s or "").strip().lower()
+        if "@" in s:
+            s = s.split("@")[-1]
+        else:
+            s = re.sub(r"^https?://(www\.)?", "", s).split("/")[0]
+        return "" if not s or s in _FREE_MAIL else s
+
+    known, known_domains = {}, {}
     for c in bq_handler.get_universe():
         entry = {"type": "company", "name": c.get("name"), "status": c.get("status"),
                  "is_test": c.get("source") == "Internal Test",
@@ -1592,17 +1605,30 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                    (c.get("outreach_draft_to") or "").strip().lower()}:
             if em:
                 known[em] = entry
+        # Domain fallback: a reply from ANYONE at the company's domain matches
+        # it — founders often reply personally when we wrote to hello@/info@
+        for d in {_dom(c.get("contact_email")), _dom(c.get("outreach_draft_to")), _dom(c.get("website"))}:
+            if d:
+                known_domains.setdefault(d, entry)
     for inv in investor_handler.get_all():
         em = (inv.get("contact_email") or "").strip().lower()
         if em:
             # setdefault: if an address belongs to BOTH a company and an LP,
             # the company wins — stage moves matter more than an LP note
             known.setdefault(em, {"type": "investor", "name": inv.get("name"), "status": inv.get("status")})
+            d = _dom(em)
+            if d:
+                known_domains.setdefault(d, known[em])
     if not known:
         return {"status": "Complete", "message": "No known contact emails in the database yet."}
 
+    def _sender_of(em: str) -> dict:
+        """Resolve a counterparty address to its entity: exact match, then domain."""
+        em = (em or "").lower()
+        return known.get(em) or known_domains.get(em.split("@")[-1] if "@" in em else "", {}) or {}
+
     try:
-        entries = sync_mailbox(known, days=days)
+        entries = sync_mailbox(known, days=days, known_domains=known_domains)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -1634,7 +1660,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         for r in sorted(seen_received, key=lambda x: x.get("sent_at") or "", reverse=True):
             if budget <= 0:
                 break
-            sender = known.get(r["counterparty_email"], {})
+            sender = _sender_of(r["counterparty_email"])
             if sender.get("stored_cls", "") not in ("", "unclassified"):
                 continue
             budget -= 1
@@ -1679,7 +1705,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 # Auto-advance: a reply means dialogue — Engaged → Contacted.
                 # The Internal Test row advances from ANY pre-Contacted state so
                 # the loop is testable regardless of where it started.
-                sender = known.get(r["counterparty_email"], {})
+                sender = _sender_of(r["counterparty_email"])
                 past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
                 if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
                     bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
@@ -1700,7 +1726,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         ename = r["entity_name"]
         if r["entity_type"] != "company" or ename in handled:
             continue
-        sender = known.get(r["counterparty_email"], {})
+        sender = _sender_of(r["counterparty_email"])
         if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
             try:
                 # Ensure the reply stamp exists (idempotent), then advance
