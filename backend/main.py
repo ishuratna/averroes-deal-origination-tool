@@ -1326,9 +1326,11 @@ async def send_outreach(req: OutreachSendRequest):
                     SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Engaged' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
                         contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
                         outreach_sent_at = CURRENT_TIMESTAMP(),
+                        outreach_draft_to = @to_addr,
                         status = 'Engaged'
                     WHERE name = @name AND (status != 'Not a Fit' OR source = 'Internal Test')"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("to_addr", "STRING", req.to or ""),
             bq_lib.ScalarQueryParameter("name", "STRING", req.company_name or ""),
         ])
         bq_handler.client.query(query, job_config=job_config).result()
