@@ -73,10 +73,12 @@ def _get_tech_keywords(criteria: dict = None) -> list:
 
 # ── Size buckets ────────────────────────────────────────────────────────────
 
+# Calibrated to the mandate: £15-40M equity cheques, majority or significant
+# minority (25%+) stakes → investable revenue envelope ~£5-40M at 4-6x.
 SIZE_BUCKETS = {
     "Micro":  {"label": "Micro",  "max_revenue_m": 5,   "qualifies": True},
     "Small":  {"label": "Small",  "max_revenue_m": 15,  "qualifies": True},
-    "Mid":    {"label": "Mid",    "max_revenue_m": 50,  "qualifies": True},
+    "Mid":    {"label": "Mid",    "max_revenue_m": 40,  "qualifies": True},
     "Large":  {"label": "Large",  "max_revenue_m": None, "qualifies": False},
 }
 
@@ -86,9 +88,9 @@ def _get_size_config(criteria: dict = None) -> dict:
         return criteria["size"]
     return {
         "label": "Company Size (Revenue-based)",
-        "description": "Micro (<£5M), Small (£5-15M), Mid (£15-50M) qualify. Large (>£50M) rejected.",
+        "description": "Micro (<£5M), Small (£5-15M), Mid (£15-40M) qualify. Large (>£40M) rejected — beyond a £40M cheque even at a 25% stake.",
         "buckets": SIZE_BUCKETS,
-        "max_revenue_m": 50,
+        "max_revenue_m": 40,
     }
 
 
@@ -122,10 +124,10 @@ def size_company_rule_based(company: dict) -> Dict[str, any]:
             return {"size_bucket": "Micro", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M < £5M"}
         elif revenue < 15:
             return {"size_bucket": "Small", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M (£5-15M range)"}
-        elif revenue <= 50:
-            return {"size_bucket": "Mid", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M (£15-50M range)"}
+        elif revenue <= 40:
+            return {"size_bucket": "Mid", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M (£15-40M range)"}
         else:
-            return {"size_bucket": "Large", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M exceeds £50M threshold"}
+            return {"size_bucket": "Large", "size_confidence": "high", "size_reason": f"{source} £{revenue:.1f}M exceeds £40M threshold"}
 
     # No revenue data — return None so Gemini can assess using assets/proxies
     return None
@@ -379,13 +381,14 @@ def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
 
     QUESTION 3 — COMPANY SIZE:
     Estimate the company's size bucket based on ALL available signals.
-    We are a lower-mid-market PE fund and only want companies with revenue under £50M.
+    We invest £15-40M of equity for majority or significant minority stakes, so we
+    only want companies with revenue under £40M.
 
     Size buckets:
     - "Micro": Revenue under £5M (typically <30 employees, early-stage, seed/angel funded)
     - "Small": Revenue £5M-£15M (typically 30-100 employees, Series A/B or bootstrapped profitable)
-    - "Mid": Revenue £15M-£50M (typically 100-500 employees, growth stage, established product)
-    - "Large": Revenue over £50M (typically 500+ employees, late-stage or enterprise — TOO BIG for us)
+    - "Mid": Revenue £15M-£40M (typically 100-400 employees, growth stage, established product)
+    - "Large": Revenue over £40M (typically 400+ employees, late-stage or enterprise — TOO BIG for us)
 
     Use these proxy signals to estimate when revenue is not available:
     - **Total assets from Companies House filings** (STRONGEST proxy when revenue not disclosed):
@@ -407,7 +410,7 @@ def _build_qualification_prompt(company: dict, criteria: dict = None) -> str:
     while a property company with £2M assets might only have £200K revenue.
 
     Be conservative: if signals are mixed, lean toward a smaller bucket rather than larger.
-    Only classify as "Large" if there are strong indicators the company exceeds £50M revenue.
+    Only classify as "Large" if there are strong indicators the company exceeds £40M revenue.
 
     RETURN FORMAT — JSON only:
     {{

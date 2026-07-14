@@ -417,6 +417,83 @@ async def upload_custom_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── One-time data migration: revenue bands v3 (£15-40M cheque mandate) ──────
+# Recomputes the stored revenue_band for EVERY row (including Qualified) under
+# the new thresholds (Too Early <£5M, Target £5-40M, Too Large >£40M) and
+# applies the new £40M size cap to currently-Qualified companies. Guarded by
+# an activity-log marker so it runs exactly once per rule version.
+
+BAND_RULES_VERSION = "band-rules-v3-mandate-15-40m"
+_REV_EXPR = ("COALESCE(IF(revenue_y1 > 0, revenue_y1 / 1e6, NULL), "
+             "IF(revenue_m > 0, revenue_m, NULL), "
+             "IF(revenue_estimate_m > 0, revenue_estimate_m, NULL))")
+
+
+def _migrate_band_rules():
+    try:
+        rows = list(bq_handler.client.query(
+            f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                WHERE action_type = 'migration' AND note_text = '{BAND_RULES_VERSION}'""").result())
+        if rows and int(rows[0].n) > 0:
+            return  # already applied
+        logger.info(f"[Migration] Applying {BAND_RULES_VERSION} to all rows...")
+
+        # 1. Recompute revenue_band for every row from its best revenue figure
+        bq_handler.client.query(f"""
+            UPDATE `{bq_handler.table_id}` SET revenue_band = CASE
+                WHEN {_REV_EXPR} IS NULL THEN revenue_band
+                WHEN {_REV_EXPR} < 5 THEN 'Too Early'
+                WHEN {_REV_EXPR} <= 40 THEN 'Target Band'
+                ELSE 'Too Large' END
+            WHERE TRUE""").result()
+
+        # 2. New £40M cap: currently-Qualified companies above it become
+        #    Not a Fit (test row exempt; later-stage deals left for human review)
+        affected = [r.name for r in bq_handler.client.query(f"""
+            SELECT name FROM `{bq_handler.table_id}`
+            WHERE status = 'Qualified' AND IFNULL(source, '') != 'Internal Test'
+              AND {_REV_EXPR} > 40""").result()]
+        if affected:
+            bq_handler.client.query(f"""
+                UPDATE `{bq_handler.table_id}` SET
+                    status = 'Not a Fit',
+                    unfit_reason = CONCAT('Revenue £', CAST(ROUND({_REV_EXPR}, 1) AS STRING),
+                                          'M exceeds the £40M cap (mandate recalibration, bands v3)'),
+                    stage_entered_at = CURRENT_TIMESTAMP()
+                WHERE status = 'Qualified' AND IFNULL(source, '') != 'Internal Test'
+                  AND {_REV_EXPR} > 40""").result()
+            for name in affected:
+                bq_handler._log_activity(name, "status_change", "band-migration",
+                                         old_status="Qualified", new_status="Not a Fit",
+                                         note_text="Revenue above the new £40M cap (bands v3)")
+
+        # 3. Stored criteria may carry an old size section that overrides code
+        #    defaults — bring it in line with the £40M cap
+        try:
+            crit = bq_handler.get_criteria()
+            if isinstance(crit, dict) and "size" in crit:
+                from ai.criteria import SIZE_BUCKETS
+                crit["size"]["buckets"] = SIZE_BUCKETS
+                crit["size"]["max_revenue_m"] = 40
+                crit["size"]["description"] = "Micro (<£5M), Small (£5-15M), Mid (£15-40M) qualify. Large (>£40M) rejected."
+                bq_handler.save_criteria(crit, "band-migration (v3 mandate)")
+                set_criteria_from_bq(crit)
+        except Exception as e:
+            logger.warning(f"[Migration] criteria size update skipped: {e}")
+
+        bq_handler._log_activity("__system__", "migration", "system", note_text=BAND_RULES_VERSION)
+        logger.info(f"[Migration] {BAND_RULES_VERSION} complete — bands recomputed"
+                    + (f", {len(affected)} Qualified rows over £40M moved to Not a Fit" if affected else ""))
+    except Exception as e:
+        logger.error(f"[Migration] band rules migration failed (will retry next startup): {e}")
+
+
+@app.on_event("startup")
+async def _run_migrations():
+    import threading
+    threading.Thread(target=_migrate_band_rules, daemon=True).start()
+
+
 # ── Cost protection: paid search-grounding is NEVER allowed ──────────────────
 # Google gives 1,500 free grounded prompts/day. A shared weighted budget across
 # ALL AI operations (SmartFill ×3 worst case, SmartEnrich ×2, InvestorFill ×1)

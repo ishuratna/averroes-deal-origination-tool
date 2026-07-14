@@ -69,7 +69,7 @@ export const DEFS: Record<string, string> = {
   valuation: "Estimated valuation (PitchBook). Also a revenue proxy (valuation ÷ 6). Thesis target range: £15–50M.",
   revenueFY: "Latest financial-year revenue. Filed Companies House accounts first, then PitchBook. '~ (est.)' means estimated from proxies (employees, assets, EBITDA, valuation, funding) — hover the value for detail.",
   revenuePrevFY: "Prior financial-year revenue from Companies House filings. Compared against the current FY to compute the revenue-growth score.",
-  band: "Deal band by revenue (actual or estimated): Too Early < £2.5M · Target Band £2.5–10M (sweet spot) · Too Large > £10M. Informational — does not affect qualification.",
+  band: "Deal band by revenue (actual or estimated): Too Early < £5M · Target Band £5–40M (core sweet spot £8–20M) · Too Large > £40M. Calibrated to £15–40M equity cheques at 25–100% stakes. Companies over £40M revenue fail the size filter.",
   ebitda: "Estimated EBITDA from source data. The investment thesis targets £1–10M EBITDA.",
   profit: "Latest filed profit from Companies House accounts (or net income from PitchBook).",
   assets: "Total assets from the latest Companies House filing. Used as a revenue proxy (× 2.5) when turnover is not disclosed.",
@@ -86,7 +86,7 @@ export const DEFS: Record<string, string> = {
   // ── Fit Score metrics (company drawer) ──
   metricEmployeeGrowth: "YoY headcount trend from live web search — LinkedIn, job postings, hiring/layoff news. 0–20 shrinking · 40–60 stable · 60–80 healthy growth (10–30% YoY) · 80–100 rapid expansion.",
   metricRevenueGrowth: "YoY revenue change from filed Companies House accounts (latest vs prior year). Negative growth scores 0–20; 10–25% scores 50–75; 50%+ scores 90–100.",
-  metricRevenueSize: "Fit to the £2.5–10M sweet spot (scores 100). Revenue from filed accounts, or estimated from proxies (employees, assets, EBITDA, valuation, funding) when not disclosed.",
+  metricRevenueSize: "Fit to the £5–40M investable envelope; the £8–20M core sweet spot scores 100. Revenue from filed accounts, or estimated from proxies (employees, assets, EBITDA, valuation, funding) when not disclosed.",
   metricBusinessFit: "Alignment with the Averroes thesis, assessed via web search: B2B? SaaS/recurring revenue? Tech at the core? Pure B2B SaaS scores 80–100; B2C or non-tech scores under 20.",
   metricMarketSentiment: "Brand and market signals from web search — press coverage, awards, reviews, thought leadership. Strong brand scores 80–100; negative coverage under 20.",
 

@@ -201,7 +201,7 @@ class BigQueryHandler:
             ],
         },
         "focus": "B2B SaaS / Software / High-Margin Tech-Enabled Services / Industrial Tech",
-        "target_ebitda": "£1M - £10M (Revenue approx £2M - £20M)",
+        "target_ebitda": "£15-40M equity cheques, majority or significant minority. Revenue £5-40M (core £8-20M), EBITDA ~£3-15M.",
     }
 
     def _ensure_config_table(self):

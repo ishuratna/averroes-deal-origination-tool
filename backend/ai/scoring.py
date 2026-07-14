@@ -247,24 +247,26 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
     if rev_m is None or rev_m <= 0:
         return None
 
-    # Score: Averroes sweet spot is £2.5-10M (valuation ~£15-50M at ~6x)
-    # Continuous curve, full marks across the whole sweet spot:
-    # Under £1M = 0.1-0.3 (too early)
-    # £1-2.5M = 0.3-1.0 (approaching, rising)
-    # £2.5-10M = 1.0 (sweet spot / Target Band — all equal)
-    # £10-20M = 1.0 declining to 0.5 (above target)
-    # £20-50M = 0.5 declining to 0.3 (too large)
-    # Over £50M = 0.2 (too big but already qualified somehow)
-    if rev_m < 1:
-        score = 0.1 + rev_m * 0.2
-    elif rev_m < 2.5:
-        score = 0.3 + ((rev_m - 1) / 1.5) * 0.7
-    elif rev_m <= 10:
-        score = 1.0
+    # Score v3 — calibrated to the mandate: £15-40M equity cheques for
+    # majority or significant-minority (25%+) stakes implies investable
+    # equity values of ~£15-160M, i.e. revenue ~£5-40M at 4-6x. Core sweet
+    # spot £8-20M (EV ~£40-90M where both deal structures work comfortably).
+    # Under £2M  = 0.1-0.25 (far too early)
+    # £2-5M     = 0.25-0.7 (approaching, rising)
+    # £5-8M     = 0.7-1.0 (entering the band)
+    # £8-20M    = 1.0 (core sweet spot — all equal)
+    # £20-40M   = 1.0 declining to 0.5 (investable, needs minority structure)
+    # Over £40M = 0.2 (beyond the cheque even at 25%)
+    if rev_m < 2:
+        score = 0.1 + (rev_m / 2) * 0.15
+    elif rev_m < 5:
+        score = 0.25 + ((rev_m - 2) / 3) * 0.45
+    elif rev_m < 8:
+        score = 0.7 + ((rev_m - 5) / 3) * 0.3
     elif rev_m <= 20:
-        score = 1.0 - ((rev_m - 10) / 10) * 0.5
-    elif rev_m <= 50:
-        score = 0.5 - ((rev_m - 20) / 30) * 0.2
+        score = 1.0
+    elif rev_m <= 40:
+        score = 1.0 - ((rev_m - 20) / 20) * 0.5
     else:
         score = 0.2
 
@@ -282,14 +284,14 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
 def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
     """
     Classify revenue (£M) into the Averroes deal band.
-    Target Band = the £2.5-10M sweet spot. Informational only — does NOT
-    affect qualification (hard cap stays at £50M).
+    Target Band = £5-40M, the investable envelope for £15-40M equity cheques
+    at 25-100% stakes (core sweet spot £8-20M). Hard qualification cap: £40M.
     """
     if rev_m is None or rev_m <= 0:
         return None
-    if rev_m < 2.5:
+    if rev_m < 5:
         return "Too Early"
-    if rev_m <= 10:
+    if rev_m <= 40:
         return "Target Band"
     return "Too Large"
 

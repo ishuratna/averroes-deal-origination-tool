@@ -200,7 +200,9 @@ export interface Investor {
 
 export const INVESTOR_STAGES = ['Identified', 'Researched', 'Contacted', 'Meeting', 'Committed', 'Passed'] as const;
 
-// Revenue band: Averroes sweet spot £2.5–10M = "Target Band".
+// Revenue band v3 — calibrated to the mandate: £15–40M equity cheques for
+// majority or significant minority (25%+) stakes → investable revenue
+// envelope £5–40M at 4–6x EV/revenue (core sweet spot £8–20M).
 // Uses the stored band (computed by SmartFill, incl. AI-estimated revenue);
 // falls back to deriving from raw revenue data for rows not yet re-SmartFilled.
 export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: number; revenue_m?: number; revenue_estimate_m?: number }): string | null {
@@ -210,7 +212,7 @@ export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: nu
   else if (company.revenue_m != null && company.revenue_m > 0) revM = company.revenue_m;
   else if (company.revenue_estimate_m != null && company.revenue_estimate_m > 0) revM = company.revenue_estimate_m;
   if (revM == null) return null;
-  if (revM < 2.5) return 'Too Early';
-  if (revM <= 10) return 'Target Band';
+  if (revM < 5) return 'Too Early';
+  if (revM <= 40) return 'Target Band';
   return 'Too Large';
 }
