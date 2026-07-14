@@ -184,25 +184,39 @@ INVESTOR INDEX ({len(context['investor_index'])} investors):
 
 USER QUESTION: {message}
 """
+    matched_names = ([c.get("name") for c in context["matched_companies"]] +
+                     [i.get("name") for i in context["matched_investors"]])
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
-            config=GenerateContentConfig(temperature=0.2),
+            config=GenerateContentConfig(temperature=0.2, response_mime_type="application/json"),
         )
+        # Collect text robustly: response.text can be empty even when parts exist
         text = (response.text or "").strip()
+        if not text and response.candidates:
+            for part in (response.candidates[0].content.parts or []):
+                if getattr(part, "text", None):
+                    text += part.text
+            text = text.strip()
+        if not text:
+            return {"reply": "The AI returned an empty response. Please ask again.",
+                    "needs_web_search": False, "matched": matched_names}
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        start, end = text.find("{"), text.rfind("}")
-        result = json.loads(text[start:end + 1])
-        return {
-            "reply": result.get("reply", "I could not form an answer from the database."),
-            "needs_web_search": bool(result.get("needs_web_search", False)),
-            "matched": [c.get("name") for c in context["matched_companies"]] +
-                       [i.get("name") for i in context["matched_investors"]],
-        }
+        try:
+            start, end = text.find("{"), text.rfind("}")
+            result = json.loads(text[start:end + 1]) if start != -1 and end > start else {}
+        except Exception:
+            result = {}
+        if result.get("reply"):
+            return {"reply": result["reply"],
+                    "needs_web_search": bool(result.get("needs_web_search", False)),
+                    "matched": matched_names}
+        # Model answered in prose instead of JSON: use it rather than failing
+        return {"reply": text, "needs_web_search": False, "matched": matched_names}
     except Exception as e:
         logger.error(f"[Chat] answer failed: {e}")
         return {"reply": f"Chat failed: {e}", "needs_web_search": False, "matched": []}
