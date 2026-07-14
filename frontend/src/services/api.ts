@@ -313,6 +313,19 @@ export const dealApi = {
     return data;
   },
 
+  // ── Deal Intelligence Chat ──────────────────────────────────────────────
+  async chat(message: string, history: Array<{ role: string; content: string }>, webSearch?: boolean): Promise<{ reply: string; needs_web_search: boolean; matched: string[] }> {
+    const response = await apiFetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history, web_search: !!webSearch }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Chat failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Chat failed'); }
+    return data;
+  },
+
   async applyCriteria(criteria: any, updatedBy?: string, requalify?: boolean): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/criteria/apply`, {
       method: 'POST',

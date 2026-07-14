@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -1307,6 +1307,45 @@ async def diag_test_loop():
     except Exception as e:
         out["email_log_error"] = str(e)
     return out
+
+
+# ── Deal Intelligence Chat ───────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[Dict]] = []
+    web_search: Optional[bool] = False
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """
+    Chat over the database (companies + LPs). Data-only answers; never guesses.
+    web_search=True (user explicitly pressed the button) runs ONE grounded
+    Gemini search, enforced against the shared daily grounding budget.
+    """
+    if not req.message or not req.message.strip():
+        raise HTTPException(status_code=400, detail="Empty message.")
+    from services.chat_service import chat_answer, chat_web_search
+    try:
+        universe = bq_handler.get_universe()
+    except Exception:
+        universe = []
+    try:
+        investors = investor_handler.get_all()
+    except Exception:
+        investors = []
+
+    if req.web_search:
+        _enforce_grounding_budget(1, "Chat web search")
+        result = chat_web_search(req.message, req.history or [], universe, investors)
+        try:
+            bq_handler.log_smartfill("chat", kind="newslookup")  # weight-1 grounded call
+        except Exception:
+            pass
+        return result
+
+    return chat_answer(req.message, req.history or [], universe, investors)
 
 
 # ── Deal Lifecycle Endpoints ─────────────────────────────────────────────────

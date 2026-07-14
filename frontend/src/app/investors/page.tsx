@@ -236,6 +236,7 @@ function InvestorsInner() {
             <Link href="/" className="nav-item">Deal Pipeline</Link>
             <Link href="/universe" className="nav-item">Master Universe</Link>
             <Link href="/investors" className="nav-item active">Investors (LPs)</Link>
+            <Link href="/chat" className="nav-item">Intelligence Chat</Link>
           </div>
         </nav>
       </aside>
