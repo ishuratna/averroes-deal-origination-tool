@@ -804,6 +804,47 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
 
+    # Auto-draft: a freshly Qualified company gets its outreach email drafted
+    # immediately, so the button already reads "Review & Send" the moment it
+    # lands in the pipeline. Cost-safe: ONE ungrounded Gemini call — the news
+    # hook comes only from signals scoring already stored (no grounded search).
+    # Never overwrites an existing draft or a sent email.
+    auto_draft = None
+    if (new_status == "Qualified"
+            and not company_data.get("outreach_sent_at")
+            and not company_data.get("outreach_draft_body")):
+        try:
+            draft_input = {**company_data, **ch_data}
+            draft_input["description"] = description or company_data.get("description", "")
+            draft_input["website"] = website or company_data.get("website", "")
+            for k in ("contact_name", "contact_email", "linkedin_url"):
+                if founder_info.get(k):
+                    draft_input[k] = founder_info[k]
+            if scoring_result.get("score_details"):
+                draft_input["score_details"] = scoring_result["score_details"]
+            hook = _stored_news_signal(draft_input)
+            draft = draft_outreach_email(draft_input, news_hook=hook)
+            if company_data.get("source") == "Internal Test":
+                draft["to"] = TEST_RECIPIENT
+            bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
+                    outreach_draft_subject = @s, outreach_draft_body = @b,
+                    outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                    WHERE name = @name""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("s", "STRING", draft.get("subject") or ""),
+                    bq_lib.ScalarQueryParameter("b", "STRING", draft.get("body") or ""),
+                    bq_lib.ScalarQueryParameter("t", "STRING", draft.get("to") or ""),
+                    bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+                ])).result()
+            bq_handler.add_activity_note(
+                company_name,
+                f"Outreach draft auto-generated on qualification — to: {draft.get('to') or '(no email found)'}, subject: \"{draft.get('subject')}\"",
+                "smartfill")
+            auto_draft = {"subject": draft.get("subject"), "to": draft.get("to")}
+            logger.info(f"[SmartFill] Auto-drafted outreach for '{company_name}'")
+        except Exception as e:
+            logger.warning(f"[SmartFill] auto-draft failed for {company_name} (non-fatal): {e}")
+
     # Count this run against the daily cap (best-effort)
     try:
         bq_handler.log_smartfill(company_name)
@@ -825,6 +866,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         "status": "Success",
         "company": company_name,
         "new_status": new_status,
+        "auto_draft": auto_draft,
         "is_uk_ireland": qual["is_uk_ireland"],
         "is_tech": qual["is_tech"],
         "size_bucket": size_bucket,
