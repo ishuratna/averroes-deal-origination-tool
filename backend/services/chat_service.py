@@ -52,18 +52,41 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", (s or "").lower()).strip()
 
 
+def _norm_ns(s: str) -> str:
+    """Normalised with NO spaces — matches regardless of spacing/casing typos
+    ('SaasCada' finds 'SaaScada', 'open gamma' finds 'OpenGamma')."""
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+_GENERIC_NAME_WORDS = {"ltd", "limited", "plc", "group", "tech", "technologies",
+                       "technology", "software", "solutions", "systems", "capital",
+                       "partners", "ventures", "holdings", "company", "the", "and"}
+
+
+def _name_matches(name: str, msg: str, msg_ns: str) -> bool:
+    n = _norm(name)
+    if not n or len(n) < 3:
+        return False
+    # 1. Whole name (spaceless) appears in the message
+    n_ns = _norm_ns(name)
+    if len(n_ns) >= 4 and n_ns in msg_ns:
+        return True
+    # 2. Every distinctive word of the name appears in the message
+    words = [w for w in n.split() if len(w) > 3 and w not in _GENERIC_NAME_WORDS]
+    if words and all(w in msg for w in words):
+        return True
+    # 3. The name's first distinctive word appears as a whole word in the message
+    if words and re.search(rf"\b{re.escape(words[0])}\b", msg):
+        return True
+    return False
+
+
 def _match_entities(message: str, universe: List[dict], investors: List[dict], limit: int = 6):
-    """Find companies/LPs the question refers to, by name containment."""
+    """Find companies/LPs the question refers to — tolerant of casing/spacing typos."""
     msg = _norm(message)
-    matched_companies, matched_investors = [], []
-    for row in universe:
-        n = _norm(row.get("name", ""))
-        if n and len(n) >= 3 and (n in msg or all(w in msg for w in n.split()[:2] if len(w) > 3)):
-            matched_companies.append(row)
-    for row in investors:
-        n = _norm(row.get("name", ""))
-        if n and len(n) >= 3 and n in msg:
-            matched_investors.append(row)
+    msg_ns = _norm_ns(message)
+    matched_companies = [r for r in universe if _name_matches(r.get("name", ""), msg, msg_ns)]
+    matched_investors = [r for r in investors if _name_matches(r.get("name", ""), msg, msg_ns)]
     return matched_companies[:limit], matched_investors[:limit]
 
 
@@ -94,8 +117,11 @@ def build_chat_context(message: str, universe: List[dict], investors: List[dict]
     context = {
         "matched_companies": [_slim(c, _COMPANY_FIELDS) for c in mc],
         "matched_investors": [_slim(i, _INVESTOR_FIELDS) for i in mi],
-        "company_index": [_index_line_company(c) for c in universe[:600]],
-        "investor_index": [_index_line_investor(i) for i in investors[:400]],
+        # Full index — every entity must be visible to the model, otherwise it
+        # wrongly claims the database has no information (capped only as a
+        # safety net far above current data size)
+        "company_index": [_index_line_company(c) for c in universe[:3000]],
+        "investor_index": [_index_line_investor(i) for i in investors[:2000]],
     }
     return context
 
