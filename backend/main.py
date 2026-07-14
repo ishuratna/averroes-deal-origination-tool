@@ -1593,7 +1593,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     for inv in investor_handler.get_all():
         em = (inv.get("contact_email") or "").strip().lower()
         if em:
-            known[em] = {"type": "investor", "name": inv.get("name"), "status": inv.get("status")}
+            # setdefault: if an address belongs to BOTH a company and an LP,
+            # the company wins — stage moves matter more than an LP note
+            known.setdefault(em, {"type": "investor", "name": inv.get("name"), "status": inv.get("status")})
     if not known:
         return {"status": "Complete", "message": "No known contact emails in the database yet."}
 

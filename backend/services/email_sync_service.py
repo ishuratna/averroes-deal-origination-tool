@@ -71,9 +71,15 @@ def _body_snippet(msg, limit: int = 500) -> str:
     return html_fallback[:limit].strip()
 
 
-def _fetch_folder(mail, folder: str, since: str, direction: str, known: Dict[str, dict]) -> List[dict]:
-    """Fetch messages from one folder, keeping only known-contact exchanges."""
+def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict]) -> List[dict]:
+    """
+    Fetch messages from one folder, keeping only known-contact exchanges.
+    Direction is detected PER MESSAGE (From == our sender → 'sent', else
+    'received') so scanning [Gmail]/All Mail catches replies that were
+    archived or filtered out of the INBOX — those are otherwise invisible.
+    """
     entries = []
+    sender = (sender or "").lower()
     try:
         status, _ = mail.select(f'"{folder}"', readonly=True)
         if status != "OK":
@@ -84,11 +90,14 @@ def _fetch_folder(mail, folder: str, since: str, direction: str, known: Dict[str
             return []
         ids = data[0].split()
         # Most recent first, bounded to keep runs fast
-        for msg_id in list(reversed(ids))[:300]:
+        for msg_id in list(reversed(ids))[:500]:
             status, msg_data = mail.fetch(msg_id, "(RFC822)")
             if status != "OK" or not msg_data or not msg_data[0]:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
+
+            _, from_email = email.utils.parseaddr(msg.get("From") or "")
+            direction = "sent" if (from_email or "").lower() == sender else "received"
 
             # Counterparty: To for sent, From for received
             raw_addr = msg.get("To") if direction == "sent" else msg.get("From")
@@ -136,11 +145,21 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30) -> List[dict]:
     mail = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         mail.login(sender, password)
-        entries = []
-        entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, "sent", known_contacts)
-        entries += _fetch_folder(mail, "INBOX", since, "received", known_contacts)
-        logger.info(f"[EmailSync] {len(entries)} known-contact messages found (last {days} days)")
-        return entries
+        # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
+        # one pass; direction is detected per message inside _fetch_folder.
+        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts)
+        if not entries:
+            # Fallback for non-Gmail IMAP layouts
+            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts)
+            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts)
+        # Dedup by message id (All Mail + fallback can overlap)
+        seen_ids, unique = set(), []
+        for e in entries:
+            if e["message_id"] not in seen_ids:
+                seen_ids.add(e["message_id"])
+                unique.append(e)
+        logger.info(f"[EmailSync] {len(unique)} known-contact messages found (last {days} days)")
+        return unique
     finally:
         try:
             mail.logout()
