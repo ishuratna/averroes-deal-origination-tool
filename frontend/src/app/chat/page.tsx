@@ -5,7 +5,7 @@
 // assistant offers a live web search which runs ONLY when the user presses
 // the button (one grounded Gemini call, enforced against the daily budget).
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { dealApi } from '../../services/api';
 import AuthGate from '../../components/AuthGate';
@@ -16,6 +16,48 @@ interface ChatMsg {
   webSearchOffer?: boolean;   // assistant couldn't answer — offer the button
   fromWeb?: boolean;          // answer came from a live web search
   question?: string;          // the user question a web-search offer belongs to
+}
+
+// Lightweight renderer for the assistant's consultant-style formatting:
+// **Header** lines become section headers, "- " lines become bullets,
+// inline **bold** becomes <strong>.
+function renderInline(text: string, key: number) {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  return (
+    <span key={key}>
+      {parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))}
+    </span>
+  );
+}
+
+function MessageBody({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const out: React.ReactNode[] = [];
+  let bullets: string[] = [];
+  const flushBullets = (key: string) => {
+    if (!bullets.length) return;
+    out.push(
+      <ul className="chat-ul" key={key}>
+        {bullets.map((b, i) => <li key={i}>{renderInline(b, i)}</li>)}
+      </ul>
+    );
+    bullets = [];
+  };
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+    const bullet = line.match(/^[-•]\s+(.*)$/);
+    if (bullet) { bullets.push(bullet[1]); return; }
+    flushBullets(`ul-${i}`);
+    const header = line.match(/^\*\*(.+?)\*\*:?\s*$/);
+    if (header) {
+      out.push(<p className="chat-h" key={i}>{header[1]}</p>);
+    } else {
+      out.push(<p key={i}>{renderInline(line, i)}</p>);
+    }
+  });
+  flushBullets('ul-end');
+  return <>{out}</>;
 }
 
 const SUGGESTIONS = [
@@ -119,7 +161,7 @@ function ChatInner() {
               <div key={i} className={`msg-row ${m.role}`}>
                 <div className={`bubble ${m.role} ${m.fromWeb ? 'web' : ''}`}>
                   {m.fromWeb && <span className="web-tag">🔍 Live web search</span>}
-                  {m.content.split('\n').map((line, j) => line.trim() ? <p key={j}>{line}</p> : null)}
+                  <MessageBody content={m.content} />
                   {m.webSearchOffer && (
                     <button className="web-search-btn" disabled={searching}
                       onClick={() => runWebSearch(m.question || '', i)}>
@@ -199,8 +241,17 @@ function ChatInner() {
           max-width: 78%; padding: 0.7rem 0.95rem; border-radius: 14px;
           font-size: 0.87rem; line-height: 1.6;
         }
-        .bubble p { margin: 0 0 0.4rem; }
-        .bubble p:last-child { margin-bottom: 0; }
+        .bubble :global(p) { margin: 0 0 0.4rem; }
+        .bubble :global(p:last-child) { margin-bottom: 0; }
+        .bubble :global(.chat-h) {
+          font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+          letter-spacing: 0.07em; color: #2563eb; margin: 0.7rem 0 0.25rem;
+        }
+        .bubble :global(.chat-h:first-child) { margin-top: 0; }
+        .bubble :global(.chat-ul) { margin: 0 0 0.45rem; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.2rem; }
+        .bubble :global(.chat-ul li) { line-height: 1.55; }
+        .bubble :global(.chat-ul li::marker) { color: #2563eb; }
+        .bubble :global(strong) { font-weight: 800; }
         .bubble.user { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
         .bubble.assistant { background: #f1f5f9; color: #0f172a; border-bottom-left-radius: 4px; }
         .bubble.web { background: #eff6ff; border: 1px solid #bfdbfe; }

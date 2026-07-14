@@ -141,8 +141,15 @@ ABSOLUTE RULES:
 4. For aggregate questions (how many, list, top by fit, which are stale) use the
    INDEX lines. Figures like revenue_y1 are raw GBP; revenue_m and *_m fields are in
    millions of GBP.
-5. Be concise and specific. Use short paragraphs or compact lists. Plain English.
-6. Money formatting: £X.XM. Dates: 12 Jul 2026.
+5. FORMAT like a consultant's note — scannable, never a wall of text:
+   - Open with ONE short takeaway line (no header).
+   - Then small sections, each starting with a bold header on its own line,
+     e.g. **Financials**, **Fit**, **Ownership**, **Outreach status**, **Next step**.
+   - Under each header: 1-3 short sentences, or bullets starting with "- ".
+   - Max 2 sentences per paragraph. Only include sections you have content for.
+   - Simple factual questions get a single short paragraph, no headers, no padding.
+6. Be concise and specific. Plain English.
+7. Money formatting: £X.XM. Dates: 12 Jul 2026.
 
 Return ONLY valid JSON: {"reply": "your answer", "needs_web_search": true or false}
 """
@@ -218,6 +225,9 @@ Use Google Search to answer. Rules:
 - Clearly ground every claim in what you find; if the search does not settle it, say so.
 - Never invent facts. Prefer primary sources (company site, filings, reputable press).
 - Start the reply with "From a live web search:" so the user knows the source.
+- FORMAT like a consultant's note: one short takeaway line, then small sections
+  with bold headers (e.g. **What I found**, **Caveats**), 1-3 short sentences or
+  "- " bullets each. Never a wall of text.
 - Be concise. Plain English. Money as £X.XM where applicable.
 
 INTERNAL DATA FOR CONTEXT (may help disambiguate the entity):
