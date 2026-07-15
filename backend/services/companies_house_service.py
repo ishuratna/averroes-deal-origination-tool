@@ -959,13 +959,17 @@ shareholder information if present.
 Return ONLY valid JSON:
 {"has_shareholders": true/false,
  "statement_date": "YYYY-MM-DD",
- "total_shares": number or null,
- "shareholders": [{"name": "...", "shares": number, "share_class": "...", "pct": number}],
+ "shareholders": [{"name": "...", "shares": number, "share_class": "..."}],
+ "treasury_shares": number or null,
  "notes": "one line, e.g. share class nuances"}
 
-Rules: only what is IN the document, never invent. pct = shares / total of that class
-(or overall total if single class), rounded to 1 decimal. If the statement contains
-no shareholder details, has_shareholders = false."""
+Rules:
+- List EVERY shareholder line in the document, even tiny holdings — do not
+  truncate, summarise or skip any. A holder appearing under several share
+  classes gets one entry per class.
+- shares = the exact number held as stated. Never invent or estimate.
+- Do NOT compute percentages — the caller does that.
+- If the statement contains no shareholder details, has_shareholders = false."""
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[Part.from_bytes(data=pdf, mime_type="application/pdf"), prompt])
@@ -976,20 +980,56 @@ no shareholder details, has_shareholders = false."""
         data = json.loads(text[start:end + 1])
         if not data.get("has_shareholders"):
             return {}
-        holders = sorted(data.get("shareholders", []), key=lambda h: -(h.get("pct") or 0))[:15]
+
+        # Aggregate per HOLDER across share classes; percentages computed here
+        # in code on one consistent basis (total of all listed shares), so the
+        # table always sums to ~100%.
+        raw = [h for h in data.get("shareholders", []) if h.get("name") and (h.get("shares") or 0) > 0]
+        agg: Dict[str, dict] = {}
+        for h in raw:
+            key = _re.sub(r"[^a-z0-9]", "", h["name"].lower())
+            entry = agg.setdefault(key, {"name": h["name"].strip().title(), "shares": 0, "classes": []})
+            entry["shares"] += int(h["shares"])
+            cls = (h.get("share_class") or "").strip().title()
+            if cls and cls not in entry["classes"]:
+                entry["classes"].append(cls)
+        total = sum(e["shares"] for e in agg.values())
+        if total <= 0:
+            return {}
+        holders_all = sorted(agg.values(), key=lambda e: -e["shares"])
+        top = holders_all[:15]
+        rest = holders_all[15:]
+        rows = [{"name": e["name"], "shares": e["shares"],
+                 "share_class": " + ".join(e["classes"][:3]),
+                 "pct": round(e["shares"] / total * 100, 1)} for e in top]
+        if rest:
+            rest_shares = sum(e["shares"] for e in rest)
+            rows.append({"name": f"Others ({len(rest)} holders)", "shares": rest_shares,
+                         "share_class": "", "pct": round(rest_shares / total * 100, 1)})
+
+        # Largest individual (non-corporate) holder as founder proxy —
+        # international corporate suffixes included
+        _CORP = (" ltd", " limited", " llp", " lp", " plc", " inc", " gmbh", " bv", " b.v",
+                 " sa", " s.a", " spa", " s.p.a", " ab", " abp", " oy", " as", " aps",
+                 " ehf", " hf", " slhf", " ucits", "cooperatief", " u.a", "nominees",
+                 "fund", "capital", "ventures", "partners", "holdings", "trust",
+                 "stiftelsen", "striftelsen", "foundation", "bank", "s.a.r.l", "sarl")
         founder_pct = None
-        # Largest individual (non-corporate-looking) holder as founder proxy
-        for h in holders:
-            n = (h.get("name") or "").lower()
-            if not any(t in n for t in ("ltd", "limited", "llp", "lp", "fund", "capital",
-                                        "ventures", "partners", "holdings", "nominees", "trust")):
-                founder_pct = h.get("pct")
+        for r in rows:
+            n = " " + (r.get("name") or "").lower()
+            if not r["name"].startswith("Others") and not any(t in n for t in _CORP):
+                founder_pct = r["pct"]
                 break
+
+        notes = data.get("notes", "")
+        if data.get("treasury_shares"):
+            notes = (notes + " " if notes else "") + f"Treasury shares: {data['treasury_shares']:,} (excluded from percentages)."
         return {
-            "ch_cap_table": json.dumps({"date": data.get("statement_date") or target.get("date", ""),
-                                        "total_shares": data.get("total_shares"),
-                                        "shareholders": holders,
-                                        "notes": data.get("notes", "")}),
+            "ch_cap_table": json.dumps({"v": 2,
+                                        "date": data.get("statement_date") or target.get("date", ""),
+                                        "total_shares": total,
+                                        "shareholders": rows,
+                                        "notes": notes}),
             "ch_cap_table_date": data.get("statement_date") or target.get("date", ""),
             "ch_founder_pct": founder_pct,
         }

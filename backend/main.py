@@ -1398,9 +1398,14 @@ async def smartenrich_company(company_name: str):
             params.append(bq_lib.ScalarQueryParameter(col, typ, val))
         actions.append("registry intel refreshed (incl. distress + filing signals)")
 
-        # ── 2b. Cap table: parse CS01 ONLY if newer than what we hold ──
+        # ── 2b. Cap table: parse CS01 ONLY if newer than what we hold.
+        # v1-format tables (truncated, inconsistent percentages) are re-parsed
+        # once regardless — detected by the missing v2 marker in the JSON.
         try:
-            cap = get_cap_table(number, company_name, stored_date=company.get("ch_cap_table_date") or "")
+            _stored_cap_date = company.get("ch_cap_table_date") or ""
+            if _stored_cap_date and '"v": 2' not in (company.get("ch_cap_table") or ""):
+                _stored_cap_date = ""  # force one re-parse under the v2 rules
+            cap = get_cap_table(number, company_name, stored_date=_stored_cap_date)
             if cap:
                 for col, val, typ in [
                     ("ch_cap_table", cap["ch_cap_table"], "STRING"),
