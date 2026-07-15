@@ -639,12 +639,13 @@ def _retro_qualified_blank():
 WATCH_STAGES = {"Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer"}
 
 
-@app.post("/ch-watch/run")
-async def ch_watch_run(request: Request):
-    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
-    expected = os.getenv("WATCH_TOKEN", "")
-    if not expected or token != expected:
-        raise HTTPException(status_code=403, detail="Invalid watch token.")
+def _ch_watch_sweep(limit: int = 80):
+    """
+    One bounded sweep: the `limit` least-recently-watched pipeline companies.
+    Daily scheduled runs rotate through the whole pipeline (each company
+    stores ch_watched_at), so every company is covered every few days while
+    each individual run stays fast and well inside request timeouts.
+    """
     from services.companies_house_service import get_filings_since, get_company_health
     from google.cloud import bigquery as bq_lib
     from datetime import datetime, timedelta, timezone
@@ -652,13 +653,15 @@ async def ch_watch_run(request: Request):
     default_since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     alerts, watched = [], 0
-    for c in bq_handler.get_universe():
-        if c.get("status") not in WATCH_STAGES or not c.get("ch_company_number"):
-            continue
-        if c.get("source") == "Internal Test":
-            continue
+    eligible = [c for c in bq_handler.get_universe()
+                if c.get("status") in WATCH_STAGES and c.get("ch_company_number")
+                and c.get("source") != "Internal Test"]
+    # Stalest first; never-watched companies lead the queue
+    eligible.sort(key=lambda c: c.get("ch_watched_at") or "")
+    for c in eligible:
         watched += 1
-        if watched > 200:
+        if watched > limit:
+            watched = limit
             break
         since = (c.get("ch_watched_at") or default_since)[:10]
         try:
@@ -700,8 +703,26 @@ async def ch_watch_run(request: Request):
         except Exception as e:
             logger.warning(f"[CH Watch] failed for {c.get('name')}: {e}")
 
-    logger.info(f"[CH Watch] {watched} companies checked, {len(alerts)} with new filings")
-    return {"status": "Success", "watched": watched, "alerts": alerts}
+    logger.info(f"[CH Watch] {watched} companies checked, {len(alerts)} with new filings"
+                + (f": {'; '.join(alerts[:10])}" if alerts else ""))
+    try:
+        bq_handler._log_activity("__system__", "note", "ch-watch",
+                                 note_text=f"CH Watch sweep: {watched} companies checked, {len(alerts)} with new filings")
+    except Exception:
+        pass
+    return {"status": "Success", "watched": watched, "eligible": len(eligible), "alerts": alerts}
+
+
+@app.post("/ch-watch/run")
+async def ch_watch_run(request: Request):
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid watch token.")
+    # Synchronous but bounded (~80 companies ≈ 1-2 minutes worst case):
+    # Cloud Run throttles CPU after the response, so background threads stall.
+    result = _ch_watch_sweep()
+    return result or {"status": "Success"}
 
 
 @app.post("/contacts/reverify")
