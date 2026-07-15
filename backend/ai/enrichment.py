@@ -89,7 +89,7 @@ class EnrichmentAgent:
                 text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
             result = json.loads(text)
-            return {
+            out = {
                 "website": result.get("website", ""),
                 "contact_name": result.get("contact_name", ""),
                 "contact_email": result.get("contact_email", ""),
@@ -97,6 +97,63 @@ class EnrichmentAgent:
                 "linkedin_url": result.get("linkedin_url", ""),
                 "description": result.get("description", ""),
             }
+            # Retry ladder: first pass found no email — run ONE sharper search
+            # (domain-string, GitHub commits, speaker pages, press footers).
+            if not out["contact_email"]:
+                retry = self._retry_email_search(client, company_name, out.get("website", ""), out.get("contact_name", ""))
+                if retry.get("contact_email"):
+                    out["contact_email"] = retry["contact_email"]
+                    out["email_source"] = retry.get("email_source", "retry search")
+            return out
         except Exception as e:
             logger.error(f"Enrichment search failed for {company_name}: {e}")
             return {"contact_name": "", "contact_email": "", "linkedin_url": "", "website": "", "description": ""}
+
+    def _retry_email_search(self, client, company_name: str, website: str, contact_name: str) -> dict:
+        """
+        Second, sharper grounded pass used ONLY when the first found no email.
+        Different tactics: search the literal @domain string (surfaces addresses
+        inside PDFs, press releases and newswire footers), GitHub commits and
+        profiles (tech founders leak emails in code), and conference speaker
+        pages. Same rules: found-in-a-source only, never constructed.
+        """
+        try:
+            from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+            domain = ""
+            if website:
+                domain = website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+            prompt = f"""
+            Find a published email address for {contact_name or 'the founder/CEO'} of the company '{company_name}'
+            {f'(website domain: {domain})' if domain else ''}.
+
+            SEARCH TACTICS (try these specifically):
+            1. Search the literal string "@{domain}" — email addresses appear inside press releases,
+               PDF documents, newswire footers and event listings that mention the domain.
+            2. Search GitHub for the domain or founder name — developers often expose their work
+               email in commits, profiles and package files.
+            3. Search conference and event speaker pages featuring {contact_name or 'the founder'}.
+            4. Search press releases and media contact sections mentioning the company.
+
+            RULES: return ONLY an address you actually saw in a source. NEVER construct or guess one
+            from name patterns. If nothing is published anywhere, return an empty string.
+
+            Return ONLY valid JSON: {{"contact_email": "...", "email_source": "where you saw it"}}
+            """
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", contents=prompt,
+                config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())]),
+            )
+            text = (response.text or "").strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            start, end = text.find("{"), text.rfind("}")
+            if start == -1 or end <= start:
+                return {}
+            result = json.loads(text[start:end + 1])
+            email = (result.get("contact_email") or "").strip()
+            if email:
+                logger.info(f"[Enrichment] retry search found email for {company_name}: {email}")
+            return {"contact_email": email, "email_source": result.get("email_source", "")}
+        except Exception as e:
+            logger.warning(f"[Enrichment] retry email search failed for {company_name}: {e}")
+            return {}

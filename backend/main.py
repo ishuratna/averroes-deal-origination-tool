@@ -489,10 +489,90 @@ def _migrate_band_rules():
         logger.error(f"[Migration] band rules migration failed (will retry next startup): {e}")
 
 
+# ── Retroactive contact re-resolution (contacts v2 waterfall) ───────────────
+# Re-runs the contact waterfall over every already-SmartFilled company:
+# site scrape + verification of the stored email + verified pattern fallback.
+# NO AI calls (those companies already had their AI pass) — cost is site
+# fetches plus verifier credits when a key is configured. The version marker
+# includes verifier availability, so adding HUNTER_API_KEY later triggers a
+# fresh, fully-verified pass on the next deploy automatically.
+
+def _contacts_marker() -> str:
+    verified = bool(os.getenv("HUNTER_API_KEY", "") or os.getenv("EMAIL_VERIFIER_API_KEY", ""))
+    return f"contacts-v2-{'verified' if verified else 'scrape-only'}"
+
+
+def _retro_resolve_contacts(force: bool = False) -> dict:
+    from google.cloud import bigquery as bq_lib
+    from services.contact_finder import resolve_contact_email
+    marker = _contacts_marker()
+    try:
+        if not force:
+            rows = list(bq_handler.client.query(
+                f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                    WHERE action_type = 'migration' AND note_text = '{marker}'""").result())
+            if rows and int(rows[0].n) > 0:
+                return {"status": "skipped", "reason": "already applied", "marker": marker}
+        logger.info(f"[Migration] {marker}: re-resolving contacts for SmartFilled companies...")
+
+        updated, blanked, confirmed, processed = [], [], 0, 0
+        for c in bq_handler.get_universe():
+            if c.get("source") == "Internal Test" or not c.get("last_smartfill_at"):
+                continue
+            if not (c.get("website") or c.get("contact_email")):
+                continue
+            processed += 1
+            if processed > 500:
+                break
+            try:
+                res = resolve_contact_email(c.get("website", ""), c.get("contact_name", ""),
+                                            c.get("contact_email", ""), "existing record")
+                new_email = (res["email"] or "").lower()
+                old_email = (c.get("contact_email") or "").strip().lower()
+                if new_email == old_email:
+                    confirmed += 1
+                    continue
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET contact_email = @em WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("em", "STRING", res["email"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                    ])).result()
+                if res["email"]:
+                    updated.append(c["name"])
+                    note = f"Contact email updated by retro waterfall: '{old_email or '(empty)'}' -> '{res['email']}' ({res['source']}; {res['verification']})"
+                else:
+                    blanked.append(c["name"])
+                    note = f"Contact email '{old_email}' cleared by retro waterfall: {res['verification']}"
+                bq_handler.add_activity_note(c["name"], note, "contact-finder")
+            except Exception as e:
+                logger.warning(f"[Migration] contact re-resolve failed for {c.get('name')}: {e}")
+
+        bq_handler._log_activity("__system__", "migration", "system", note_text=marker)
+        summary = {"status": "complete", "marker": marker, "processed": processed,
+                   "updated": len(updated), "blanked": len(blanked), "unchanged": confirmed}
+        logger.info(f"[Migration] {marker} done: {summary}")
+        return summary
+    except Exception as e:
+        logger.error(f"[Migration] contacts retro pass failed: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+@app.post("/contacts/reverify")
+async def contacts_reverify():
+    """Manually re-run the retroactive contact waterfall (e.g. after adding a verifier key)."""
+    return _retro_resolve_contacts(force=True)
+
+
 @app.on_event("startup")
 async def _run_migrations():
     import threading
-    threading.Thread(target=_migrate_band_rules, daemon=True).start()
+
+    def _sequence():
+        _migrate_band_rules()
+        _retro_resolve_contacts()
+
+    threading.Thread(target=_sequence, daemon=True).start()
 
 
 # ── Cost protection: paid search-grounding is NEVER allowed ──────────────────
@@ -529,7 +609,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             status_code=429,
             detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day, keeps AI search calls in the free tier). Resets at midnight UTC — {used_today} used today.",
         )
-    _enforce_grounding_budget(3, "SmartFill")
+    _enforce_grounding_budget(4, "SmartFill")
     logger.info(f"SmartFill triggered for: {company_name} ({used_today + 1}/{DAILY_SMARTFILL_CAP} today)")
     company_data = {"name": company_name}
     try:
@@ -625,6 +705,19 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     founder_info = enrichment_agent.enrich_founder_details(company_name)
     website = founder_info.get("website", "")
     description = founder_info.get("description", "")
+
+    # Contact waterfall: site scrape → AI result → pattern inference, with
+    # mailbox verification gating every candidate. Blank if nothing passes.
+    try:
+        from services.contact_finder import resolve_contact_email
+        res = resolve_contact_email(website or company_data.get("website", ""),
+                                    founder_info.get("contact_name") or company_data.get("contact_name", ""),
+                                    founder_info.get("contact_email", ""),
+                                    founder_info.get("email_source", ""))
+        founder_info["contact_email"] = res["email"]
+        founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
+    except Exception as e:
+        logger.warning(f"[SmartFill] contact waterfall failed for {company_name} (non-fatal): {e}")
 
     # Internal test row: enrichment must NEVER change its contact — the test
     # loop depends on it staying pinned to the test inbox.
@@ -1011,7 +1104,7 @@ async def smartenrich_company(company_name: str):
     used_today = bq_handler.count_smartfills_today()
     if used_today >= DAILY_SMARTFILL_CAP:
         raise HTTPException(status_code=429, detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day). Resets at midnight UTC.")
-    _enforce_grounding_budget(2, "SmartEnrich")
+    _enforce_grounding_budget(3, "SmartEnrich")
 
     company = None
     for c in bq_handler.get_universe():
@@ -1036,6 +1129,17 @@ async def smartenrich_company(company_name: str):
         actions.append("test row: contact pinned, verification skipped")
     else:
         founder_info = enrichment_agent.enrich_founder_details(company_name)
+        # Full contact waterfall (site scrape → AI result → verified patterns)
+        try:
+            from services.contact_finder import resolve_contact_email
+            res = resolve_contact_email(company.get("website", ""),
+                                        founder_info.get("contact_name") or company.get("contact_name", ""),
+                                        founder_info.get("contact_email", ""),
+                                        founder_info.get("email_source", ""))
+            founder_info["contact_email"] = res["email"]
+            founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
+        except Exception as e:
+            logger.warning(f"[SmartEnrich] contact waterfall failed for {company_name} (non-fatal): {e}")
         found_email = (founder_info.get("contact_email") or "").strip()
         email_src = founder_info.get("email_source") or "source not stated by the model"
         stored_email = (company.get("contact_email") or "").strip()

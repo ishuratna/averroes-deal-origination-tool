@@ -341,7 +341,9 @@ class BigQueryHandler:
 
     # Worst-case grounded (Google Search) Gemini calls per operation type.
     # The shared daily budget guarantees we NEVER cross the free 1,500/day tier.
-    GROUNDING_WEIGHTS = {"smartfill": 3, "smartenrich": 2, "investorfill": 1, "newslookup": 1}
+    # smartfill/smartenrich +1 (Jul 2026): the contact-finder retry ladder can
+    # fire one extra grounded search when the first pass finds no email.
+    GROUNDING_WEIGHTS = {"smartfill": 4, "smartenrich": 3, "investorfill": 1, "newslookup": 1}
 
     def count_smartfills_today(self) -> int:
         """How many SmartFill/SmartEnrich runs have been logged today (UTC)."""
