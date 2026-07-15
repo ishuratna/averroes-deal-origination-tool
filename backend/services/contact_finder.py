@@ -162,63 +162,94 @@ def _pattern_candidates(contact_name: str, domain: str, observed: List[str]) -> 
     return cands[:4]
 
 
-def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_source: str) -> Dict:
+def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_source: str,
+                          retry_fn=None) -> Dict:
     """
-    The full contact waterfall:
-      1. company's own site (personal first)
-      2. AI search result (first pass + retry, already merged by caller)
+    The contact waterfall, in strict priority order:
+      1. personal email found on the WEB (the AI first-pass result)
+      2. the company's OWN website (personal, then generic)
+      3. retry ladder — one sharper grounded search (only if 1-2 yield nothing usable)
       4. name-pattern inference (only ever stored if verified)
-    Step 3 (mailbox verification) gates EVERY candidate in quality order.
-    If no candidate verifies, email is left BLANK.
-    Without a verifier key: best FOUND candidate is used (marked unverified);
-    pattern guesses are never used unverified.
+    Mailbox verification gates EVERY candidate before acceptance; a failed
+    candidate falls through to the next step. If nothing verifies → BLANK.
+    Without a verifier key: first found-in-source candidate in the same order
+    is used (marked unverified); pattern guesses are never used unverified.
+    retry_fn: zero-arg callable returning {"contact_email","email_source"}.
     Returns {"email", "source", "verification"}.
     """
     site = find_site_emails(website, contact_name)
     domain = _clean_domain(website) or (ai_email.split("@")[-1] if "@" in (ai_email or "") else "")
-
-    candidates: List[tuple] = []  # (email, source, kind)
-    if site.get("email") and not is_generic_address(site["email"]):
-        candidates.append((site["email"], f"company website ({site['source']})", "found"))
-    if ai_email:
-        candidates.append((ai_email.strip().lower(), ai_source or "AI search", "found"))
-    site_generics = [e for e in site.get("all", []) if is_generic_address(e)]
-    for g in site_generics[:1]:
-        candidates.append((g, f"company website ({site['source']})", "found"))
-    for p in _pattern_candidates(contact_name, domain, site.get("all", []) + ([ai_email] if ai_email else [])):
-        if all(p != c[0] for c in candidates):
-            candidates.append((p, "inferred from name pattern", "pattern"))
-
-    if not candidates:
-        return {"email": "", "source": "", "verification": "no candidates found"}
+    ai_email = (ai_email or "").strip().lower()
 
     verifier_on = bool(_os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", ""))
     accept_catchall = _os.getenv("VERIFIER_ACCEPT_CATCHALL", "0") == "1"
+    checked = [0]
 
-    if not verifier_on:
-        # No verifier: found-in-source only, clearly marked; never patterns
-        for email, source, kind in candidates:
-            if kind == "found":
-                return {"email": email, "source": source,
-                        "verification": "unverified (no verifier configured)"}
-        return {"email": "", "source": "", "verification": "only pattern guesses available; verifier required"}
-
-    checked = 0
-    for email, source, kind in candidates:
-        if checked >= 5:
-            break
+    def _passes(email: str, source: str, kind: str):
+        """Verify one candidate. Returns a result dict on acceptance, else None."""
+        if not email:
+            return None
+        if not verifier_on:
+            if kind == "pattern":
+                return None  # never store an unverified guess
+            return {"email": email, "source": source, "verification": "unverified (no verifier configured)"}
+        if checked[0] >= 6:
+            return None
         v = verify_email(email)
-        checked += 1
+        checked[0] += 1
         logger.info(f"[ContactFinder] verify {email} ({kind}) -> {v}")
         if v == "deliverable":
             return {"email": email, "source": source, "verification": "mailbox verified (deliverable)"}
         if v == "catch_all" and kind == "found" and accept_catchall:
             return {"email": email, "source": source,
                     "verification": "found in source; domain accepts all mail (mailbox unconfirmable)"}
-        # undeliverable / unknown / strict catch-all → try the next candidate
+        return None
 
+    # Step 1: personal email found on the web (AI first pass)
+    if ai_email and not is_generic_address(ai_email):
+        r = _passes(ai_email, ai_source or "AI web search", "found")
+        if r:
+            return r
+
+    # Step 2: the company's own website — personal first, then one generic
+    if site.get("email") and not is_generic_address(site["email"]) and site["email"] != ai_email:
+        r = _passes(site["email"], f"company website ({site['source']})", "found")
+        if r:
+            return r
+    site_generics = [e for e in site.get("all", []) if is_generic_address(e)]
+    if ai_email and is_generic_address(ai_email):
+        site_generics = [ai_email] + [g for g in site_generics if g != ai_email]
+    for g in site_generics[:1]:
+        r = _passes(g, f"company website ({site.get('source') or 'site'})" if g != ai_email else (ai_source or "AI web search"), "found")
+        if r:
+            return r
+
+    # Step 3: retry ladder — one sharper grounded search
+    retry_email = ""
+    if retry_fn:
+        try:
+            retry = retry_fn() or {}
+            retry_email = (retry.get("contact_email") or "").strip().lower()
+            if retry_email and retry_email != ai_email:
+                r = _passes(retry_email, retry.get("email_source") or "retry web search", "found")
+                if r:
+                    return r
+        except Exception as e:
+            logger.warning(f"[ContactFinder] retry ladder failed: {e}")
+
+    # Step 4: verified pattern inference — guesses must prove a mailbox exists
+    observed = site.get("all", []) + [e for e in (ai_email, retry_email) if e]
+    for p in _pattern_candidates(contact_name, domain, observed):
+        if p in (ai_email, retry_email) or p in site.get("all", []):
+            continue
+        r = _passes(p, "inferred from name pattern", "pattern")
+        if r:
+            return r
+
+    if not verifier_on:
+        return {"email": "", "source": "", "verification": "no published email found (verifier not configured, patterns skipped)"}
     return {"email": "", "source": "",
-            "verification": f"no candidate passed mailbox verification ({checked} checked)"}
+            "verification": f"no candidate passed mailbox verification ({checked[0]} checked)"}
 
 
 def is_generic_address(email: str) -> bool:

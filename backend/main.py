@@ -710,10 +710,12 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # mailbox verification gating every candidate. Blank if nothing passes.
     try:
         from services.contact_finder import resolve_contact_email
-        res = resolve_contact_email(website or company_data.get("website", ""),
-                                    founder_info.get("contact_name") or company_data.get("contact_name", ""),
+        _site = website or company_data.get("website", "")
+        _cname = founder_info.get("contact_name") or company_data.get("contact_name", "")
+        res = resolve_contact_email(_site, _cname,
                                     founder_info.get("contact_email", ""),
-                                    founder_info.get("email_source", ""))
+                                    founder_info.get("email_source", ""),
+                                    retry_fn=lambda: enrichment_agent.retry_email_search(company_name, _site, _cname))
         founder_info["contact_email"] = res["email"]
         founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
     except Exception as e:
@@ -1129,13 +1131,15 @@ async def smartenrich_company(company_name: str):
         actions.append("test row: contact pinned, verification skipped")
     else:
         founder_info = enrichment_agent.enrich_founder_details(company_name)
-        # Full contact waterfall (site scrape → AI result → verified patterns)
+        # Full contact waterfall (web personal → site → retry → verified patterns)
         try:
             from services.contact_finder import resolve_contact_email
-            res = resolve_contact_email(company.get("website", ""),
-                                        founder_info.get("contact_name") or company.get("contact_name", ""),
+            _cname = founder_info.get("contact_name") or company.get("contact_name", "")
+            res = resolve_contact_email(company.get("website", ""), _cname,
                                         founder_info.get("contact_email", ""),
-                                        founder_info.get("email_source", ""))
+                                        founder_info.get("email_source", ""),
+                                        retry_fn=lambda: enrichment_agent.retry_email_search(
+                                            company_name, company.get("website", ""), _cname))
             founder_info["contact_email"] = res["email"]
             founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
         except Exception as e:

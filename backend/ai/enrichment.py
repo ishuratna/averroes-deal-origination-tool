@@ -97,17 +97,26 @@ class EnrichmentAgent:
                 "linkedin_url": result.get("linkedin_url", ""),
                 "description": result.get("description", ""),
             }
-            # Retry ladder: first pass found no email — run ONE sharper search
-            # (domain-string, GitHub commits, speaker pages, press footers).
-            if not out["contact_email"]:
-                retry = self._retry_email_search(client, company_name, out.get("website", ""), out.get("contact_name", ""))
-                if retry.get("contact_email"):
-                    out["contact_email"] = retry["contact_email"]
-                    out["email_source"] = retry.get("email_source", "retry search")
+            # NOTE: the retry ladder is NOT run here — the contact waterfall
+            # (services/contact_finder.resolve_contact_email) invokes it at the
+            # right point in the priority order: web personal → site → retry → patterns.
             return out
         except Exception as e:
             logger.error(f"Enrichment search failed for {company_name}: {e}")
             return {"contact_name": "", "contact_email": "", "linkedin_url": "", "website": "", "description": ""}
+
+    def retry_email_search(self, company_name: str, website: str, contact_name: str) -> dict:
+        """Public entry for the retry ladder — creates its own client."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return {}
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            return self._retry_email_search(client, company_name, website, contact_name)
+        except Exception as e:
+            logger.warning(f"[Enrichment] retry entry failed for {company_name}: {e}")
+            return {}
 
     def _retry_email_search(self, client, company_name: str, website: str, contact_name: str) -> dict:
         """
