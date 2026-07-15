@@ -498,8 +498,10 @@ def _migrate_band_rules():
 # fresh, fully-verified pass on the next deploy automatically.
 
 def _contacts_marker() -> str:
+    # v3: new waterfall order (web → site → retry → patterns) with verification
+    # only for guesswork. Bumping this version re-runs the retro pass.
     verified = bool(os.getenv("HUNTER_API_KEY", "") or os.getenv("EMAIL_VERIFIER_API_KEY", ""))
-    return f"contacts-v2-{'verified' if verified else 'scrape-only'}"
+    return f"contacts-v3-{'verified' if verified else 'scrape-only'}"
 
 
 def _retro_resolve_contacts(force: bool = False) -> dict:
