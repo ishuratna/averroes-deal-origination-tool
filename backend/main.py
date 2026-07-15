@@ -1467,6 +1467,37 @@ async def smartenrich_company(company_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
 
+    # ── 5. Draft refresh: enriched data may change what the email should say
+    # (new contact, fresh financials, better description). Regenerate the
+    # draft with the updated picture — but NEVER touch anything already sent,
+    # and never persist the emergency fallback template over a real draft.
+    if not company.get("outreach_sent_at"):
+        try:
+            draft_input = dict(company)
+            for k in ("contact_name", "contact_email", "linkedin_url"):
+                if founder_info.get(k):
+                    draft_input[k] = founder_info[k]
+            hook = _stored_news_signal(draft_input)
+            draft = draft_outreach_email(draft_input, news_hook=hook)
+            if not draft.get("is_fallback") and draft.get("body"):
+                if company.get("source") == "Internal Test":
+                    draft["to"] = TEST_RECIPIENT
+                elif founder_info.get("contact_email"):
+                    draft["to"] = founder_info["contact_email"]
+                bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
+                        outreach_draft_subject = @s, outreach_draft_body = @b,
+                        outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                        WHERE name = @name AND outreach_sent_at IS NULL""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("s", "STRING", draft.get("subject") or ""),
+                        bq_lib.ScalarQueryParameter("b", "STRING", draft.get("body") or ""),
+                        bq_lib.ScalarQueryParameter("t", "STRING", draft.get("to") or ""),
+                        bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+                    ])).result()
+                actions.append("outreach draft refreshed with enriched data")
+        except Exception as e:
+            logger.warning(f"[SmartEnrich] draft refresh failed for {company_name} (non-fatal): {e}")
+
     bq_handler.log_smartfill(company_name, kind="smartenrich")
     return {"status": "Success", "company": company_name, "actions": actions}
 
