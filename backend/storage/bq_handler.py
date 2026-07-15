@@ -107,6 +107,15 @@ class BigQueryHandler:
         ("ch_charges_summary", "STRING"),
         ("ch_last_share_allotment", "STRING"),
         ("ch_accounts_next_due", "STRING"),
+        # CH v4: distress flags, filing intelligence, cap table, watch job
+        ("ch_accounts_overdue", "BOOL"),
+        ("ch_insolvency_summary", "STRING"),
+        ("ch_last_resolution", "STRING"),
+        ("ch_accounts_regime", "STRING"),
+        ("ch_cap_table", "STRING"),
+        ("ch_cap_table_date", "STRING"),
+        ("ch_founder_pct", "FLOAT64"),
+        ("ch_watched_at", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)

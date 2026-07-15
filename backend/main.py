@@ -4,7 +4,7 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Query, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile, Request
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
@@ -630,6 +630,80 @@ def _retro_qualified_blank():
         logger.error(f"[Migration] qualified-blank pass failed: {e}")
 
 
+# ── CH Watch: streaming-aligned catch-up over pipeline companies ─────────────
+# Cloud Scheduler hits this every 2 days with the shared token. For every
+# company in an active stage with a CH number, new filings since the last
+# check are classified into signals; accounts filings trigger a re-parse via
+# the existing SmartEnrich logic on the next manual run (flagged in activity).
+
+WATCH_STAGES = {"Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer"}
+
+
+@app.post("/ch-watch/run")
+async def ch_watch_run(request: Request):
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid watch token.")
+    from services.companies_house_service import get_filings_since, get_company_health
+    from google.cloud import bigquery as bq_lib
+    from datetime import datetime, timedelta, timezone
+
+    default_since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    alerts, watched = [], 0
+    for c in bq_handler.get_universe():
+        if c.get("status") not in WATCH_STAGES or not c.get("ch_company_number"):
+            continue
+        if c.get("source") == "Internal Test":
+            continue
+        watched += 1
+        if watched > 200:
+            break
+        since = (c.get("ch_watched_at") or default_since)[:10]
+        try:
+            filings = get_filings_since(c["ch_company_number"], since)
+            notes = []
+            for f in filings:
+                cat, desc = f.get("category", ""), f.get("description", "")
+                if cat == "accounts":
+                    notes.append(f"NEW ACCOUNTS filed {f['date']} — run SmartEnrich to pull fresh financials")
+                elif cat == "capital" or "allotment" in desc:
+                    notes.append(f"CAPITAL EVENT {f['date']}: {desc} — someone may be investing; check SH01")
+                elif cat in ("insolvency", "gazette") or "strike" in desc or "dissolution" in desc:
+                    notes.append(f"RED FLAG {f['date']}: {desc}")
+                elif cat in ("resolution", "constitution") or "articles" in desc:
+                    notes.append(f"RESOLUTION/ARTICLES {f['date']}: {desc} — possible funding round closing")
+                elif cat == "officers":
+                    notes.append(f"Officer change {f['date']}: {desc}")
+            if notes:
+                for n in notes[:4]:
+                    bq_handler.add_activity_note(c["name"], f"CH Watch: {n}", "ch-watch")
+                alerts.append(f"{c['name']}: {len(notes)} new filing(s)")
+                # Red-flag companies also refresh their distress fields
+                if any(n.startswith("RED FLAG") for n in notes):
+                    health = get_company_health(c["ch_company_number"])
+                    bq_handler.client.query(
+                        f"""UPDATE `{bq_handler.table_id}` SET ch_insolvency_summary = @s,
+                            ch_accounts_overdue = @o WHERE name = @name""",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("s", "STRING", health["ch_insolvency_summary"]),
+                            bq_lib.ScalarQueryParameter("o", "BOOL", health["ch_accounts_overdue"]),
+                            bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                        ])).result()
+            bq_handler.client.query(
+                f"""UPDATE `{bq_handler.table_id}` SET ch_watched_at = @d WHERE name = @name""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("d", "STRING", today),
+                    bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                ])).result()
+        except Exception as e:
+            logger.warning(f"[CH Watch] failed for {c.get('name')}: {e}")
+
+    logger.info(f"[CH Watch] {watched} companies checked, {len(alerts)} with new filings")
+    return {"status": "Success", "watched": watched, "alerts": alerts}
+
+
 @app.post("/contacts/reverify")
 async def contacts_reverify():
     """Manually re-run the retroactive contact waterfall (e.g. after adding a verifier key)."""
@@ -902,6 +976,13 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             ch_charges_summary = @ch_charges_summary,
             ch_last_share_allotment = @ch_last_share_allotment,
             ch_accounts_next_due = @ch_accounts_next_due,
+            ch_accounts_overdue = @ch_accounts_overdue,
+            ch_insolvency_summary = @ch_insolvency_summary,
+            ch_last_resolution = @ch_last_resolution,
+            ch_accounts_regime = @ch_accounts_regime,
+            ch_cap_table = CASE WHEN @ch_cap_table != '' THEN @ch_cap_table ELSE ch_cap_table END,
+            ch_cap_table_date = CASE WHEN @ch_cap_table_date != '' THEN @ch_cap_table_date ELSE ch_cap_table_date END,
+            ch_founder_pct = IFNULL(@ch_founder_pct, ch_founder_pct),
             averroes_fit_score = @averroes_fit_score,
             score_employee_growth = @score_employee_growth,
             score_revenue_growth = @score_revenue_growth,
@@ -953,6 +1034,13 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             bq_lib.ScalarQueryParameter("ch_charges_summary", "STRING", ch_data.get("ch_charges_summary") or ""),
             bq_lib.ScalarQueryParameter("ch_last_share_allotment", "STRING", ch_data.get("ch_last_share_allotment") or ""),
             bq_lib.ScalarQueryParameter("ch_accounts_next_due", "STRING", ch_data.get("ch_accounts_next_due") or ""),
+            bq_lib.ScalarQueryParameter("ch_accounts_overdue", "BOOL", bool(ch_data.get("ch_accounts_overdue"))),
+            bq_lib.ScalarQueryParameter("ch_insolvency_summary", "STRING", ch_data.get("ch_insolvency_summary") or ""),
+            bq_lib.ScalarQueryParameter("ch_last_resolution", "STRING", ch_data.get("ch_last_resolution") or ""),
+            bq_lib.ScalarQueryParameter("ch_accounts_regime", "STRING", ch_data.get("ch_accounts_regime") or ""),
+            bq_lib.ScalarQueryParameter("ch_cap_table", "STRING", ch_data.get("ch_cap_table") or ""),
+            bq_lib.ScalarQueryParameter("ch_cap_table_date", "STRING", ch_data.get("ch_cap_table_date") or ""),
+            bq_lib.ScalarQueryParameter("ch_founder_pct", "FLOAT64", ch_data.get("ch_founder_pct")),
             bq_lib.ScalarQueryParameter("averroes_fit_score", "FLOAT64", scoring_result.get("averroes_fit_score")),
             bq_lib.ScalarQueryParameter("score_employee_growth", "FLOAT64", scoring_result.get("score_employee_growth")),
             bq_lib.ScalarQueryParameter("score_revenue_growth", "FLOAT64", scoring_result.get("score_revenue_growth")),
@@ -1255,12 +1343,15 @@ async def smartenrich_company(company_name: str):
         # ── 2. Registry intel: always refresh (free) ──
         from services.companies_house_service import (
             get_psc_summary, get_charges_summary, get_capital_events, _get_company_profile, _get_accounts_filings,
+            get_company_health, get_filing_intel, get_cap_table,
         )
         psc = get_psc_summary(number)
         charges = get_charges_summary(number)
         capital = get_capital_events(number)
         profile = _get_company_profile(number) or {}
         next_due = (profile.get("accounts", {}) or {}).get("next_due") or ""
+        health = get_company_health(number)
+        intel = get_filing_intel(number)
         for col, val, typ in [
             ("ch_psc_summary", psc["psc_summary"], "STRING"),
             ("ch_ownership_verified", psc["ownership_verified"], "STRING"),
@@ -1268,10 +1359,29 @@ async def smartenrich_company(company_name: str):
             ("ch_charges_summary", charges["charges_summary"], "STRING"),
             ("ch_last_share_allotment", capital["last_share_allotment"], "STRING"),
             ("ch_accounts_next_due", next_due, "STRING"),
+            ("ch_accounts_overdue", health["ch_accounts_overdue"], "BOOL"),
+            ("ch_insolvency_summary", health["ch_insolvency_summary"], "STRING"),
+            ("ch_last_resolution", intel["ch_last_resolution"], "STRING"),
+            ("ch_accounts_regime", intel["ch_accounts_regime"], "STRING"),
         ]:
             set_clauses.append(f"{col} = @{col}")
             params.append(bq_lib.ScalarQueryParameter(col, typ, val))
-        actions.append("registry intel refreshed")
+        actions.append("registry intel refreshed (incl. distress + filing signals)")
+
+        # ── 2b. Cap table: parse CS01 ONLY if newer than what we hold ──
+        try:
+            cap = get_cap_table(number, company_name, stored_date=company.get("ch_cap_table_date") or "")
+            if cap:
+                for col, val, typ in [
+                    ("ch_cap_table", cap["ch_cap_table"], "STRING"),
+                    ("ch_cap_table_date", cap["ch_cap_table_date"], "STRING"),
+                    ("ch_founder_pct", cap.get("ch_founder_pct"), "FLOAT64"),
+                ]:
+                    set_clauses.append(f"{col} = @{col}")
+                    params.append(bq_lib.ScalarQueryParameter(col, typ, val))
+                actions.append("cap table extracted from CS01")
+        except Exception as e:
+            logger.warning(f"[SmartEnrich] cap table failed for {company_name} (non-fatal): {e}")
 
         # ── 3. Financials: re-parse ONLY if a newer filing exists ──
         filings = _get_accounts_filings(number, max_items=1)

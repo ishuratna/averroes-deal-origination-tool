@@ -622,6 +622,8 @@ def extract_ch_financials(
     psc = get_psc_summary(company_number)
     charges = get_charges_summary(company_number)
     capital = get_capital_events(company_number)
+    health = get_company_health(company_number)
+    filing_intel = get_filing_intel(company_number)
     registry_intel = {
         "ch_psc_summary": psc["psc_summary"],
         "ch_ownership_verified": psc["ownership_verified"],
@@ -629,7 +631,18 @@ def extract_ch_financials(
         "ch_charges_summary": charges["charges_summary"],
         "ch_last_share_allotment": capital["last_share_allotment"],
         "ch_accounts_next_due": ch_accounts_next_due,
+        "ch_accounts_overdue": health["ch_accounts_overdue"],
+        "ch_insolvency_summary": health["ch_insolvency_summary"],
+        "ch_last_resolution": filing_intel["ch_last_resolution"],
+        "ch_accounts_regime": filing_intel["ch_accounts_regime"],
     }
+    # Cap table (Document API + one ungrounded parse) — best-effort
+    try:
+        cap = get_cap_table(company_number)
+        if cap:
+            registry_intel.update(cap)
+    except Exception as e:
+        logger.warning(f"[CH] cap table failed for #{company_number} (non-fatal): {e}")
 
     # ── Step 3: Get filing history (accounts only) ──
     logger.info(f"[CH] Step 3: Fetching accounts filing history for #{company_number}...")
@@ -798,3 +811,198 @@ def extract_ch_financials(
 
     logger.info(f"[CH] Complete for '{company_name}': {len(sorted_years)} years of data extracted from actual filings")
     return result
+
+
+# ═══ v4 additions: distress flags, filing intelligence, cap table, watch ═════
+
+def get_company_health(company_number: str) -> Dict:
+    """
+    Distress & hygiene flags from the profile + insolvency endpoint (free).
+    Returns {ch_accounts_overdue: bool, ch_insolvency_summary: str}.
+    An active gazette/strike-off or insolvency case is a hard red flag.
+    """
+    out = {"ch_accounts_overdue": False, "ch_insolvency_summary": ""}
+    profile = _get_company_profile(company_number) or {}
+    accounts = profile.get("accounts", {}) or {}
+    out["ch_accounts_overdue"] = bool(accounts.get("overdue")) or bool(
+        (accounts.get("next_accounts") or {}).get("overdue"))
+
+    flags = []
+    status = (profile.get("company_status") or "").lower()
+    detail = (profile.get("company_status_detail") or "").lower()
+    if status and status != "active":
+        flags.append(f"company status: {status}")
+    if detail:
+        flags.append(detail)
+    if profile.get("has_insolvency_history"):
+        try:
+            auth = _ch_auth()
+            resp = requests.get(f"{CH_API_BASE}/company/{company_number}/insolvency",
+                                auth=auth, timeout=10)
+            if resp.status_code == 200:
+                cases = (resp.json() or {}).get("cases", [])
+                for c in cases[:3]:
+                    ctype = (c.get("type") or "insolvency").replace("-", " ")
+                    dates = c.get("dates", [])
+                    d = dates[0].get("date") if dates else ""
+                    flags.append(f"{ctype}{f' ({d})' if d else ''}")
+            else:
+                flags.append("insolvency history on record")
+        except Exception as e:
+            logger.warning(f"[CH] insolvency fetch failed for {company_number}: {e}")
+            flags.append("insolvency history on record")
+    out["ch_insolvency_summary"] = "; ".join(flags)
+    return out
+
+
+def _fetch_filing_history(company_number: str, category: str = "", items: int = 60) -> List[dict]:
+    try:
+        auth = _ch_auth()
+        params = {"items_per_page": items}
+        if category:
+            params["category"] = category
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/filing-history",
+                            auth=auth, params=params, timeout=10)
+        if resp.status_code != 200:
+            return []
+        return (resp.json() or {}).get("items", [])
+    except Exception as e:
+        logger.warning(f"[CH] filing history fetch failed for {company_number}: {e}")
+        return []
+
+
+_REGIME_KEYWORDS = [
+    ("micro-entity", "micro-entity"), ("micro entity", "micro-entity"),
+    ("total exemption full", "small (total exemption)"),
+    ("total exemption small", "small (total exemption)"),
+    ("abridged", "abridged"), ("dormant", "dormant"),
+    ("small", "small"), ("medium", "medium"), ("group", "full (group)"), ("full", "full"),
+]
+
+
+def _accounts_regime(description: str) -> str:
+    d = (description or "").lower()
+    for kw, label in _REGIME_KEYWORDS:
+        if kw in d:
+            return label
+    return ""
+
+
+def get_filing_intel(company_number: str) -> Dict:
+    """
+    Filing-history intelligence (free metadata, no documents):
+      ch_last_resolution   — most recent resolution/articles filing (funding-round radar)
+      ch_accounts_regime   — accounts regime trajectory, e.g. "micro-entity -> small
+                             (2024): crossed a size threshold" — a growth signal
+                             companies never disclose directly.
+    """
+    out = {"ch_last_resolution": "", "ch_accounts_regime": ""}
+
+    res_items = _fetch_filing_history(company_number, category="resolution", items=5)
+    if not res_items:
+        # new articles arrive under 'incorporation'/'constitution' categories on some records
+        res_items = [i for i in _fetch_filing_history(company_number, items=40)
+                     if (i.get("category") in ("resolution", "constitution"))
+                     or "articles" in (i.get("description") or "")]
+    if res_items:
+        top = res_items[0]
+        desc = (top.get("description") or "resolution").replace("-", " ")
+        out["ch_last_resolution"] = f"{top.get('date', '')}: {desc}"[:180]
+
+    acc_items = [i for i in _fetch_filing_history(company_number, category="accounts", items=12)]
+    regimes = []  # oldest → newest (history is newest-first)
+    for item in reversed(acc_items):
+        label = _accounts_regime(item.get("description", ""))
+        year = (item.get("date") or "")[:4]
+        if label:
+            if not regimes or regimes[-1][0] != label:
+                regimes.append((label, year))
+    if regimes:
+        traj = " -> ".join(f"{l} ({y})" for l, y in regimes[-3:])
+        out["ch_accounts_regime"] = traj
+        if len(regimes) >= 2:
+            order = ["dormant", "micro-entity", "small (total exemption)", "abridged", "small", "medium", "full", "full (group)"]
+            try:
+                if order.index(regimes[-1][0]) > order.index(regimes[-2][0]):
+                    out["ch_accounts_regime"] += " — crossed a size threshold (growth signal)"
+            except ValueError:
+                pass
+    return out
+
+
+def get_cap_table(company_number: str, company_name: str = "", stored_date: str = "") -> Dict:
+    """
+    Cap table from the latest shareholder-bearing confirmation statement (CS01).
+    Document API PDF -> Gemini parse (ungrounded). Returns
+    {ch_cap_table: json-string, ch_cap_table_date, ch_founder_pct} or {}.
+    """
+    items = _fetch_filing_history(company_number, category="confirmation-statement", items=8)
+    target = next((i for i in items if "with-updates" in (i.get("type") or "")
+                   or "with updates" in (i.get("description") or "")), None) or (items[0] if items else None)
+    if not target:
+        return {}
+    if stored_date and (target.get("date") or "") <= stored_date:
+        return {}  # nothing newer than what we already parsed
+    pdf = _download_accounts_pdf(target)  # generic document downloader
+    if not pdf:
+        return {}
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        return {}
+    try:
+        from google import genai
+        from google.genai.types import Part
+        client = genai.Client(api_key=api_key)
+        prompt = """This is a UK Companies House confirmation statement (CS01) PDF. Extract the
+shareholder information if present.
+
+Return ONLY valid JSON:
+{"has_shareholders": true/false,
+ "statement_date": "YYYY-MM-DD",
+ "total_shares": number or null,
+ "shareholders": [{"name": "...", "shares": number, "share_class": "...", "pct": number}],
+ "notes": "one line, e.g. share class nuances"}
+
+Rules: only what is IN the document, never invent. pct = shares / total of that class
+(or overall total if single class), rounded to 1 decimal. If the statement contains
+no shareholder details, has_shareholders = false."""
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[Part.from_bytes(data=pdf, mime_type="application/pdf"), prompt])
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        start, end = text.find("{"), text.rfind("}")
+        data = json.loads(text[start:end + 1])
+        if not data.get("has_shareholders"):
+            return {}
+        holders = sorted(data.get("shareholders", []), key=lambda h: -(h.get("pct") or 0))[:15]
+        founder_pct = None
+        # Largest individual (non-corporate-looking) holder as founder proxy
+        for h in holders:
+            n = (h.get("name") or "").lower()
+            if not any(t in n for t in ("ltd", "limited", "llp", "lp", "fund", "capital",
+                                        "ventures", "partners", "holdings", "nominees", "trust")):
+                founder_pct = h.get("pct")
+                break
+        return {
+            "ch_cap_table": json.dumps({"date": data.get("statement_date") or target.get("date", ""),
+                                        "total_shares": data.get("total_shares"),
+                                        "shareholders": holders,
+                                        "notes": data.get("notes", "")}),
+            "ch_cap_table_date": data.get("statement_date") or target.get("date", ""),
+            "ch_founder_pct": founder_pct,
+        }
+    except Exception as e:
+        logger.warning(f"[CH] cap table parse failed for {company_number}: {e}")
+        return {}
+
+
+def get_filings_since(company_number: str, since_date: str) -> List[dict]:
+    """Filing items strictly newer than since_date (YYYY-MM-DD) — for the watch job."""
+    out = []
+    for item in _fetch_filing_history(company_number, items=25):
+        if (item.get("date") or "") > since_date:
+            out.append({"date": item.get("date", ""), "category": item.get("category", ""),
+                        "type": item.get("type", ""), "description": (item.get("description") or "").replace("-", " ")})
+    return out

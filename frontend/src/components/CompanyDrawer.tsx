@@ -203,6 +203,20 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.ch_charges_summary && <DetailRow label="Secured Debt" value={company.ch_charges_summary} />}
                     {company.ch_last_share_allotment && <DetailRow label="Last Share Issue" value={company.ch_last_share_allotment} />}
                     {company.ch_accounts_next_due && <DetailRow label="Next Accounts Due" value={company.ch_accounts_next_due} />}
+                    {company.ch_last_resolution && <DetailRow label="Last Resolution" value={company.ch_last_resolution} />}
+                    {company.ch_accounts_regime && <DetailRow label="Accounts Regime" value={company.ch_accounts_regime} highlight={company.ch_accounts_regime.includes('growth signal')} />}
+                    {company.ch_accounts_overdue && (
+                      <div className="detail-row">
+                        <span className="detail-label">Accounts</span>
+                        <span className="detail-value" style={{ color: '#dc2626', fontWeight: 700 }}>OVERDUE</span>
+                      </div>
+                    )}
+                    {company.ch_insolvency_summary && (
+                      <div className="detail-row">
+                        <span className="detail-label">Distress</span>
+                        <span className="detail-value" style={{ color: '#dc2626', fontWeight: 700 }}>{company.ch_insolvency_summary}</span>
+                      </div>
+                    )}
                     {company.ch_pdf_path ? (
                       <div className="detail-row">
                         <span className="detail-label">Filed Accounts</span>
@@ -413,6 +427,31 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                   )}
                 </>
               )}
+
+              {/* Cap Table — from the latest shareholder-bearing CS01 */}
+              {(() => {
+                if (!company.ch_cap_table) return null;
+                let cap: any = null;
+                try { cap = JSON.parse(company.ch_cap_table); } catch { return null; }
+                if (!cap?.shareholders?.length) return null;
+                return (
+                  <>
+                    <SectionHeading title="Cap Table (Companies House CS01)" />
+                    <p className="cap-meta">As at {cap.date || company.ch_cap_table_date}{company.ch_founder_pct != null ? ` · largest individual holder ~${company.ch_founder_pct}%` : ''}</p>
+                    <div className="cap-table">
+                      {cap.shareholders.map((h: any, i: number) => (
+                        <div className="cap-row" key={i}>
+                          <span className="cap-name">{h.name}</span>
+                          <span className="cap-shares">{h.shares != null ? Number(h.shares).toLocaleString() : '—'}{h.share_class ? ` ${h.share_class}` : ''}</span>
+                          <div className="cap-bar-wrap"><div className="cap-bar" style={{ width: `${Math.min(100, h.pct || 0)}%` }} /></div>
+                          <span className="cap-pct">{h.pct != null ? `${h.pct}%` : '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {cap.notes && <p className="cap-notes">{cap.notes}</p>}
+                  </>
+                );
+              })()}
 
               {/* Valuation & Enterprise Value */}
               {(company.estimated_ebitda || company.enterprise_value_m || company.valuation_estimate_m || company.last_valuation_m || company.revenue_growth_pct || company.total_patents) && (
@@ -1124,6 +1163,17 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
         .drawer-body :global(.desc-kv-row) { display: flex; gap: 0.45rem; align-items: baseline; }
         .drawer-body :global(.desc-kv-label) { font-size: 0.76rem; font-weight: 800; color: #0f172a; flex-shrink: 0; }
         .drawer-body :global(.desc-kv-value) { font-size: 0.82rem; color: #334155; line-height: 1.5; }
+
+        /* ── Cap table ── */
+        .drawer-body :global(.cap-meta) { font-size: 0.72rem; color: #94a3b8; margin: 0 0 0.5rem; }
+        .drawer-body :global(.cap-table) { display: flex; flex-direction: column; gap: 0.35rem; }
+        .drawer-body :global(.cap-row) { display: grid; grid-template-columns: 1fr 90px 80px 44px; gap: 0.6rem; align-items: center; }
+        .drawer-body :global(.cap-name) { font-size: 0.78rem; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .drawer-body :global(.cap-shares) { font-size: 0.72rem; color: #64748b; text-align: right; font-variant-numeric: tabular-nums; }
+        .drawer-body :global(.cap-bar-wrap) { height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
+        .drawer-body :global(.cap-bar) { height: 100%; background: #2563eb; border-radius: 4px; min-width: 2px; }
+        .drawer-body :global(.cap-pct) { font-size: 0.76rem; font-weight: 800; color: #0f172a; text-align: right; font-variant-numeric: tabular-nums; }
+        .drawer-body :global(.cap-notes) { font-size: 0.7rem; color: #94a3b8; margin: 0.4rem 0 0; font-style: italic; }
       `}</style>
     </>
   );

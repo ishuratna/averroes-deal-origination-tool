@@ -35,7 +35,9 @@ AUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", _DEFAULT_CLIENT_ID).strip()
 ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "averroescapital.com").strip().lower()
 ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()}
 
-EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/diag/test-loop"}
+# /ch-watch/run is exempt from Google auth but guarded by its own shared
+# token (WATCH_TOKEN) — Cloud Scheduler cannot present a user session.
+EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/diag/test-loop", "/ch-watch/run"}
 EXEMPT_PREFIXES = ("/ch-pdf/",)
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────

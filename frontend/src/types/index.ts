@@ -105,6 +105,14 @@ export interface CompanyTarget {
   ch_charges_summary?: string;
   ch_last_share_allotment?: string;
   ch_accounts_next_due?: string;
+  ch_accounts_overdue?: boolean;
+  ch_insolvency_summary?: string;
+  ch_last_resolution?: string;
+  ch_accounts_regime?: string;
+  ch_cap_table?: string;
+  ch_cap_table_date?: string;
+  ch_founder_pct?: number;
+  ch_watched_at?: string;
   last_smartfill_at?: string;
   unfit_reason?: string;
   outreach_draft_subject?: string;
