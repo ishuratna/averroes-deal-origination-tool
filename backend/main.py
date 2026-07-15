@@ -652,7 +652,7 @@ def _ch_watch_sweep(limit: int = 80):
 
     default_since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    alerts, watched = [], 0
+    alerts, watched, stamped = [], 0, []
     eligible = [c for c in bq_handler.get_universe()
                 if c.get("status") in WATCH_STAGES and c.get("ch_company_number")
                 and c.get("source") != "Internal Test"]
@@ -694,14 +694,23 @@ def _ch_watch_sweep(limit: int = 80):
                             bq_lib.ScalarQueryParameter("o", "BOOL", health["ch_accounts_overdue"]),
                             bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
                         ])).result()
-            bq_handler.client.query(
-                f"""UPDATE `{bq_handler.table_id}` SET ch_watched_at = @d WHERE name = @name""",
-                job_config=bq_lib.QueryJobConfig(query_parameters=[
-                    bq_lib.ScalarQueryParameter("d", "STRING", today),
-                    bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
-                ])).result()
+            stamped.append(c["name"])
         except Exception as e:
             logger.warning(f"[CH Watch] failed for {c.get('name')}: {e}")
+
+    # ONE batched stamp for the whole run — per-company BigQuery DML is
+    # seconds each and was the reason sweeps took minutes.
+    if stamped:
+        try:
+            bq_handler.client.query(
+                f"""UPDATE `{bq_handler.table_id}` SET ch_watched_at = @d
+                    WHERE name IN UNNEST(@names)""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("d", "STRING", today),
+                    bq_lib.ArrayQueryParameter("names", "STRING", stamped),
+                ])).result()
+        except Exception as e:
+            logger.warning(f"[CH Watch] batch stamp failed: {e}")
 
     logger.info(f"[CH Watch] {watched} companies checked, {len(alerts)} with new filings"
                 + (f": {'; '.join(alerts[:10])}" if alerts else ""))
