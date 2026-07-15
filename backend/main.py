@@ -752,7 +752,7 @@ async def enrich_oneoff_run(request: Request, limit: int = Query(12, description
     def _target(c):
         if c.get("source") == "Internal Test":
             return False
-        if (c.get("last_smartfill_at") or "")[:10] >= today:
+        if str(c.get("last_smartfill_at") or "")[:10] >= today:
             return False  # already refreshed today
         if c.get("status") in ("Engaged", "Contacted"):
             return True
