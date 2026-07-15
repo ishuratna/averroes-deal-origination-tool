@@ -881,7 +881,7 @@ _REGIME_KEYWORDS = [
 
 
 def _accounts_regime(description: str) -> str:
-    d = (description or "").lower()
+    d = (description or "").lower().replace("-", " ")
     for kw, label in _REGIME_KEYWORDS:
         if kw in d:
             return label
