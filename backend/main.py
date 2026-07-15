@@ -560,6 +560,76 @@ def _retro_resolve_contacts(force: bool = False) -> dict:
         return {"status": "error", "detail": str(e)}
 
 
+def _retro_qualified_blank():
+    """
+    ONE-OFF: full waterfall (INCLUDING the AI retry ladder) for Qualified
+    companies whose contact email is blank — exactly the rows blocking
+    outreach. The retry ladder is budget-metered per call (weight 1, logged),
+    and the run is capped, so the day's grounding budget cannot be drained.
+    Also fills the To of an existing unsent draft so Review & Send is complete.
+    """
+    from google.cloud import bigquery as bq_lib
+    from services.contact_finder import resolve_contact_email
+    marker = "contacts-v3-qualified-blank-oneoff"
+    try:
+        rows = list(bq_handler.client.query(
+            f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                WHERE action_type = 'migration' AND note_text = '{marker}'""").result())
+        if rows and int(rows[0].n) > 0:
+            return
+        logger.info(f"[Migration] {marker}: waterfall for Qualified companies with blank emails...")
+
+        def make_retry(comp):
+            def _r():
+                try:
+                    if bq_handler.grounded_calls_used_today() + 1 > DAILY_GROUNDING_BUDGET:
+                        return {}
+                    bq_handler.log_smartfill(comp.get("name", ""), kind="newslookup")
+                except Exception:
+                    pass
+                return enrichment_agent.retry_email_search(
+                    comp.get("name", ""), comp.get("website", ""), comp.get("contact_name", ""))
+            return _r
+
+        found, blank, processed = [], 0, 0
+        for c in bq_handler.get_universe():
+            if c.get("status") != "Qualified" or c.get("source") == "Internal Test":
+                continue
+            if (c.get("contact_email") or "").strip():
+                continue
+            processed += 1
+            if processed > 150:
+                break
+            try:
+                res = resolve_contact_email(c.get("website", ""), c.get("contact_name", ""),
+                                            "", "", retry_fn=make_retry(c))
+                if not res["email"]:
+                    blank += 1
+                    continue
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET
+                        contact_email = @em,
+                        outreach_draft_to = CASE WHEN outreach_sent_at IS NULL
+                            AND IFNULL(outreach_draft_to, '') = '' THEN @em ELSE outreach_draft_to END
+                        WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("em", "STRING", res["email"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                    ])).result()
+                found.append(c["name"])
+                bq_handler.add_activity_note(
+                    c["name"],
+                    f"Contact email found by one-off waterfall: {res['email']} ({res['source']}; {res['verification']})",
+                    "contact-finder")
+            except Exception as e:
+                logger.warning(f"[Migration] qualified-blank waterfall failed for {c.get('name')}: {e}")
+
+        bq_handler._log_activity("__system__", "migration", "system", note_text=marker)
+        logger.info(f"[Migration] {marker} done: {processed} processed, {len(found)} found, {blank} still blank")
+    except Exception as e:
+        logger.error(f"[Migration] qualified-blank pass failed: {e}")
+
+
 @app.post("/contacts/reverify")
 async def contacts_reverify():
     """Manually re-run the retroactive contact waterfall (e.g. after adding a verifier key)."""
@@ -573,6 +643,7 @@ async def _run_migrations():
     def _sequence():
         _migrate_band_rules()
         _retro_resolve_contacts()
+        _retro_qualified_blank()
 
     threading.Thread(target=_sequence, daemon=True).start()
 
