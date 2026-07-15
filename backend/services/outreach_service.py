@@ -255,30 +255,38 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
         # No Google Search - just Gemini with the data we already have.
         # Higher temperature for structural variety between drafts.
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=GenerateContentConfig(temperature=1.0),
-        )
-
-        text = response.text
-        if not text:
-            logger.warning(f"Gemini returned empty response for outreach to {name}")
-            return _fallback_template(company_data)
-
-        text = text.strip()
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        result = json.loads(text)
-        return {
-            "subject": result.get("subject", f"Averroes Capital, {name}"),
-            "body": result.get("body", ""),
-            "to": contact_email or "",
-            "contact_name": contact_name or "",
-            "company": name,
-        }
+        # Two attempts: transient errors (rate limits, empty responses) were
+        # silently producing fallback-template drafts that read short and vague.
+        import time as _time
+        last_err = None
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=GenerateContentConfig(temperature=1.0),
+                )
+                text = (response.text or "").strip()
+                if not text:
+                    raise ValueError("empty response")
+                if text.startswith("```"):
+                    text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+                result = json.loads(text)
+                if not result.get("body"):
+                    raise ValueError("no body in response")
+                return {
+                    "subject": result.get("subject", f"Averroes Capital, {name}"),
+                    "body": result.get("body", ""),
+                    "to": contact_email or "",
+                    "contact_name": contact_name or "",
+                    "company": name,
+                }
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Outreach draft attempt {attempt + 1} failed for {name}: {e}")
+                _time.sleep(2)
+        logger.error(f"Outreach draft generation failed for {name} after retries: {last_err}")
+        return _fallback_template(company_data)
     except Exception as e:
         logger.error(f"Outreach draft generation failed for {name}: {e}")
         return _fallback_template(company_data)
@@ -466,4 +474,7 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         "to": contact_email or "",
         "contact_name": contact_name or "",
         "company": name,
+        # Marks this as the emergency template: callers must NOT persist it as
+        # a saved draft — the user should get a real generation on next click.
+        "is_fallback": True,
     }

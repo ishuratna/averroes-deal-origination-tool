@@ -1110,6 +1110,10 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 draft_input["score_details"] = scoring_result["score_details"]
             hook = _stored_news_signal(draft_input)
             draft = draft_outreach_email(draft_input, news_hook=hook)
+            if draft.get("is_fallback"):
+                # Never persist the emergency template — leave the button as
+                # "Outreach" so a real generation happens on click.
+                raise RuntimeError("draft generation fell back to template; skipping auto-draft persist")
             if company_data.get("source") == "Internal Test":
                 draft["to"] = TEST_RECIPIENT
             bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
@@ -1635,7 +1639,13 @@ async def draft_outreach(company_name: str):
     if is_test_company:
         result["to"] = TEST_RECIPIENT
 
-    # Persist the draft so the UI can offer Review & Send without regenerating
+    # Persist the draft so the UI can offer Review & Send without regenerating.
+    # The emergency fallback template is NEVER persisted — the user sees it in
+    # the modal (flagged) but the next open regenerates properly.
+    if result.get("is_fallback"):
+        result["news_hook"] = news_hook
+        result["news_hook_source"] = hook_source
+        return result
     try:
         from google.cloud import bigquery as bq_lib
         q = f"""UPDATE `{bq_handler.table_id}` SET
