@@ -734,6 +734,47 @@ async def ch_watch_run(request: Request):
     return result or {"status": "Success"}
 
 
+# ── One-off enrich sweep: Engaged/Responded companies + Qualified-without-email
+# Runs the FULL current SmartEnrich (registry + distress + filing intel + cap
+# table v2 + contact waterfall + draft refresh) over the target set, a batch
+# per call. Companies enriched today are excluded, so repeated calls walk the
+# queue to zero. Budget and caps enforced per company by SmartEnrich itself.
+
+@app.post("/enrich-oneoff/run")
+async def enrich_oneoff_run(request: Request, limit: int = Query(12, description="Companies per call")):
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _target(c):
+        if c.get("source") == "Internal Test":
+            return False
+        if (c.get("last_smartfill_at") or "")[:10] >= today:
+            return False  # already refreshed today
+        if c.get("status") in ("Engaged", "Contacted"):
+            return True
+        return c.get("status") == "Qualified" and not (c.get("contact_email") or "").strip()
+
+    eligible = [c["name"] for c in bq_handler.get_universe() if _target(c)]
+    processed, failed = [], []
+    for name in eligible[:max(1, min(limit, 20))]:
+        try:
+            await smartenrich_company(name)
+            processed.append(name)
+        except HTTPException as e:
+            if e.status_code == 429:
+                return {"status": "Paused", "detail": str(e.detail), "processed": processed,
+                        "failed": failed, "remaining": len(eligible) - len(processed)}
+            failed.append(f"{name}: {e.detail}")
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+    return {"status": "Success", "processed": processed, "failed": failed,
+            "remaining": max(0, len(eligible) - len(processed) - len(failed))}
+
+
 @app.post("/contacts/reverify")
 async def contacts_reverify():
     """Manually re-run the retroactive contact waterfall (e.g. after adding a verifier key)."""
