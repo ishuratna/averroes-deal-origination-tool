@@ -415,7 +415,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
               )}
 
               {/* Valuation & Enterprise Value */}
-              {(company.estimated_ebitda || company.enterprise_value_m || company.valuation_estimate_m || company.last_valuation_m || company.revenue_growth_pct) && (
+              {(company.estimated_ebitda || company.enterprise_value_m || company.valuation_estimate_m || company.last_valuation_m || company.revenue_growth_pct || company.total_patents) && (
                 <>
                   <SectionHeading title="Valuation & Performance" />
                   <div className="detail-grid compact">
@@ -427,6 +427,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.revenue_m != null && <DetailRow label="Revenue (PB)" value={fmtM(company.revenue_m) || undefined} />}
                     {company.net_income_m != null && <DetailRow label="Net Income" value={fmtM(company.net_income_m) || undefined} />}
                     {company.revenue_growth_pct != null && <DetailRow label="Revenue Growth" value={fmtPct(company.revenue_growth_pct) || undefined} />}
+                    {company.total_patents != null && company.total_patents > 0 && <DetailRow label="Patents" value={company.total_patents.toString()} />}
                   </div>
                 </>
               )}
@@ -451,22 +452,8 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                 </>
               )}
 
-              {/* Growth & Signals */}
-              {(company.pitchbook_growth_rate || company.growth_rate_percentile || company.web_visitors || company.total_patents || company.opportunity_score || company.success_probability || company.ma_probability) && (
-                <>
-                  <SectionHeading title="Growth & Signals" />
-                  <div className="detail-grid compact">
-                    {company.pitchbook_growth_rate != null && <DetailRow label="Growth Rate" value={fmtPct(company.pitchbook_growth_rate) || undefined} />}
-                    {company.growth_rate_percentile != null && <DetailRow label="Growth Percentile" value={`${company.growth_rate_percentile}th`} />}
-                    {company.web_visitors != null && <DetailRow label="Web Visitors" value={fmtNum(company.web_visitors) || undefined} />}
-                    {company.total_patents != null && <DetailRow label="Patents" value={company.total_patents.toString()} />}
-                    {company.opportunity_score != null && <DetailRow label="Opportunity Score" value={company.opportunity_score.toString()} />}
-                    {company.success_probability != null && <DetailRow label="Success Prob." value={`${company.success_probability}%`} />}
-                    {company.ma_probability != null && <DetailRow label="M&A Prob." value={`${company.ma_probability}%`} />}
-                    {company.predicted_exit_type && <DetailRow label="Predicted Exit" value={company.predicted_exit_type} />}
-                  </div>
-                </>
-              )}
+              {/* Growth & Signals section removed (PitchBook predictive scores —
+                  noise for our thesis). Patents kept, shown under Valuation & Performance. */}
 
               {/* Empty state */}
               {!hasChData && !company.revenue_m && !company.estimated_ebitda && !hasFunding && (
