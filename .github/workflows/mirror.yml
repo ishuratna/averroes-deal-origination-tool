@@ -1,0 +1,30 @@
+# Mirrors every push to the personal backup repository (ishuratna/…).
+# Requires two Actions secrets on THIS repo: MIRROR_REPO and MIRROR_TOKEN.
+# Silent no-op until both exist.
+name: Mirror to personal backup
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["*"]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to mirror
+        env:
+          MIRROR_REPO: ${{ secrets.MIRROR_REPO }}
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_REPO" ] || [ -z "$MIRROR_TOKEN" ]; then
+            echo "MIRROR_REPO / MIRROR_TOKEN not configured — skipping mirror."
+            exit 0
+          fi
+          git push --force "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" --all
+          git push --force "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" --tags
