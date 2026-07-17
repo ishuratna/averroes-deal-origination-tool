@@ -760,9 +760,8 @@ async def enrich_oneoff_run(request: Request, limit: int = Query(12, description
             return False
         if str(c.get("last_smartfill_at") or "")[:10] >= today:
             return False  # already refreshed today
-        if c.get("status") in ("Engaged", "Contacted"):
-            return True
-        return c.get("status") == "Qualified" and not (c.get("contact_email") or "").strip()
+        # Everything Qualified or later gets the full current depth
+        return c.get("status") in ("Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer", "Won")
 
     eligible = [c["name"] for c in bq_handler.get_universe() if _target(c)]
     processed, failed = [], []
@@ -1554,6 +1553,13 @@ async def smartenrich_company(company_name: str):
                 actions.append("outreach draft refreshed with enriched data")
         except Exception as e:
             logger.warning(f"[SmartEnrich] draft refresh failed for {company_name} (non-fatal): {e}")
+
+    # Audit: a timestamped summary of everything this enrich did, on the
+    # company's activity trail.
+    try:
+        bq_handler.add_activity_note(company_name, "SmartEnrich: " + " · ".join(actions), "smartenrich")
+    except Exception:
+        pass
 
     bq_handler.log_smartfill(company_name, kind="smartenrich")
     return {"status": "Success", "company": company_name, "actions": actions}
