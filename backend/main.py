@@ -1060,6 +1060,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             ch_cap_table = CASE WHEN @ch_cap_table != '' THEN @ch_cap_table ELSE ch_cap_table END,
             ch_cap_table_date = CASE WHEN @ch_cap_table_date != '' THEN @ch_cap_table_date ELSE ch_cap_table_date END,
             ch_founder_pct = IFNULL(@ch_founder_pct, ch_founder_pct),
+            ch_history = CASE WHEN @ch_history != '' THEN @ch_history ELSE ch_history END,
             averroes_fit_score = @averroes_fit_score,
             score_employee_growth = @score_employee_growth,
             score_revenue_growth = @score_revenue_growth,
@@ -1118,6 +1119,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             bq_lib.ScalarQueryParameter("ch_cap_table", "STRING", ch_data.get("ch_cap_table") or ""),
             bq_lib.ScalarQueryParameter("ch_cap_table_date", "STRING", ch_data.get("ch_cap_table_date") or ""),
             bq_lib.ScalarQueryParameter("ch_founder_pct", "FLOAT64", ch_data.get("ch_founder_pct")),
+            bq_lib.ScalarQueryParameter("ch_history", "STRING", ch_data.get("ch_history") or ""),
             bq_lib.ScalarQueryParameter("averroes_fit_score", "FLOAT64", scoring_result.get("averroes_fit_score")),
             bq_lib.ScalarQueryParameter("score_employee_growth", "FLOAT64", scoring_result.get("score_employee_growth")),
             bq_lib.ScalarQueryParameter("score_revenue_growth", "FLOAT64", scoring_result.get("score_revenue_growth")),
@@ -1469,11 +1471,14 @@ async def smartenrich_company(company_name: str):
         except Exception as e:
             logger.warning(f"[SmartEnrich] cap table failed for {company_name} (non-fatal): {e}")
 
-        # ── 3. Financials: re-parse ONLY if a newer filing exists ──
+        # ── 3. Financials: re-parse if a newer filing exists, OR once to
+        # backfill the multi-year history (ch_history) for rows parsed before
+        # the depth upgrade — the profile charts need the full series.
         filings = _get_accounts_filings(number, max_items=1)
         latest_filing_date = filings[0].get("date", "") if filings else ""
         known_date = company.get("revenue_y1_date") or ""
-        if latest_filing_date and latest_filing_date > known_date:
+        needs_history = not company.get("ch_history")
+        if latest_filing_date and (latest_filing_date > known_date or needs_history):
             ch_data = extract_ch_financials(company_name, sector=company.get("sector", ""),
                                             region=company.get("region", ""),
                                             description=company.get("description", ""),
@@ -1485,11 +1490,15 @@ async def smartenrich_company(company_name: str):
                     if ch_data.get(col) is not None:
                         set_clauses.append(f"{col} = @{col}")
                         params.append(bq_lib.ScalarQueryParameter(col, "FLOAT64", ch_data.get(col)))
-                for col in ["revenue_y1_date", "revenue_y2_date", "revenue_y3_date", "filing_type", "ch_pdf_path"]:
+                for col in ["revenue_y1_date", "revenue_y2_date", "revenue_y3_date", "filing_type", "ch_pdf_path", "ch_history"]:
                     if ch_data.get(col):
                         set_clauses.append(f"{col} = @{col}")
                         params.append(bq_lib.ScalarQueryParameter(col, "STRING", str(ch_data.get(col))))
-                actions.append(f"new accounts parsed (filed {latest_filing_date})")
+                emp = ch_data.get("employees_ch")
+                if emp is not None:
+                    set_clauses.append("employees_ch = @employees_ch")
+                    params.append(bq_lib.ScalarQueryParameter("employees_ch", "INT64", emp))
+                actions.append(f"accounts parsed ({'new filing' if latest_filing_date > known_date else 'history backfill'}, filed {latest_filing_date})")
         if not new_financials:
             actions.append("no new filing — PDF parse skipped")
 

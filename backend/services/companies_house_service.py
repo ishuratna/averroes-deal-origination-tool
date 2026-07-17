@@ -333,7 +333,8 @@ EXTRACT THE FOLLOWING (set to null if not present in the document):
 
 5. CASH — "Cash at bank and in hand", "Cash and cash equivalents"
 
-6. EMPLOYEES — "Average number of employees", "Employee information"
+6. EMPLOYEES — "Average number of employees", "Employee information". UK accounts almost
+   always show this for BOTH the current and the prior year side by side — extract both.
 
 7. FILING TYPE — Is this: "full" accounts, "small" company accounts, "micro-entity" accounts,
    "abbreviated" accounts, "medium" accounts, "filleted" accounts, or "dormant" accounts?
@@ -365,6 +366,7 @@ Return ONLY valid JSON:
     "cash_current": null or number,
     "cash_prior": null or number,
     "employees": null or integer,
+    "employees_prior": null or integer,
     "period_end_current": "YYYY-MM-DD or null",
     "period_end_prior": "YYYY-MM-DD or null",
     "filing_type": "full or small or micro-entity or abbreviated or medium or filleted or dormant",
@@ -758,6 +760,7 @@ def extract_ch_financials(
                 "net_assets": parsed.get("net_assets_current"),
                 "cash": parsed.get("cash_current"),
                 "gross_profit": parsed.get("gross_profit_current"),
+                "employees": parsed.get("employees"),
             }))
 
         # Prior year from this filing (comparative figures)
@@ -770,6 +773,7 @@ def extract_ch_financials(
                 "net_assets": parsed.get("net_assets_prior"),
                 "cash": parsed.get("cash_prior"),
                 "gross_profit": parsed.get("gross_profit_prior"),
+                "employees": parsed.get("employees_prior"),
             }))
 
     # Deduplicate by period end date (prefer the current-year extraction)
@@ -797,6 +801,20 @@ def extract_ch_financials(
     # Employees from most recent filing
     if all_financials:
         result["employees_ch"] = all_financials[0].get("employees")
+
+    # ── Full multi-year history (v5): EVERY period we parsed, not just 3.
+    # Feeds the profile's revenue chart, employee-development chart and the
+    # multi-year P&L table. Stored as JSON on the row (ch_history).
+    history = []
+    for date, data in sorted_years[:6]:
+        entry = {"period_end": date}
+        for k in ("revenue", "gross_profit", "profit", "total_assets", "net_assets", "cash", "employees"):
+            if data.get(k) is not None:
+                entry[k] = data[k]
+        if len(entry) > 1:
+            history.append(entry)
+    if history:
+        result["ch_history"] = json.dumps({"v": 1, "years": history})
 
     # Filing type from most recent
     if all_financials and all_financials[0].get("filing_type"):

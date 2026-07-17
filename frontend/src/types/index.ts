@@ -115,6 +115,7 @@ export interface CompanyTarget {
   ch_cap_table_date?: string;
   ch_founder_pct?: number;
   ch_watched_at?: string;
+  ch_history?: string;
   // Inven export fields
   revenue_cagr_3yr_pct?: number;
   employee_growth_1yr_pct?: number;

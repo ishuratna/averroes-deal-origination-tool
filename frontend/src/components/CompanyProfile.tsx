@@ -55,9 +55,27 @@ function statusColor(stage: string): string {
   return c[stage] || '#6b7280';
 }
 
+// ── Multi-year history helpers ──────────────────────────────────────────────
+export function chHistory(company: CompanyTarget): Array<any> {
+  try {
+    const h = company.ch_history ? JSON.parse(company.ch_history) : null;
+    if (h?.years?.length) return [...h.years].sort((a, b) => (a.period_end || '').localeCompare(b.period_end || ''));
+  } catch { /* fall through */ }
+  return [];
+}
+
 // ── Revenue + EBITDA grouped bar chart (pure SVG) ───────────────────────────
 function FinChart({ company }: { company: CompanyTarget }) {
   const years = useMemo(() => {
+    // Prefer the full CH history (up to 6 periods); fall back to y1-y3 columns
+    const hist = chHistory(company).filter(y => y.revenue != null);
+    if (hist.length >= 2) {
+      return hist.map((y, i) => ({
+        label: (y.period_end || '').slice(0, 10),
+        rev: y.revenue as number,
+        ebitda: (i === hist.length - 1 && company.estimated_ebitda) ? company.estimated_ebitda * 1e6 : null,
+      }));
+    }
     const ys: Array<{ label: string; rev: number | null; ebitda: number | null }> = [];
     if (company.revenue_y3) ys.push({ label: (company.revenue_y3_date || 'Y-2').slice(0, 10), rev: company.revenue_y3, ebitda: null });
     if (company.revenue_y2) ys.push({ label: (company.revenue_y2_date || 'Y-1').slice(0, 10), rev: company.revenue_y2, ebitda: null });
@@ -109,6 +127,83 @@ function FinChart({ company }: { company: CompanyTarget }) {
         })}
       </svg>
     </div>
+  );
+}
+
+// ── Employee development bar chart (CH filings, per year) ───────────────────
+function EmpChart({ company }: { company: CompanyTarget }) {
+  const years = chHistory(company).filter(y => y.employees != null);
+  if (years.length < 2) return null;
+  const max = Math.max(...years.map(y => y.employees), 1);
+  return (
+    <>
+      <div className="cp-section-title">Headcount development (Companies House filings)</div>
+      <div className="cp-card">
+        <svg viewBox={`0 0 640 150`} style={{ width: '100%', height: 'auto' }}>
+          {years.map((y, i) => {
+            const gw = 624 / years.length;
+            const cx = 8 + gw * i + gw / 2;
+            const h = (y.employees / max) * 100;
+            return (
+              <g key={i}>
+                <rect x={cx - 16} y={118 - h} width={32} height={Math.max(h, 2)} rx="3" fill="#7c3aed" />
+                <text x={cx} y={110 - h} textAnchor="middle" fontSize="10" fontWeight="700" fill="#334155">{y.employees}</text>
+                <text x={cx} y={140} textAnchor="middle" fontSize="10" fill="#94a3b8" fontWeight="600">{(y.period_end || '').slice(0, 7)}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </>
+  );
+}
+
+// ── Multi-year P&L / balance sheet table from the CH history ────────────────
+function HistoryTable({ company }: { company: CompanyTarget }) {
+  const years = chHistory(company);
+  if (years.length < 2) return null;
+  const cols = years.slice(-4); // up to 4 most recent, oldest → newest
+  const rows: Array<{ label: string; key: string; margin?: boolean }> = [
+    { label: 'Revenue', key: 'revenue' },
+    { label: 'Gross profit', key: 'gross_profit' },
+    { label: 'Profit before tax', key: 'profit' },
+    { label: 'Total assets', key: 'total_assets' },
+    { label: 'Net assets', key: 'net_assets' },
+    { label: 'Cash', key: 'cash' },
+    { label: 'Employees', key: 'employees' },
+  ];
+  const fmt = (k: string, v: any) => {
+    if (v == null) return '—';
+    if (k === 'employees') return Number(v).toLocaleString();
+    return `£${(v / 1e6).toFixed(1)}M`;
+  };
+  const present = rows.filter(r => cols.some(c => c[r.key] != null));
+  if (!present.length) return null;
+  return (
+    <>
+      <div className="cp-section-title">Multi-year financials (filed accounts)</div>
+      <div className="cp-card">
+        <table className="cp-table">
+          <thead><tr><th></th>{cols.map((c, i) => <th key={i}>{(c.period_end || '').slice(0, 10)}</th>)}</tr></thead>
+          <tbody>
+            {present.map(r => (
+              <React.Fragment key={r.key}>
+                <tr>
+                  <td>{r.label}</td>
+                  {cols.map((c, i) => <td key={i} style={r.key === 'profit' && c[r.key] < 0 ? { color: '#dc2626' } : undefined}>{fmt(r.key, c[r.key])}</td>)}
+                </tr>
+                {r.key === 'gross_profit' && cols.some(c => c.gross_profit != null && c.revenue) && (
+                  <tr className="cp-margin-row">
+                    <td>Gross margin</td>
+                    {cols.map((c, i) => <td key={i}>{(c.gross_profit != null && c.revenue) ? `${((c.gross_profit / c.revenue) * 100).toFixed(1)}%` : '—'}</td>)}
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -325,6 +420,9 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
               <div className="cp-section-title">Revenue &amp; EBITDA development</div>
               <div className="cp-card"><FinChart company={company} /></div>
+
+              <HistoryTable company={company} />
+              <EmpChart company={company} />
 
               <div className="cp-two-col">
                 <div>

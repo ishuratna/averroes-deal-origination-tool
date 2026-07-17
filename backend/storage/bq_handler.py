@@ -123,6 +123,9 @@ class BigQueryHandler:
         ("ch_cap_table_date", "STRING"),
         ("ch_founder_pct", "FLOAT64"),
         ("ch_watched_at", "STRING"),
+        # Full multi-year financial history from CH filings (JSON) — feeds the
+        # profile's revenue chart, employee chart and multi-year P&L table
+        ("ch_history", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)
