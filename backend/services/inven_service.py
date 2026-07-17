@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-USD_GBP_RATE = float(os.getenv("USD_GBP_RATE", "0.79"))
+USD_GBP_RATE = float(os.getenv("USD_GBP_RATE", "0.74"))
 
 _OWNERSHIP_LABELS = {
     "private_unknown": "Private (ownership unverified)",
