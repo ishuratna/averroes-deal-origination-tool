@@ -1927,6 +1927,27 @@ async def add_company_note(company_name: str, req: NoteRequest):
     return {"status": "Success", "company": company_name, "note": req.note}
 
 
+@app.get("/company/{company_name}/emails")
+async def get_company_emails(company_name: str, limit: int = Query(30, description="Max messages")):
+    """Email thread for one company from the email_log (newest first)."""
+    from google.cloud import bigquery as bq_lib
+    try:
+        table_id = bq_handler._ensure_email_log_table()
+        rows = bq_handler.client.query(
+            f"""SELECT direction, counterparty_email, subject, snippet, classification, summary,
+                       CAST(sent_at AS STRING) AS sent_at
+                FROM `{table_id}` WHERE entity_name = @name
+                ORDER BY sent_at DESC LIMIT {max(1, min(limit, 100))}""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+            ])).result()
+        emails = [dict(r) for r in rows]
+        return {"company": company_name, "emails": emails, "count": len(emails)}
+    except Exception as e:
+        logger.warning(f"Email thread fetch failed for {company_name}: {e}")
+        return {"company": company_name, "emails": [], "count": 0}
+
+
 @app.get("/company/{company_name}/activity")
 async def get_company_activity(company_name: str, limit: int = Query(50, description="Max entries to return")):
     """Get the full activity timeline for a company."""

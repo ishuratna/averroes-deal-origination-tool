@@ -313,6 +313,14 @@ export const dealApi = {
     return data;
   },
 
+  async getCompanyEmails(companyName: string): Promise<{ emails: any[] }> {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/emails`);
+      if (!response.ok) return { emails: [] };
+      return await response.json();
+    } catch { return { emails: [] }; }
+  },
+
   // ── Deal Intelligence Chat ──────────────────────────────────────────────
   async chat(message: string, history: Array<{ role: string; content: string }>, webSearch?: boolean): Promise<{ reply: string; needs_web_search: boolean; matched: string[] }> {
     const response = await apiFetch(`${API_BASE_URL}/chat`, {

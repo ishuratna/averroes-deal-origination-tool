@@ -74,6 +74,8 @@ export interface CompanyTarget {
   revenue_y2_date?: string;
   revenue_y3?: number;
   revenue_y3_date?: string;
+  gross_profit_y1?: number;
+  gross_profit_y2?: number;
   profit_y1?: number;
   profit_y1_date?: string;
   profit_y2?: number;

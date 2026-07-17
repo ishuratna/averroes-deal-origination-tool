@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import Link from 'next/link';
 import { CompanyTarget, getRevenueBand, displayStatus } from "../../types";
 import { dealApi } from "../../services/api";
-import CompanyDrawer from "../../components/CompanyDrawer";
+import CompanyProfile from "../../components/CompanyProfile";
 import InfoTip, { DEFS } from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
 import OutreachModal from "../../components/OutreachModal";
@@ -77,7 +77,7 @@ function UniverseInner() {
   const [outreachTarget, setOutreachTarget] = useState<any | null>(null);
 
   // Drawer
-  const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
+  const [profileIdx, setProfileIdx] = useState<number | null>(null);
 
   // Sources overlay
   const [showSources, setShowSources] = useState(false);
@@ -930,7 +930,7 @@ function UniverseInner() {
                   filteredUniverse.map((company, i) => (
                     <tr key={i} className={company.source === 'Internal Test' ? 'test-row' : ''}>
                       <td className="company-cell">
-                        <button className="company-name-btn" onClick={() => setDrawerCompany(company)}>{company.name}</button>
+                        <button className="company-name-btn" onClick={() => setProfileIdx(i)}>{company.name}</button>
                       </td>
                       <td className="score-cell">
                         {company.averroes_fit_score != null ? (
@@ -995,7 +995,7 @@ function UniverseInner() {
                       <td className="date-cell">{formatDate(company.ingested_at)}</td>
                       <td>
                         {company.description ? (
-                          <button className="desc-btn" onClick={() => setDrawerCompany(company)}>View</button>
+                          <button className="desc-btn" onClick={() => setProfileIdx(i)}>View</button>
                         ) : '—'}
                       </td>
                       <td>
@@ -1042,7 +1042,15 @@ function UniverseInner() {
       </main>
 
       {/* Company Drawer */}
-      <CompanyDrawer company={drawerCompany} onClose={() => setDrawerCompany(null)} />
+      {profileIdx != null && filteredUniverse[profileIdx] && (
+        <CompanyProfile
+          companies={filteredUniverse}
+          index={profileIdx}
+          onClose={() => setProfileIdx(null)}
+          onNavigate={setProfileIdx}
+          onChanged={loadData}
+        />
+      )}
 
       <style jsx>{`
         /* ── Layout ─────────────────────────────────────────────── */

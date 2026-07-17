@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Link from 'next/link';
 import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand } from "../types";
 import { dealApi } from "../services/api";
-import CompanyDrawer from "../components/CompanyDrawer";
+import CompanyProfile from "../components/CompanyProfile";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
@@ -120,7 +120,8 @@ function HomeInner() {
   const [savingNote, setSavingNote] = useState(false);
 
   // Company drawer
-  const [drawerCompany, setDrawerCompany] = useState<CompanyTarget | null>(null);
+  const [profileIdx, setProfileIdx] = useState<number | null>(null);
+  const openProfile = (name: string) => { const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
   const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
 
   // Saved views
@@ -527,7 +528,7 @@ function HomeInner() {
                           >
                             {/* Row 1 — identity + timing signals */}
                             <div className="kc-header">
-                              <button className="kc-name" onClick={() => setDrawerCompany(company)}>
+                              <button className="kc-name" onClick={() => openProfile(company.name)}>
                                 {company.name}
                               </button>
                               <div className="kc-header-badges">
@@ -687,7 +688,7 @@ function HomeInner() {
                       </div>
 
                       <h4>
-                        <button className="card-name-btn" onClick={() => setDrawerCompany(company)}>
+                        <button className="card-name-btn" onClick={() => openProfile(company.name)}>
                           {company.name}
                         </button>
                       </h4>
@@ -729,7 +730,7 @@ function HomeInner() {
                       <div className="card-footer">
                         <div className="footer-left">
                           <button className="note-btn" onClick={() => setNoteModal({ company: company.name })}>+ Note</button>
-                          <button className="activity-btn" onClick={() => setDrawerCompany(company)}>Details</button>
+                          <button className="activity-btn" onClick={() => openProfile(company.name)}>Details</button>
                         </div>
                         <a href={company.website} target="_blank" rel="noreferrer" className="view-link">Visit &nearr;</a>
                       </div>
@@ -746,14 +747,16 @@ function HomeInner() {
         )}
       </main>
 
-      {/* Company Drawer */}
-      <CompanyDrawer
-        company={drawerCompany}
-        onClose={() => setDrawerCompany(null)}
-        onStatusChange={async (name, status) => {
-          await handleAdvanceStage(name, status);
-        }}
-      />
+      {/* Company Profile (Inven-style full-screen) */}
+      {profileIdx != null && filteredPipeline[profileIdx] && (
+        <CompanyProfile
+          companies={filteredPipeline}
+          index={profileIdx}
+          onClose={() => setProfileIdx(null)}
+          onNavigate={setProfileIdx}
+          onChanged={loadData}
+        />
+      )}
 
       {/* Outreach Modal (shared with the Universe page) */}
       <OutreachModal company={outreachTarget} onClose={() => setOutreachTarget(null)} onSent={loadData} />
