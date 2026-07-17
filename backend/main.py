@@ -746,6 +746,7 @@ async def ch_watch_run(request: Request):
 # per call. Companies enriched today are excluded, so repeated calls walk the
 # queue to zero. Budget and caps enforced per company by SmartEnrich itself.
 
+@app.get("/enrich-oneoff/run")   # GET alias: lets token-gated batch runs be driven without POST
 @app.post("/enrich-oneoff/run")
 async def enrich_oneoff_run(request: Request, limit: int = Query(12, description="Companies per call")):
     token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
