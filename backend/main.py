@@ -1302,9 +1302,10 @@ async def smartfill_eligible():
     used_today = bq_handler.count_smartfills_today()
     remaining_today = max(0, DAILY_SMARTFILL_CAP - used_today)
     n = len(eligible)
-    # Bulk runs process at most 25 companies per press — keeps runs short
+    # Bulk runs process at most 100 companies per press (raised from 25,
+    # Jul 2026 — worst case 400 grounding weight of the 1,400 daily budget)
     # (~15 min), reviewable, and safely within one session.
-    BULK_BATCH_LIMIT = 25
+    BULK_BATCH_LIMIT = 100
     runnable = eligible[:min(BULK_BATCH_LIMIT, remaining_today)]
 
     est_n = len(runnable)
