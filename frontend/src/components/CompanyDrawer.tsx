@@ -185,6 +185,8 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                 {company.business_status && <DetailRow label="Business Status" value={company.business_status} />}
                 {company.legal_name && <DetailRow label="Legal Name" value={company.legal_name} />}
                 {company.also_known_as && <DetailRow label="Also Known As" value={company.also_known_as} />}
+                {company.company_linkedin && <DetailRow label="Company LinkedIn" value="View Page" isLink={company.company_linkedin} />}
+                {company.directors && <DetailRow label="Directors" value={company.directors} />}
               </div>
 
               {/* Companies House Registration */}
@@ -466,6 +468,10 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.revenue_m != null && <DetailRow label="Revenue (PB)" value={fmtM(company.revenue_m) || undefined} />}
                     {company.net_income_m != null && <DetailRow label="Net Income" value={fmtM(company.net_income_m) || undefined} />}
                     {company.revenue_growth_pct != null && <DetailRow label="Revenue Growth" value={fmtPct(company.revenue_growth_pct) || undefined} />}
+                    {company.revenue_cagr_3yr_pct != null && <DetailRow label="Revenue 3yr CAGR" value={fmtPct(company.revenue_cagr_3yr_pct) || undefined} highlight />}
+                    {company.ebitda_margin_pct != null && <DetailRow label="EBITDA Margin" value={fmtPct(company.ebitda_margin_pct) || undefined} />}
+                    {company.employee_growth_1yr_pct != null && <DetailRow label="Headcount Growth 1yr" value={fmtPct(company.employee_growth_1yr_pct) || undefined} />}
+                    {company.employee_growth_3yr_pct != null && <DetailRow label="Headcount 3yr CAGR" value={fmtPct(company.employee_growth_3yr_pct) || undefined} />}
                     {company.total_patents != null && company.total_patents > 0 && <DetailRow label="Patents" value={company.total_patents.toString()} />}
                   </div>
                 </>

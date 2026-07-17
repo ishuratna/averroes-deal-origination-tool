@@ -392,13 +392,19 @@ async def upload_custom_file(file: UploadFile = File(...)):
         except Exception as gcs_err:
             logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
         is_pitchbook = "pitchbook" in file.filename.lower()
+        is_inven = "inven" in file.filename.lower()
         try:
             if is_pitchbook:
                 logger.info(f"PitchBook file detected: {file.filename}")
                 targets = parse_pitchbook_excel(content)
+            elif is_inven:
+                logger.info(f"Inven file detected: {file.filename}")
+                from services.inven_service import parse_inven_csv
+                targets = parse_inven_csv(content)
             else:
                 targets = parse_proprietary_excel(content)
-            logger.info(f"Parsed {len(targets)} targets from {file.filename} ({'PitchBook' if is_pitchbook else 'Generic'})")
+            logger.info(f"Parsed {len(targets)} targets from {file.filename} "
+                        f"({'PitchBook' if is_pitchbook else 'Inven' if is_inven else 'Generic'})")
         except Exception as parse_err:
             raise HTTPException(status_code=422, detail=f"Parse failed: {str(parse_err)}")
         if not targets:

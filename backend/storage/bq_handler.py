@@ -107,6 +107,13 @@ class BigQueryHandler:
         ("ch_charges_summary", "STRING"),
         ("ch_last_share_allotment", "STRING"),
         ("ch_accounts_next_due", "STRING"),
+        # Inven export fields (local growth metrics feed the fit score)
+        ("revenue_cagr_3yr_pct", "FLOAT64"),
+        ("employee_growth_1yr_pct", "FLOAT64"),
+        ("employee_growth_3yr_pct", "FLOAT64"),
+        ("ebitda_margin_pct", "FLOAT64"),
+        ("directors", "STRING"),
+        ("company_linkedin", "STRING"),
         # CH v4: distress flags, filing intelligence, cap table, watch job
         ("ch_accounts_overdue", "BOOL"),
         ("ch_insolvency_summary", "STRING"),
@@ -629,6 +636,22 @@ class BigQueryHandler:
                 "legal_name": c.get("legal_name") or "",
                 "registration_number": c.get("registration_number") or "",
                 "financing_note": c.get("financing_note") or "",
+                # ── Filed-financial fields (CH convention, raw GBP) — used by
+                # Inven uploads which arrive with actual revenue/assets ──
+                "revenue_y1": safe_float(c.get("revenue_y1"), None),
+                "revenue_y1_date": c.get("revenue_y1_date") or "",
+                "revenue_y2": safe_float(c.get("revenue_y2"), None),
+                "revenue_y2_date": c.get("revenue_y2_date") or "",
+                "revenue_y3": safe_float(c.get("revenue_y3"), None),
+                "revenue_y3_date": c.get("revenue_y3_date") or "",
+                "total_assets_y1": safe_float(c.get("total_assets_y1"), None),
+                # ── Inven growth/identity fields ──
+                "revenue_cagr_3yr_pct": safe_float(c.get("revenue_cagr_3yr_pct"), None),
+                "employee_growth_1yr_pct": safe_float(c.get("employee_growth_1yr_pct"), None),
+                "employee_growth_3yr_pct": safe_float(c.get("employee_growth_3yr_pct"), None),
+                "ebitda_margin_pct": safe_float(c.get("ebitda_margin_pct"), None),
+                "directors": c.get("directors") or "",
+                "company_linkedin": c.get("company_linkedin") or "",
             }
             rows_to_insert.append(row)
             existing_names.add(name)
@@ -677,6 +700,13 @@ class BigQueryHandler:
                     f"@{prefix}_competitors", f"@{prefix}_also_known_as",
                     f"@{prefix}_legal_name", f"@{prefix}_registration_number",
                     f"@{prefix}_financing_note",
+                    f"@{prefix}_revenue_y1", f"@{prefix}_revenue_y1_date",
+                    f"@{prefix}_revenue_y2", f"@{prefix}_revenue_y2_date",
+                    f"@{prefix}_revenue_y3", f"@{prefix}_revenue_y3_date",
+                    f"@{prefix}_total_assets_y1",
+                    f"@{prefix}_revenue_cagr_3yr_pct", f"@{prefix}_employee_growth_1yr_pct",
+                    f"@{prefix}_employee_growth_3yr_pct", f"@{prefix}_ebitda_margin_pct",
+                    f"@{prefix}_directors", f"@{prefix}_company_linkedin",
                 ])
                 values_clauses.append(f"({placeholders})")
                 params.extend([
@@ -743,6 +773,19 @@ class BigQueryHandler:
                     bigquery.ScalarQueryParameter(f"{prefix}_legal_name", "STRING", row["legal_name"]),
                     bigquery.ScalarQueryParameter(f"{prefix}_registration_number", "STRING", row["registration_number"]),
                     bigquery.ScalarQueryParameter(f"{prefix}_financing_note", "STRING", row["financing_note"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y1", "FLOAT64", row["revenue_y1"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y1_date", "STRING", row["revenue_y1_date"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y2", "FLOAT64", row["revenue_y2"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y2_date", "STRING", row["revenue_y2_date"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y3", "FLOAT64", row["revenue_y3"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_y3_date", "STRING", row["revenue_y3_date"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_total_assets_y1", "FLOAT64", row["total_assets_y1"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_revenue_cagr_3yr_pct", "FLOAT64", row["revenue_cagr_3yr_pct"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_employee_growth_1yr_pct", "FLOAT64", row["employee_growth_1yr_pct"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_employee_growth_3yr_pct", "FLOAT64", row["employee_growth_3yr_pct"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_ebitda_margin_pct", "FLOAT64", row["ebitda_margin_pct"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_directors", "STRING", row["directors"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_company_linkedin", "STRING", row["company_linkedin"]),
                 ])
 
             insert_query = f"""
@@ -763,7 +806,12 @@ class BigQueryHandler:
                  pitchbook_growth_rate, growth_rate_percentile, web_visitors,
                  opportunity_score, success_probability, ma_probability,
                  predicted_exit_type, total_patents, competitors,
-                 also_known_as, legal_name, registration_number, financing_note)
+                 also_known_as, legal_name, registration_number, financing_note,
+                 revenue_y1, revenue_y1_date, revenue_y2, revenue_y2_date,
+                 revenue_y3, revenue_y3_date, total_assets_y1,
+                 revenue_cagr_3yr_pct, employee_growth_1yr_pct,
+                 employee_growth_3yr_pct, ebitda_margin_pct,
+                 directors, company_linkedin)
                 VALUES {', '.join(values_clauses)}
             """
             job_config = bigquery.QueryJobConfig(query_parameters=params)

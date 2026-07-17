@@ -23,6 +23,42 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _growth_pct_to_score(growth_pct: float) -> float:
+    """Shared growth-% → 0-1 score curve (used for revenue AND employee growth)."""
+    if growth_pct < -20:
+        return 0.0
+    if growth_pct < 0:
+        return round(0.1 + (growth_pct + 20) / 200, 3)
+    if growth_pct < 10:
+        return round(0.2 + (growth_pct / 10) * 0.3, 3)
+    if growth_pct < 25:
+        return round(0.5 + ((growth_pct - 10) / 15) * 0.25, 3)
+    if growth_pct < 50:
+        return round(0.75 + ((growth_pct - 25) / 25) * 0.15, 3)
+    return round(min(1.0, 0.9 + ((growth_pct - 50) / 100) * 0.1), 3)
+
+
+def _compute_employee_growth_local(company: dict) -> Optional[Dict]:
+    """
+    Employee growth from stored figures (Inven uploads) — replaces the
+    web-search judgement whenever real numbers exist. 1yr growth primary,
+    3yr CAGR fallback.
+    """
+    for key, label in (("employee_growth_1yr_pct", "1yr"), ("employee_growth_3yr_pct", "3yr CAGR")):
+        val = company.get(key)
+        try:
+            val = float(val) if val is not None else None
+        except (ValueError, TypeError):
+            val = None
+        if val is not None:
+            return {
+                "score": _growth_pct_to_score(val),
+                "value": round(val, 1),
+                "explanation": f"Headcount {label} {val:+.1f}% (LinkedIn via Inven, local data)",
+            }
+    return None
+
+
 def _compute_revenue_growth(company: dict) -> Optional[Dict]:
     """
     Compute revenue growth from CH filing data (y1 vs y2).
@@ -32,6 +68,19 @@ def _compute_revenue_growth(company: dict) -> Optional[Dict]:
     rev_y2 = company.get("revenue_y2")
 
     if rev_y1 is None or rev_y2 is None:
+        # Local fallback: a stored 3yr revenue CAGR (Inven uploads) is a real
+        # growth figure — use the same curve instead of returning nothing
+        cagr = company.get("revenue_cagr_3yr_pct")
+        try:
+            cagr = float(cagr) if cagr is not None else None
+        except (ValueError, TypeError):
+            cagr = None
+        if cagr is not None:
+            return {
+                "score": _growth_pct_to_score(cagr),
+                "value": round(cagr, 1),
+                "explanation": f"Revenue 3yr CAGR {cagr:+.1f}% (Inven, local data)",
+            }
         return None
 
     try:
@@ -365,6 +414,13 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
             if gemini_scores.get(metric) is not None:
                 scores[metric] = gemini_scores[metric]["score"]
                 details[metric] = gemini_scores[metric]
+
+    # Local data beats web judgement: stored employee-growth figures (Inven)
+    # override the search-based score whenever they exist
+    local_emp = _compute_employee_growth_local(company)
+    if local_emp:
+        scores["employee_growth"] = local_emp["score"]
+        details["employee_growth"] = local_emp
 
     # Revenue band + estimate details (informational — from whatever revenue was found)
     rev_details = details.get("revenue_size", {})

@@ -113,6 +113,13 @@ export interface CompanyTarget {
   ch_cap_table_date?: string;
   ch_founder_pct?: number;
   ch_watched_at?: string;
+  // Inven export fields
+  revenue_cagr_3yr_pct?: number;
+  employee_growth_1yr_pct?: number;
+  employee_growth_3yr_pct?: number;
+  ebitda_margin_pct?: number;
+  directors?: string;
+  company_linkedin?: string;
   last_smartfill_at?: string;
   unfit_reason?: string;
   outreach_draft_subject?: string;
