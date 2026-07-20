@@ -429,7 +429,8 @@ async def upload_custom_file(file: UploadFile = File(...)):
 
         msg = f"Uploaded {len(targets)} targets from {file.filename}."
         if preq:
-            msg += f" Pre-qualified locally (0 AI calls): {preq['qualified']} Qualified, {preq['not_a_fit']} Not a Fit. Use SmartFill on the Qualified set for contacts, CH intel and scoring."
+            msg += (f" Hard-filter triage (0 AI calls): {preq['not_a_fit']} Not a Fit, "
+                    f"{preq['passed_awaiting_smartfill']} passed and awaiting SmartFill scoring.")
         else:
             msg += " Use SmartFill to enrich."
         return {"status": "Success", "message": msg, "count": len(targets), "source": source_label, "prequalified": preq}
@@ -756,11 +757,13 @@ async def ch_watch_run(request: Request):
     return result or {"status": "Success"}
 
 
-# ── Local pre-qualification: zero-AI hard-filter triage ─────────────────────
+# ── Local pre-qualification: zero-AI hard-filter triage (REJECT-ONLY) ───────
 # Rows that arrive with complete data (geography + industry + revenue — e.g.
 # Inven uploads) don't need an AI call to run the 3 hard filters: the local
-# rule-based qualifier settles them instantly. Only rows with enough data are
-# touched; thin rows stay Uploaded/Scraped for the AI gate in SmartFill.
+# rule-based qualifier rejects clear failures instantly (Not a Fit +
+# unfit_reason). PASSERS ARE NOT MOVED — they stay Uploaded/Scraped until
+# SmartFill computes the fit score, because nothing may enter the Qualified
+# kanban unscored. Thin rows are skipped entirely.
 
 def _prequalify_local(only_names: set = None) -> dict:
     from google.cloud import bigquery as bq_lib
@@ -788,16 +791,8 @@ def _prequalify_local(only_names: set = None) -> dict:
         else:
             rejected.setdefault(verdict["reason"][:180], []).append(c["name"])
 
-    if qualified:
-        bq_handler.client.query(
-            f"""UPDATE `{bq_handler.table_id}` SET
-                status = 'Qualified',
-                stage_entered_at = CURRENT_TIMESTAMP(),
-                qualified_at = IFNULL(qualified_at, CURRENT_TIMESTAMP()),
-                unfit_reason = ''
-                WHERE name IN UNNEST(@names) AND status IN ('Uploaded', 'Scraped')""",
-            job_config=bq_lib.QueryJobConfig(query_parameters=[
-                bq_lib.ArrayQueryParameter("names", "STRING", qualified)])).result()
+    # Reject-only: passers keep their current status — SmartFill must score
+    # them before they can appear in the Qualified kanban.
     for reason, names in rejected.items():
         bq_handler.client.query(
             f"""UPDATE `{bq_handler.table_id}` SET
@@ -808,8 +803,9 @@ def _prequalify_local(only_names: set = None) -> dict:
                 bq_lib.ArrayQueryParameter("names", "STRING", names)])).result()
 
     n_rejected = sum(len(v) for v in rejected.values())
-    logger.info(f"[Prequalify] {examined} examined: {len(qualified)} qualified, {n_rejected} not a fit (zero AI calls)")
-    return {"status": "Success", "examined": examined, "qualified": len(qualified),
+    logger.info(f"[Prequalify] {examined} examined: {len(qualified)} passed (left for SmartFill), "
+                f"{n_rejected} not a fit (zero AI calls)")
+    return {"status": "Success", "examined": examined, "passed_awaiting_smartfill": len(qualified),
             "not_a_fit": n_rejected, "ai_calls": 0}
 
 
