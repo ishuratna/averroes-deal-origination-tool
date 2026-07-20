@@ -249,12 +249,13 @@ function UniverseInner() {
     bulkCancelRef.current = false;
     setBulkRunning(true);
     setBulkErrors([]);
-    let ok = 0, failed = 0;
+    let ok = 0, failed = 0, batchRetries = 0;
     const errors: string[] = [];
     while (remaining.length > 0 && !bulkCancelRef.current) {
       setBulkProgress({ done: ok + failed, total, current: remaining[0], ok, failed });
       try {
         const res = await dealApi.smartFillBatch(remaining);
+        batchRetries = 0;  // a successful round-trip resets the allowance
         for (const p of res.processed || []) {
           if (String(p.status).startsWith('FAILED')) {
             failed++;
@@ -269,10 +270,17 @@ function UniverseInner() {
           break;
         }
       } catch (e: any) {
-        // Network hiccup on a batch: the server is likely still finishing it.
-        // Wait out the full batch window so everything gets stamped, then
-        // re-send — the 10-minute idempotency guard skips completed ones.
-        console.warn('Batch request dropped, retrying after the batch window', e);
+        // A dropped connection is retryable (the 10-min idempotency guard
+        // makes re-sends safe) — but only a few times, and never silently:
+        // a missing endpoint or auth error would otherwise loop forever.
+        batchRetries++;
+        if (batchRetries > 3) {
+          errors.push(`Batch aborted after ${batchRetries - 1} retries: ${e?.message || e}`);
+          alert(`Bulk run aborted: ${e?.message || e}`);
+          break;
+        }
+        console.warn(`Batch request failed (attempt ${batchRetries}/3), waiting out the batch window`, e);
+        setBulkProgress({ done: ok + failed, total, current: `retrying (${batchRetries}/3)…`, ok, failed });
         await new Promise(r => setTimeout(r, 220000));
       }
     }
