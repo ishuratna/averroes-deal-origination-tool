@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from 'next/link';
-import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand } from "../types";
+import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand, actionBucketInfo } from "../types";
 import { dealApi } from "../services/api";
 import CompanyProfile from "../components/CompanyProfile";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
@@ -489,6 +489,12 @@ function HomeInner() {
               // (stage_entered_at, falling back to ingested_at for legacy rows).
               if (stage === 'Qualified') {
                 stageDeals.sort((a, b) => (b.averroes_fit_score ?? -1) - (a.averroes_fit_score ?? -1));
+              } else if (stage === 'Contacted') {
+                // Responded: action bucket priority first (act-now on top),
+                // then latest entry. Unbucketed rows sink below bucketed ones.
+                const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
+                const prio = (c: CompanyTarget) => actionBucketInfo(c.action_bucket)?.priority ?? 99;
+                stageDeals.sort((a, b) => prio(a) - prio(b) || entered(b) - entered(a));
               } else {
                 const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
                 stageDeals.sort((a, b) => entered(b) - entered(a));
@@ -548,6 +554,18 @@ function HomeInner() {
                               {company.sector || 'Tech'}
                               {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
                             </p>
+
+                            {/* Action bucket — what the reply means for us */}
+                            {(() => {
+                              const b = actionBucketInfo(company.action_bucket);
+                              if (!b) return null;
+                              return (
+                                <div className={`kc-bucket bucket-${b.tone}`}
+                                  title={`${company.action_rationale || ''}${company.action_follow_up_date ? ` · Follow up: ${company.action_follow_up_date}` : ''}`}>
+                                  {b.label}
+                                </div>
+                              );
+                            })()}
 
                             {/* Row 2 — assessment badges */}
                             {(getRevenueBand(company) || company.averroes_fit_score != null) && (

@@ -416,7 +416,23 @@ async def upload_custom_file(file: UploadFile = File(...)):
         success = bq_handler.save_targets(targets)
         if not success:
             raise HTTPException(status_code=500, detail="Database save failed.")
-        return {"status": "Success", "message": f"Uploaded {len(targets)} targets from {file.filename}. Use SmartFill to enrich.", "count": len(targets), "source": source_label}
+
+        # Data-rich uploads (Inven) get instant zero-AI hard-filter triage —
+        # geography, industry and revenue are already in the file.
+        # DORMANT until PREQUALIFY_ON_UPLOAD=1 (awaiting sign-off).
+        preq = None
+        if is_inven and os.getenv("PREQUALIFY_ON_UPLOAD", "0") == "1":
+            try:
+                preq = _prequalify_local(only_names={t["name"] for t in targets})
+            except Exception as e:
+                logger.warning(f"Pre-qualification after upload failed (non-fatal): {e}")
+
+        msg = f"Uploaded {len(targets)} targets from {file.filename}."
+        if preq:
+            msg += f" Pre-qualified locally (0 AI calls): {preq['qualified']} Qualified, {preq['not_a_fit']} Not a Fit. Use SmartFill on the Qualified set for contacts, CH intel and scoring."
+        else:
+            msg += " Use SmartFill to enrich."
+        return {"status": "Success", "message": msg, "count": len(targets), "source": source_label, "prequalified": preq}
     except HTTPException:
         raise
     except Exception as e:
@@ -738,6 +754,73 @@ async def ch_watch_run(request: Request):
     # Cloud Run throttles CPU after the response, so background threads stall.
     result = _ch_watch_sweep()
     return result or {"status": "Success"}
+
+
+# ── Local pre-qualification: zero-AI hard-filter triage ─────────────────────
+# Rows that arrive with complete data (geography + industry + revenue — e.g.
+# Inven uploads) don't need an AI call to run the 3 hard filters: the local
+# rule-based qualifier settles them instantly. Only rows with enough data are
+# touched; thin rows stay Uploaded/Scraped for the AI gate in SmartFill.
+
+def _prequalify_local(only_names: set = None) -> dict:
+    from google.cloud import bigquery as bq_lib
+    from ai.criteria import qualify_company
+
+    def _complete(c) -> bool:
+        has_geo = bool(c.get("hq_country") or c.get("region"))
+        has_industry = bool(c.get("sector")) or len(c.get("description") or "") > 40
+        has_revenue = bool(c.get("revenue_y1") or c.get("revenue_m"))
+        return has_geo and has_industry and has_revenue
+
+    qualified, rejected = [], {}  # rejected: reason -> [names]
+    examined = 0
+    for c in bq_handler.get_universe():
+        if c.get("status") not in ("Uploaded", "Scraped") or c.get("source") == "Internal Test":
+            continue
+        if only_names is not None and c.get("name") not in only_names:
+            continue
+        if not _complete(c):
+            continue
+        examined += 1
+        verdict = qualify_company(c)
+        if verdict["qualified"]:
+            qualified.append(c["name"])
+        else:
+            rejected.setdefault(verdict["reason"][:180], []).append(c["name"])
+
+    if qualified:
+        bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                status = 'Qualified',
+                stage_entered_at = CURRENT_TIMESTAMP(),
+                qualified_at = IFNULL(qualified_at, CURRENT_TIMESTAMP()),
+                unfit_reason = ''
+                WHERE name IN UNNEST(@names) AND status IN ('Uploaded', 'Scraped')""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ArrayQueryParameter("names", "STRING", qualified)])).result()
+    for reason, names in rejected.items():
+        bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                status = 'Not a Fit', unfit_reason = @reason
+                WHERE name IN UNNEST(@names) AND status IN ('Uploaded', 'Scraped')""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("reason", "STRING", f"Pre-qualification (local data): {reason}"),
+                bq_lib.ArrayQueryParameter("names", "STRING", names)])).result()
+
+    n_rejected = sum(len(v) for v in rejected.values())
+    logger.info(f"[Prequalify] {examined} examined: {len(qualified)} qualified, {n_rejected} not a fit (zero AI calls)")
+    return {"status": "Success", "examined": examined, "qualified": len(qualified),
+            "not_a_fit": n_rejected, "ai_calls": 0}
+
+
+@app.get("/prequalify/run")
+@app.post("/prequalify/run")
+async def prequalify_run(request: Request):
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return _prequalify_local()
 
 
 # ── One-off enrich sweep: Engaged/Responded companies + Qualified-without-email
@@ -1884,6 +1967,8 @@ def _reset_test_company(company_name: str) -> bool:
         outreach_draft_to = NULL, outreach_drafted_at = NULL,
         outreach_sent_at = NULL,
         last_reply_at = NULL, reply_classification = NULL,
+        action_bucket = NULL, action_rationale = NULL, action_follow_up_date = NULL,
+        action_set_at = NULL, action_reply_subject = NULL, action_reply_body = NULL,
         unfit_reason = NULL
         WHERE name = @name AND source = 'Internal Test'"""
     job = bq_handler.client.query(query, job_config=bq_lib.QueryJobConfig(query_parameters=[
@@ -1993,6 +2078,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     stamps last_reply_at, and auto-advances Engaged → Contacted on reply.
     """
     from services.email_sync_service import sync_mailbox, classify_reply
+    from services.reply_intel import bucket_reply
     from google.cloud import bigquery as bq_lib
 
     # Known contacts: email → entity. A company is reachable via its contact
@@ -2011,8 +2097,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             s = re.sub(r"^https?://(www\.)?", "", s).split("/")[0]
         return "" if not s or s in _FREE_MAIL else s
 
-    known, known_domains = {}, {}
+    known, known_domains, companies_by_name = {}, {}, {}
     for c in bq_handler.get_universe():
+        companies_by_name[c.get("name")] = c  # full row: feeds action bucketing
         entry = {"type": "company", "name": c.get("name"), "status": c.get("status"),
                  "is_test": c.get("source") == "Internal Test",
                  "stored_cls": c.get("reply_classification") or ""}
@@ -2100,6 +2187,40 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
 
     inserted = bq_handler.save_email_log(new_entries)
 
+    # ── Action buckets (Responded-stage intelligence) ────────────────────────
+    # One ungrounded call per reply: our company record + the email content →
+    # an action bucket, a one-sentence rationale, an optional follow-up date,
+    # and (for buckets that warrant one) a suggested response draft.
+    # Advisory only: buckets NEVER move stages.
+    bucketed, bucketed_names = [], set()
+    bucket_budget = 25
+
+    def _thread_for(name: str) -> list:
+        return sorted((e for e in entries if e.get("entity_name") == name),
+                      key=lambda x: x.get("sent_at") or "")
+
+    def _apply_bucket(ename: str, b: dict, event_time: str):
+        bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                action_bucket = @b, action_rationale = @r, action_follow_up_date = @f,
+                action_set_at = CURRENT_TIMESTAMP(),
+                action_reply_subject = @rs, action_reply_body = @rb
+                WHERE name = @name""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("b", "STRING", b["bucket"]),
+                bq_lib.ScalarQueryParameter("r", "STRING", b["rationale"]),
+                bq_lib.ScalarQueryParameter("f", "STRING", b["follow_up_date"]),
+                bq_lib.ScalarQueryParameter("rs", "STRING", b["reply_subject"]),
+                bq_lib.ScalarQueryParameter("rb", "STRING", b["reply_body"]),
+                bq_lib.ScalarQueryParameter("name", "STRING", ename),
+            ])).result()
+        note = f"Action bucket: {b['label']}" + (f" | {b['rationale']}" if b.get("rationale") else "")
+        if b.get("follow_up_date"):
+            note += f" | Follow up: {b['follow_up_date']}"
+        bq_handler._log_activity(ename, "note", "email-sync", note_text=note, event_time=event_time)
+        bucketed_names.add(ename)
+        bucketed.append(f"{ename}: {b['label']}")
+
     # Reply intelligence: stamp records, log activity, auto-advance companies
     for r in replies:
         ename, etype = r["entity_name"], r["entity_type"]
@@ -2125,6 +2246,13 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
                     bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
                     advanced.append(ename)
+                # Action bucket for this new reply (bounded per run)
+                company_row = companies_by_name.get(ename)
+                if company_row and bucket_budget > 0 and ename not in bucketed_names:
+                    bucket_budget -= 1
+                    b = bucket_reply(company_row, r["subject"], r["snippet"], thread=_thread_for(ename))
+                    if b:
+                        _apply_bucket(ename, b, r["sent_at"])
             else:
                 investor_handler.add_note(ename, note)
         except Exception as e:
@@ -2157,6 +2285,31 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
+    # Retro bucketing: companies whose replies were logged in EARLIER syncs
+    # (before buckets existed, or a call failed) and still have no bucket.
+    # Bucket the most recent reply, bounded so a big backlog spreads over a
+    # few sync runs instead of one slow one.
+    retro_budget = min(15, bucket_budget)
+    latest_reply_by_company = {}
+    for e in sorted((x for x in entries if x["direction"] == "received" and x["entity_type"] == "company"),
+                    key=lambda x: x.get("sent_at") or ""):
+        latest_reply_by_company[e["entity_name"]] = e  # ends on the newest
+    for ename, r in latest_reply_by_company.items():
+        if retro_budget <= 0:
+            break
+        comp = companies_by_name.get(ename)
+        if not comp or comp.get("action_bucket") or ename in bucketed_names:
+            continue
+        if comp.get("status") not in ("Contacted", "Meeting", "DD", "Offer", "Engaged"):
+            continue
+        retro_budget -= 1
+        try:
+            b = bucket_reply(comp, r["subject"], r["snippet"], thread=_thread_for(ename))
+            if b:
+                _apply_bucket(ename, b, r["sent_at"])
+        except Exception as e:
+            logger.warning(f"Retro bucketing failed for {ename}: {e}")
+
     return {
         "status": "Success",
         "scanned_days": days,
@@ -2167,8 +2320,10 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "replies_classified": classified,
         "auto_advanced": advanced,
         "reclassified": reclassified,
+        "action_buckets": bucketed,
         "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified"
-                   + (f", {len(reclassified)} reclassified" if reclassified else "") + "). "
+                   + (f", {len(reclassified)} reclassified" if reclassified else "")
+                   + (f", {len(bucketed)} action-bucketed" if bucketed else "") + "). "
                    + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
     }
 

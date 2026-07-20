@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, displayStatus, getRevenueBand } from '../types';
+import { CompanyTarget, ActivityEntry, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -558,6 +558,39 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
           {tab === 'Outreach' && (
             <>
+              {(() => {
+                const b = actionBucketInfo(company.action_bucket);
+                if (!b) return null;
+                return (
+                  <>
+                    <div className="cp-section-title">Action bucket</div>
+                    <div className="cp-card">
+                      <div className={`kc-bucket bucket-${b.tone}`} style={{ display: 'inline-block' }}>{b.label}</div>
+                      {company.action_rationale && (
+                        <p style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.6, margin: '0.55rem 0 0' }}>{company.action_rationale}</p>
+                      )}
+                      {company.action_follow_up_date && (
+                        <div className="cp-kv" style={{ marginTop: '0.45rem' }}><span className="k">Follow up</span><span className="v">{company.action_follow_up_date}</span></div>
+                      )}
+                      {company.action_set_at && (
+                        <div className="cp-kv"><span className="k">Assessed</span><span className="v">{fmtDate(company.action_set_at)}</span></div>
+                      )}
+                      {company.action_reply_body && (
+                        <div style={{ marginTop: '0.7rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.7rem' }}>
+                          <div className="cp-kv"><span className="k">Suggested reply</span><span className="v">{company.action_reply_subject || '(no subject)'}</span></div>
+                          <p style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0.5rem 0 0.6rem' }}>{company.action_reply_body}</p>
+                          <button className="cp-chip-btn" onClick={() => {
+                            navigator.clipboard?.writeText(company.action_reply_body || '');
+                          }} title="Copy the suggested reply, then paste it into the Gmail thread so the response stays threaded">
+                            Copy reply text
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+
               {company.outreach_draft_body ? (
                 <>
                   <div className="cp-section-title">Current draft {company.outreach_sent_at ? '(sent)' : '(unsent)'}</div>

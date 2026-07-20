@@ -37,7 +37,7 @@ ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").spl
 
 # /ch-watch/run is exempt from Google auth but guarded by its own shared
 # token (WATCH_TOKEN) — Cloud Scheduler cannot present a user session.
-EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run"}
+EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run"}
 EXEMPT_PREFIXES = ("/ch-pdf/",)
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────

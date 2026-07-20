@@ -132,6 +132,13 @@ export interface CompanyTarget {
   outreach_sent_at?: string;
   last_reply_at?: string;
   reply_classification?: string;
+  // Responded-stage action buckets (set by email sync intelligence)
+  action_bucket?: string;
+  action_rationale?: string;
+  action_follow_up_date?: string;
+  action_set_at?: string;
+  action_reply_subject?: string;
+  action_reply_body?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;
@@ -169,6 +176,26 @@ export type DealStage = typeof DEAL_STAGES[number];
 export function displayStatus(status?: string): string {
   if (!status) return '';
   return status === 'Contacted' ? 'Responded' : status;
+}
+
+// ── Responded-stage action buckets ──────────────────────────────────────────
+// Keys mirror backend/services/reply_intel.py BUCKETS. tone drives chip colour;
+// priority drives kanban ordering inside the Responded column (act-now first).
+export const ACTION_BUCKETS: Record<string, { label: string; tone: 'act' | 'respond' | 'hold' | 'stop' | 'review'; priority: number }> = {
+  right_fit_call:      { label: 'Right fit — set up call',            tone: 'act',     priority: 0 },
+  right_fit_answer:    { label: 'Right fit — answer & advance',       tone: 'act',     priority: 1 },
+  redirect_referral:   { label: 'Redirect — follow the referral',     tone: 'respond', priority: 2 },
+  right_fit_structure: { label: 'Right fit — structure mismatch',     tone: 'respond', priority: 3 },
+  right_fit_early:     { label: 'Right fit — too early, nurture',     tone: 'hold',    priority: 4 },
+  not_now_timing:      { label: 'Not now — timing',                   tone: 'hold',    priority: 5 },
+  right_fit_large:     { label: 'Right fit — too large, stay close',  tone: 'hold',    priority: 6 },
+  needs_human:         { label: 'Needs human read',                   tone: 'review',  priority: 7 },
+  declined_close:      { label: 'Declined — close politely',          tone: 'stop',    priority: 8 },
+  not_fit_no_respond:  { label: 'Not the right fit — do not respond', tone: 'stop',    priority: 9 },
+};
+
+export function actionBucketInfo(key?: string) {
+  return key ? ACTION_BUCKETS[key] ?? null : null;
 }
 
 // ── Investor (LP) database ──────────────────────────────────────────────────

@@ -543,3 +543,14 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-empty { text-align: center; color: #94a3b8; font-size: 0.82rem; padding: 1.6rem 0; }
 .cp-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 @media (max-width: 900px) { .cp-two-col { grid-template-columns: 1fr; } }
+
+/* ── Responded-stage action buckets ─────────────────────────────────────────
+   Chip shown on kanban cards + profile Outreach tab. Tone = urgency colour:
+   act (green, do it now) · respond (blue, reply needed) · hold (amber,
+   parked with a date) · stop (red, no pursuit) · review (grey, human read) */
+.kc-bucket { font-size: 0.66rem; font-weight: 800; padding: 0.22rem 0.55rem; border-radius: 6px; letter-spacing: 0.02em; line-height: 1.3; margin: 0.15rem 0 0.1rem; width: fit-content; border: 1px solid transparent; cursor: default; }
+.kc-bucket.bucket-act { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.kc-bucket.bucket-respond { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+.kc-bucket.bucket-hold { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+.kc-bucket.bucket-stop { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.kc-bucket.bucket-review { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }

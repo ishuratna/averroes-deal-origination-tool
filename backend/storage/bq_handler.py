@@ -100,6 +100,14 @@ class BigQueryHandler:
         # Email reply intelligence (from the Gmail sync)
         ("last_reply_at", "TIMESTAMP"),
         ("reply_classification", "STRING"),
+        # Responded-stage action buckets: what the reply means for us, combining
+        # our fit data with what the founder actually said. Set on sync.
+        ("action_bucket", "STRING"),
+        ("action_rationale", "STRING"),
+        ("action_follow_up_date", "STRING"),
+        ("action_set_at", "TIMESTAMP"),
+        ("action_reply_subject", "STRING"),
+        ("action_reply_body", "STRING"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),
