@@ -839,6 +839,11 @@ function UniverseInner() {
               <span className="user-name">Ishu Ratna</span>
               <span className="user-role">Associate</span>
             </div>
+            <button className="sign-out-btn" title="Sign out" onClick={() => {
+              localStorage.removeItem('averroes_id_token');
+              sessionStorage.removeItem('averroes_auth_on');
+              window.location.reload();
+            }}>Sign out</button>
           </div>
         </div>
       </aside>

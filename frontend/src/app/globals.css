@@ -567,3 +567,7 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .kc-outreach.kc-bucket-btn.bucket-stop:hover { background: #fecaca; }
 .kc-outreach.kc-bucket-btn.bucket-review { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
 .kc-outreach.kc-bucket-btn.bucket-review:hover { background: #e2e8f0; }
+
+/* Sign-out: small quiet button in the sidebar footer */
+.sign-out-btn { margin-left: auto; font-size: 0.68rem; font-weight: 700; color: #94a3b8; background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.25rem 0.55rem; cursor: pointer; white-space: nowrap; }
+.sign-out-btn:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }

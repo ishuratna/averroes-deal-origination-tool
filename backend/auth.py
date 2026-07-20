@@ -116,9 +116,22 @@ async def auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS" or path in EXEMPT_PATHS or path.startswith(EXEMPT_PREFIXES):
         return await call_next(request)
 
+    def _deny(status: int, detail: str) -> JSONResponse:
+        # CRITICAL: these responses short-circuit BEFORE the CORS middleware
+        # decorates them. Without explicit CORS headers the browser blocks the
+        # response body, fetch() throws a network error instead of a 401, and
+        # the frontend can never detect the dead session (it silently rendered
+        # an empty universe). Mirror the origin so the client SEES the 401.
+        origin = request.headers.get("origin", "*") or "*"
+        return JSONResponse(status_code=status, content={"detail": detail}, headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        })
+
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"detail": "Sign in required"})
+        return _deny(401, "Sign in required")
 
     token = auth_header[7:].strip()
     try:
@@ -128,14 +141,14 @@ async def auth_middleware(request: Request, call_next):
             email, exp = _verify_token_cached(token)
             if exp and exp < time.time():
                 _verify_token_cached.cache_clear()
-                return JSONResponse(status_code=401, content={"detail": "Session expired — sign in again"})
+                return _deny(401, "Session expired — sign in again")
     except TimeoutError:
-        return JSONResponse(status_code=401, content={"detail": "Session expired — sign in again"})
+        return _deny(401, "Session expired — sign in again")
     except PermissionError as e:
-        return JSONResponse(status_code=403, content={"detail": str(e)})
+        return _deny(403, str(e))
     except Exception as e:
         logger.warning(f"Auth token rejected: {e}")
-        return JSONResponse(status_code=401, content={"detail": "Invalid sign-in token — sign in again"})
+        return _deny(401, "Invalid sign-in token — sign in again")
 
     request.state.user_email = email
     return await call_next(request)
