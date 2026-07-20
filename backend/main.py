@@ -1788,7 +1788,9 @@ def _stored_news_signal(company_data: dict) -> str:
     parts = []
     for key in ("market_sentiment", "employee_growth"):
         metric = details.get(key) or {}
-        val = (metric.get("value") or "").strip()
+        # str(): local-growth scoring stores numeric values here — a float
+        # has no .strip() and killed the auto-draft for every Inven company
+        val = str(metric.get("value") or "").strip()
         # Only pass specifics, not generic assessments
         if val and len(val) > 15 and not val.lower().startswith(("no ", "none", "n/a", "minimal", "little")):
             parts.append(val)

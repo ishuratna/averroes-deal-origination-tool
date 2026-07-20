@@ -88,6 +88,7 @@ function UniverseInner() {
   const [bulkEligibility, setBulkEligibility] = useState<any | null>(null);
   const [bulkLoadingEligibility, setBulkLoadingEligibility] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkErrors, setBulkErrors] = useState<string[]>([]);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string; ok: number; failed: number } | null>(null);
   const bulkCancelRef = useRef(false);
 
@@ -238,11 +239,13 @@ function UniverseInner() {
   };
 
   const runBulkSmartFill = async () => {
-    if (!bulkEligibility?.eligible_names?.length) return;
-    const names: string[] = bulkEligibility.eligible_names;
+    if (!bulkEligibility?.eligible_names?.length || bulkRunning) return;  // guard vs double-start
+    const names: string[] = Array.from(new Set(bulkEligibility.eligible_names));  // dedupe: never hit a company twice
     bulkCancelRef.current = false;
     setBulkRunning(true);
+    setBulkErrors([]);
     let ok = 0, failed = 0;
+    const errors: string[] = [];
     for (let i = 0; i < names.length; i++) {
       if (bulkCancelRef.current) break;
       setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
@@ -255,12 +258,14 @@ function UniverseInner() {
           break;
         }
         failed++;
+        if (errors.length < 8) errors.push(`${names[i]}: ${e?.message || String(e)}`);
         console.error(`Bulk SmartFill failed for ${names[i]}`, e);
       }
       // Rate limiting between companies (each SmartFill already takes 20-60s server-side)
       await new Promise(r => setTimeout(r, 1500));
     }
     setBulkProgress({ done: ok + failed, total: names.length, current: '', ok, failed });
+    setBulkErrors(errors);
     setBulkRunning(false);
     await loadData();
   };
@@ -573,6 +578,14 @@ function UniverseInner() {
                         : <>Finished: {bulkProgress.ok} succeeded · {bulkProgress.failed} failed of {bulkProgress.total}</>}
                     </p>
                   </>
+                )}
+                {!bulkRunning && bulkErrors.length > 0 && (
+                  <div style={{ margin: '0.6rem 0', padding: '0.6rem 0.8rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8 }}>
+                    <p style={{ fontSize: '0.72rem', fontWeight: 800, color: '#b91c1c', margin: '0 0 0.35rem' }}>Failure reasons (first {bulkErrors.length}):</p>
+                    {bulkErrors.map((er, i) => (
+                      <p key={i} style={{ fontSize: '0.72rem', color: '#7f1d1d', margin: '0.15rem 0', wordBreak: 'break-word' }}>{er}</p>
+                    ))}
+                  </div>
                 )}
                 {bulkRunning ? (
                   <button className="bulk-cancel" onClick={() => { bulkCancelRef.current = true; }}>Stop after current</button>
