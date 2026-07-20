@@ -2152,8 +2152,31 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         em = (em or "").lower()
         return known.get(em) or known_domains.get(em.split("@")[-1] if "@" in em else "", {}) or {}
 
+    # Deep mode: search only contacts we actually corresponded with (outreach
+    # drafted/sent, or already in a dialogue stage) — searching the whole
+    # 3,000-company universe would mean thousands of IMAP searches.
+    deep_addresses = None
+    if deep:
+        deep_addresses = set()
+        dialogue = {"Engaged", "Contacted", "Meeting", "DD", "Offer", "Won", "Lost"}
+        for c in companies_by_name.values():
+            if c.get("outreach_draft_to") or c.get("outreach_sent_at") or c.get("status") in dialogue:
+                for em in ((c.get("contact_email") or ""), (c.get("outreach_draft_to") or "")):
+                    em = em.strip().lower()
+                    if em:
+                        deep_addresses.add(em)
+                for d in {_dom(c.get("contact_email")), _dom(c.get("outreach_draft_to")), _dom(c.get("website"))}:
+                    if d:
+                        deep_addresses.add("@" + d)
+        for inv in investor_handler.get_all():
+            em = (inv.get("contact_email") or "").strip().lower()
+            if em and (inv.get("status") or "Identified") not in ("Identified", "Researched"):
+                deep_addresses.add(em)
+        deep_addresses = sorted(deep_addresses)
+
     try:
-        entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep)
+        entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep,
+                               deep_addresses=deep_addresses)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:

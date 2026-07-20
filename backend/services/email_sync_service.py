@@ -156,7 +156,8 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
 
 
 def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
-                 known_domains: Dict[str, dict] = None, deep: bool = False) -> List[dict]:
+                 known_domains: Dict[str, dict] = None, deep: bool = False,
+                 deep_addresses: List[str] = None) -> List[dict]:
     """
     Read Beatrice's mailbox (IMAP, same App Password as sending) and return
     entries for messages exchanged with known contacts only.
@@ -164,8 +165,10 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     known_domains: {domain_lower: entity} fallback — a reply from ANY address
     at a company's domain matches that company (e.g. we email hello@x.com,
     the founder replies from jane@x.com). Free-mail domains excluded upstream.
-    deep: search per known address/domain instead of scanning the newest
-    messages — captures the FULL exchange history from the very start.
+    deep: search per address/domain instead of scanning the newest messages —
+    captures the FULL exchange history from the very start. deep_addresses
+    limits the search list to contacts we actually corresponded with (the
+    full universe would mean thousands of IMAP searches and a timeout).
     """
     sender = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
     password = os.getenv("OUTREACH_SMTP_PASSWORD", "")
@@ -175,8 +178,9 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     addresses = None
     max_fetch = 500
     if deep:
-        addresses = sorted({e for e in known_contacts}
-                           | {"@" + d for d in (known_domains or {})})
+        addresses = sorted(set(deep_addresses)) if deep_addresses else sorted(
+            {e for e in known_contacts} | {"@" + d for d in (known_domains or {})})
+        addresses = addresses[:300]  # hard safety cap on IMAP searches
         max_fetch = 2000
 
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
