@@ -222,15 +222,21 @@ export const dealApi = {
   },
 
   async smartFillBatch(names: string[]): Promise<any> {
+    // The batch endpoint STREAMS heartbeat spaces while it works (idle
+    // connections get killed on some networks) and ends with one JSON line.
     const response = await apiFetch(`${API_BASE_URL}/smartfill/batch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ names }),
     });
-    let data;
-    try { data = await response.json(); } catch (e) { throw new Error(`Batch failed: ${response.statusText}`); }
-    if (!response.ok) { throw new Error(data.detail || 'Batch failed'); }
-    return data;
+    const text = await response.text();
+    if (!response.ok) {
+      try { throw new Error(JSON.parse(text).detail || 'Batch failed'); }
+      catch (e: any) { throw new Error(e?.message || `Batch failed: ${response.statusText}`); }
+    }
+    const lines = text.trim().split('\n');
+    try { return JSON.parse(lines[lines.length - 1]); }
+    catch { throw new Error('Batch response unreadable — the run may still have completed server-side'); }
   },
 
   async smartFill(companyName: string, bulk: boolean = false): Promise<any> {

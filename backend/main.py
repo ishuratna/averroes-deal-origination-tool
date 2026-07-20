@@ -931,32 +931,64 @@ async def smartfill_batch(req: SmartFillBatchRequest):
     reported as done without re-running, so a dropped batch response never
     causes double-processing when the frontend re-sends the same list.
     """
+    # STREAMING with heartbeats: the user's network path kills connections
+    # that stay silent for ~a minute (this murdered both per-company requests
+    # and the first batch design — the server always finished, the browser
+    # never heard back). A space char every 10s keeps every hop convinced the
+    # connection is alive; the final line is the JSON result.
     import time as _time
+    import asyncio as _asyncio
+    import json as _json
+    from fastapi.responses import StreamingResponse
     from google.cloud import bigquery as bq_lib
-    started = _time.time()
-    processed, remaining = [], list(dict.fromkeys(req.names))  # dedupe, keep order
-    while remaining and (_time.time() - started) < 210:
-        name = remaining.pop(0)
-        try:
-            fresh = bq_handler.client.query(
-                f"""SELECT 1 FROM `{bq_handler.table_id}`
-                    WHERE name = @name AND last_smartfill_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE)""",
-                job_config=bq_lib.QueryJobConfig(query_parameters=[
-                    bq_lib.ScalarQueryParameter("name", "STRING", name),
-                ])).result()
-            if fresh.total_rows:
-                processed.append({"name": name, "status": "already done (last 10 min)"})
-                continue
-            result = await smartfill_company(name, bulk=True)
-            processed.append({"name": name, "status": result.get("status") or "OK"})
-        except HTTPException as he:
-            if he.status_code == 429:  # daily cap — stop the whole batch
-                remaining.insert(0, name)
-                return {"processed": processed, "remaining": remaining, "stopped": str(he.detail)}
-            processed.append({"name": name, "status": f"FAILED: {he.detail}"})
-        except Exception as e:
-            processed.append({"name": name, "status": f"FAILED: {e}"})
-    return {"processed": processed, "remaining": remaining, "stopped": None}
+
+    def _fresh(name: str) -> bool:
+        rows = bq_handler.client.query(
+            f"""SELECT 1 FROM `{bq_handler.table_id}`
+                WHERE name = @name AND last_smartfill_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE)""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("name", "STRING", name),
+            ])).result()
+        return bool(rows.total_rows)
+
+    def _run_one(name: str) -> dict:
+        # smartfill_company is a coroutine with blocking work inside; give it
+        # its own loop in this worker thread so heartbeats keep flowing.
+        return _asyncio.run(smartfill_company(name, bulk=True))
+
+    async def _gen():
+        started = _time.time()
+        processed, stopped = [], None
+        remaining = list(dict.fromkeys(req.names))  # dedupe, keep order
+        # 150s window: worst case (last company ~2 min) stays under Cloud Run's timeout
+        while remaining and (_time.time() - started) < 150 and not stopped:
+            name = remaining[0]
+            try:
+                if await _asyncio.to_thread(_fresh, name):
+                    remaining.pop(0)
+                    processed.append({"name": name, "status": "already done (last 10 min)"})
+                    yield " "
+                    continue
+                task = _asyncio.create_task(_asyncio.to_thread(_run_one, name))
+                while not task.done():
+                    await _asyncio.sleep(10)
+                    yield " "  # heartbeat
+                result = task.result()
+                remaining.pop(0)
+                processed.append({"name": name, "status": result.get("status") or "OK"})
+            except HTTPException as he:
+                if he.status_code == 429:  # daily cap — stop cleanly, keep remainder
+                    stopped = str(he.detail)
+                    break
+                remaining.pop(0)
+                processed.append({"name": name, "status": f"FAILED: {he.detail}"})
+            except Exception as e:
+                remaining.pop(0)
+                processed.append({"name": name, "status": f"FAILED: {e}"})
+            yield " "
+        yield "\n" + _json.dumps({"processed": processed, "remaining": remaining, "stopped": stopped})
+
+    return StreamingResponse(_gen(), media_type="text/plain")
 
 
 @app.post("/smartfill/{company_name}")
