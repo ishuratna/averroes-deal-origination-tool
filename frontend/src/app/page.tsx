@@ -121,7 +121,8 @@ function HomeInner() {
 
   // Company drawer
   const [profileIdx, setProfileIdx] = useState<number | null>(null);
-  const openProfile = (name: string) => { const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
+  const [profileTab, setProfileTab] = useState<'Outreach' | undefined>(undefined);
+  const openProfile = (name: string, tab?: 'Outreach') => { setProfileTab(tab); const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
   const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
 
   // Saved views
@@ -555,10 +556,12 @@ function HomeInner() {
                               {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
                             </p>
 
-                            {/* Action bucket — what the reply means for us */}
+                            {/* Action bucket chip only for cards where the bucket
+                                is NOT already the primary button (post-Responded
+                                stages keep their own primary action) */}
                             {(() => {
                               const b = actionBucketInfo(company.action_bucket);
-                              if (!b) return null;
+                              if (!b || company.status === 'Contacted') return null;
                               return (
                                 <div className={`kc-bucket bucket-${b.tone}`}
                                   title={`${company.action_rationale || ''}${company.action_follow_up_date ? ` · Follow up: ${company.action_follow_up_date}` : ''}`}>
@@ -622,9 +625,21 @@ function HomeInner() {
                               </div>
                             )}
 
-                            {/* Row 5 — primary action: outreach (draft never changes
-                                the stage; only a successful send moves the card) */}
-                            {(() => { const ob = outreachButtonState(company); return (
+                            {/* Row 5 — primary action. Responded cards with an
+                                action bucket show the bucket as the button ("Email
+                                Sent" is redundant once they replied) — it opens the
+                                profile directly on the Outreach tab. Everything
+                                else keeps the shared outreach button. */}
+                            {(() => {
+                              const b = actionBucketInfo(company.action_bucket);
+                              if (company.status === 'Contacted' && b) return (
+                                <button className={`kc-outreach kc-bucket-btn bucket-${b.tone}`}
+                                  title={company.action_rationale || b.label}
+                                  onClick={() => openProfile(company.name, 'Outreach')}>
+                                  {b.label}
+                                </button>
+                              );
+                              const ob = outreachButtonState(company); return (
                               <button className={`kc-outreach ${ob.cls}`} title={ob.title}
                                 onClick={() => setOutreachTarget(company)}>
                                 {ob.label}
@@ -770,9 +785,10 @@ function HomeInner() {
         <CompanyProfile
           companies={filteredPipeline}
           index={profileIdx}
-          onClose={() => setProfileIdx(null)}
+          onClose={() => { setProfileIdx(null); setProfileTab(undefined); }}
           onNavigate={setProfileIdx}
           onChanged={loadData}
+          initialTab={profileTab}
         />
       )}
 

@@ -18,6 +18,7 @@ interface Props {
   onClose: () => void;
   onNavigate: (index: number) => void;
   onChanged: () => void | Promise<void>;
+  initialTab?: typeof TABS[number];
 }
 
 const TABS = ['Summary', 'Financials', 'Ownership', 'People', 'Companies House', 'Outreach'] as const;
@@ -207,9 +208,9 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
   );
 }
 
-export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged }: Props) {
+export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged, initialTab }: Props) {
   const company = companies[index];
-  const [tab, setTab] = useState<typeof TABS[number]>('Summary');
+  const [tab, setTab] = useState<typeof TABS[number]>(initialTab || 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
   const [noteText, setNoteText] = useState('');

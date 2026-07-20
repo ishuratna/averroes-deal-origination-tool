@@ -554,3 +554,16 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .kc-bucket.bucket-hold { background: #fef3c7; color: #b45309; border-color: #fde68a; }
 .kc-bucket.bucket-stop { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
 .kc-bucket.bucket-review { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
+
+/* Bucket-as-button on Responded kanban cards (replaces "Email Sent") */
+.kc-outreach.kc-bucket-btn { font-weight: 800; border: 1px solid transparent; }
+.kc-outreach.kc-bucket-btn.bucket-act { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.kc-outreach.kc-bucket-btn.bucket-act:hover { background: #bbf7d0; }
+.kc-outreach.kc-bucket-btn.bucket-respond { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+.kc-outreach.kc-bucket-btn.bucket-respond:hover { background: #bfdbfe; }
+.kc-outreach.kc-bucket-btn.bucket-hold { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+.kc-outreach.kc-bucket-btn.bucket-hold:hover { background: #fde68a; }
+.kc-outreach.kc-bucket-btn.bucket-stop { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.kc-outreach.kc-bucket-btn.bucket-stop:hover { background: #fecaca; }
+.kc-outreach.kc-bucket-btn.bucket-review { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
+.kc-outreach.kc-bucket-btn.bucket-review:hover { background: #e2e8f0; }
