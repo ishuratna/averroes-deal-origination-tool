@@ -2378,6 +2378,10 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 try:
                     b = bucket_reply(comp, latest["subject"], latest["snippet"], thread=msgs)
                     if b:
+                        # We already answered (latest thread message is ours) —
+                        # keep the bucket label but drop the suggested reply.
+                        if msgs and msgs[-1]["direction"] == "sent":
+                            b["reply_subject"], b["reply_body"] = "", ""
                         _apply_bucket(ename, b, latest["sent_at"])
                     else:
                         bucket_errors.append(f"{ename}: model returned no bucket")
@@ -2387,6 +2391,23 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         except Exception as e:
             logger.warning(f"Retro bucketing query failed: {e}")
             bucket_errors.append(f"retro query: {e}")
+
+    # Suggested-reply hygiene: once WE are the latest message in a company's
+    # thread (we answered), the stored suggestion is consumed — clear it.
+    # The bucket label and rationale stay; only the pending reply disappears.
+    try:
+        bq_handler.client.query(f"""
+            UPDATE `{bq_handler.table_id}` SET
+                action_reply_subject = NULL, action_reply_body = NULL
+            WHERE action_reply_body IS NOT NULL AND name IN (
+                SELECT entity_name FROM (
+                    SELECT entity_name, direction,
+                           ROW_NUMBER() OVER (PARTITION BY entity_name ORDER BY sent_at DESC) AS rn
+                    FROM `{bq_handler.project_id}.{bq_handler.dataset_id}.email_log`
+                    WHERE entity_type = 'company')
+                WHERE rn = 1 AND direction = 'sent')""").result()
+    except Exception as e:
+        logger.warning(f"Suggested-reply hygiene pass failed: {e}")
 
     return {
         "status": "Success",
