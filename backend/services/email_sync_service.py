@@ -72,12 +72,20 @@ def _body_snippet(msg, limit: int = 500) -> str:
 
 
 def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict],
-                  known_domains: Dict[str, dict] = None) -> List[dict]:
+                  known_domains: Dict[str, dict] = None, addresses: List[str] = None,
+                  max_fetch: int = 500) -> List[dict]:
     """
     Fetch messages from one folder, keeping only known-contact exchanges.
     Direction is detected PER MESSAGE (From == our sender → 'sent', else
     'received') so scanning [Gmail]/All Mail catches replies that were
     archived or filtered out of the INBOX — those are otherwise invisible.
+
+    Two modes:
+    - Default: scan the newest messages in the window (bounded by max_fetch
+      across the WHOLE mailbox — fine for regular syncs, misses old history).
+    - Deep (addresses given): one IMAP search PER known address/domain, so
+      only relevant messages are fetched and the full exchange history is
+      captured regardless of how busy the mailbox is.
     """
     entries = []
     sender = (sender or "").lower()
@@ -86,12 +94,26 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
         if status != "OK":
             logger.warning(f"[EmailSync] Could not open folder {folder}")
             return []
-        status, data = mail.search(None, f"(SINCE {since})")
-        if status != "OK":
-            return []
-        ids = data[0].split()
+        if addresses:
+            seen_ids, ids = set(), []
+            for addr in addresses:
+                try:
+                    status, data = mail.search(None, f'(SINCE {since}) (OR FROM "{addr}" TO "{addr}")')
+                    if status == "OK" and data and data[0]:
+                        for i in data[0].split():
+                            if i not in seen_ids:
+                                seen_ids.add(i)
+                                ids.append(i)
+                except Exception:
+                    continue
+            ids.sort(key=int)
+        else:
+            status, data = mail.search(None, f"(SINCE {since})")
+            if status != "OK":
+                return []
+            ids = data[0].split()
         # Most recent first, bounded to keep runs fast
-        for msg_id in list(reversed(ids))[:500]:
+        for msg_id in list(reversed(ids))[:max_fetch]:
             status, msg_data = mail.fetch(msg_id, "(RFC822)")
             if status != "OK" or not msg_data or not msg_data[0]:
                 continue
@@ -134,7 +156,7 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
 
 
 def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
-                 known_domains: Dict[str, dict] = None) -> List[dict]:
+                 known_domains: Dict[str, dict] = None, deep: bool = False) -> List[dict]:
     """
     Read Beatrice's mailbox (IMAP, same App Password as sending) and return
     entries for messages exchanged with known contacts only.
@@ -142,11 +164,20 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     known_domains: {domain_lower: entity} fallback — a reply from ANY address
     at a company's domain matches that company (e.g. we email hello@x.com,
     the founder replies from jane@x.com). Free-mail domains excluded upstream.
+    deep: search per known address/domain instead of scanning the newest
+    messages — captures the FULL exchange history from the very start.
     """
     sender = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
     password = os.getenv("OUTREACH_SMTP_PASSWORD", "")
     if not password:
         raise RuntimeError("OUTREACH_SMTP_PASSWORD not configured (same App Password as sending)")
+
+    addresses = None
+    max_fetch = 500
+    if deep:
+        addresses = sorted({e for e in known_contacts}
+                           | {"@" + d for d in (known_domains or {})})
+        max_fetch = 2000
 
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
     mail = imaplib.IMAP4_SSL(IMAP_HOST)
@@ -154,11 +185,14 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
         mail.login(sender, password)
         # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
         # one pass; direction is detected per message inside _fetch_folder.
-        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains)
+        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
+                                addresses=addresses, max_fetch=max_fetch)
         if not entries:
             # Fallback for non-Gmail IMAP layouts
-            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains)
-            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains)
+            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
+                                    addresses=addresses, max_fetch=max_fetch)
+            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
+                                     addresses=addresses, max_fetch=max_fetch)
         # Dedup by message id (All Mail + fallback can overlap)
         seen_ids, unique = set(), []
         for e in entries:

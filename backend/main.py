@@ -819,6 +819,18 @@ async def prequalify_run(request: Request):
     return _prequalify_local()
 
 
+@app.get("/email/deep-sync/run")
+async def deep_sync_run(request: Request):
+    """One-off token-gated trigger: full-history email sync (per-contact IMAP
+    search, 10-year window) so email_log captures every exchange from the
+    start. Same pipeline as the UI button, deep mode."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return await sync_emails(days=3650, deep=True)
+
+
 # ── One-off enrich sweep: Engaged/Responded companies + Qualified-without-email
 # Runs the FULL current SmartEnrich (registry + distress + filing intel + cap
 # table v2 + contact waterfall + draft refresh) over the target set, a batch
@@ -2077,12 +2089,17 @@ class CriteriaApplyRequest(BaseModel):
 # ── Email communications log ─────────────────────────────────────────────────
 
 @app.post("/email/sync")
-async def sync_emails(days: int = Query(30, description="How many days back to scan")):
+async def sync_emails(days: int = Query(30, description="How many days back to scan"),
+                      deep: bool = Query(False, description="Search per known contact — captures full history from the start")):
     """
     Sync Beatrice's Gmail (IMAP, same App Password as sending) against known
     contacts in companies + LPs. Logs exchanges, classifies replies with AI,
     stamps last_reply_at, and auto-advances Engaged → Contacted on reply.
+    deep=true searches per known address/domain (no mailbox-size cap) over a
+    10-year window, so the email activity log holds every exchange ever made.
     """
+    if deep:
+        days = max(days, 3650)
     from services.email_sync_service import sync_mailbox, classify_reply
     from services.reply_intel import bucket_reply
     from google.cloud import bigquery as bq_lib
@@ -2136,7 +2153,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         return known.get(em) or known_domains.get(em.split("@")[-1] if "@" in em else "", {}) or {}
 
     try:
-        entries = sync_mailbox(known, days=days, known_domains=known_domains)
+        entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -2198,7 +2215,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # an action bucket, a one-sentence rationale, an optional follow-up date,
     # and (for buckets that warrant one) a suggested response draft.
     # Advisory only: buckets NEVER move stages.
-    bucketed, bucketed_names = [], set()
+    bucketed, bucketed_names, bucket_errors = [], set(), []
     bucket_budget = 25
 
     def _thread_for(name: str) -> list:
@@ -2256,9 +2273,14 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 company_row = companies_by_name.get(ename)
                 if company_row and bucket_budget > 0 and ename not in bucketed_names:
                     bucket_budget -= 1
-                    b = bucket_reply(company_row, r["subject"], r["snippet"], thread=_thread_for(ename))
-                    if b:
-                        _apply_bucket(ename, b, r["sent_at"])
+                    try:
+                        b = bucket_reply(company_row, r["subject"], r["snippet"], thread=_thread_for(ename))
+                        if b:
+                            _apply_bucket(ename, b, r["sent_at"])
+                        else:
+                            bucket_errors.append(f"{ename}: model returned no bucket")
+                    except Exception as be:
+                        bucket_errors.append(f"{ename}: {be}")
             else:
                 investor_handler.add_note(ename, note)
         except Exception as e:
@@ -2291,30 +2313,57 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
-    # Retro bucketing: companies whose replies were logged in EARLIER syncs
-    # (before buckets existed, or a call failed) and still have no bucket.
-    # Bucket the most recent reply, bounded so a big backlog spreads over a
-    # few sync runs instead of one slow one.
+    # Retro bucketing: companies with a logged reply but no action bucket yet
+    # (replies synced before buckets existed, or a call failed). Reads from
+    # email_log — the single source of truth — so it works regardless of the
+    # mailbox scan window (old replies beyond 30 days still get bucketed).
+    # Bounded so a big backlog spreads over a few sync runs.
     retro_budget = min(15, bucket_budget)
-    latest_reply_by_company = {}
-    for e in sorted((x for x in entries if x["direction"] == "received" and x["entity_type"] == "company"),
-                    key=lambda x: x.get("sent_at") or ""):
-        latest_reply_by_company[e["entity_name"]] = e  # ends on the newest
-    for ename, r in latest_reply_by_company.items():
-        if retro_budget <= 0:
-            break
-        comp = companies_by_name.get(ename)
-        if not comp or comp.get("action_bucket") or ename in bucketed_names:
-            continue
-        if comp.get("status") not in ("Contacted", "Meeting", "DD", "Offer", "Engaged"):
-            continue
-        retro_budget -= 1
+    if retro_budget > 0:
         try:
-            b = bucket_reply(comp, r["subject"], r["snippet"], thread=_thread_for(ename))
-            if b:
-                _apply_bucket(ename, b, r["sent_at"])
+            rows = bq_handler.client.query(f"""
+                SELECT e.entity_name, e.direction, e.subject, e.snippet, e.sent_at
+                FROM `{bq_handler.project_id}.{bq_handler.dataset_id}.email_log` e
+                JOIN `{bq_handler.table_id}` t ON t.name = e.entity_name
+                WHERE t.action_bucket IS NULL
+                  AND t.status IN ('Contacted', 'Meeting', 'DD', 'Offer', 'Engaged')
+                  AND e.entity_type = 'company'
+                ORDER BY e.entity_name, e.sent_at
+            """).result()
+            threads = {}
+            for row in rows:
+                threads.setdefault(row.entity_name, []).append(
+                    {"direction": row.direction, "subject": row.subject or "",
+                     "snippet": row.snippet or "", "sent_at": str(row.sent_at or "")})
+            for ename, msgs in threads.items():
+                if retro_budget <= 0:
+                    break
+                if ename in bucketed_names:
+                    continue
+                comp = companies_by_name.get(ename)
+                if not comp:
+                    continue
+                received = [m for m in msgs if m["direction"] == "received" and m["snippet"].strip()]
+                if not received:
+                    # Log row had no readable snippet — try this run's mailbox scan
+                    received = [m for m in _thread_for(ename)
+                                if m.get("direction") == "received" and (m.get("snippet") or "").strip()]
+                    if not received:
+                        continue
+                latest = received[-1]
+                retro_budget -= 1
+                try:
+                    b = bucket_reply(comp, latest["subject"], latest["snippet"], thread=msgs)
+                    if b:
+                        _apply_bucket(ename, b, latest["sent_at"])
+                    else:
+                        bucket_errors.append(f"{ename}: model returned no bucket")
+                except Exception as e:
+                    logger.warning(f"Retro bucketing failed for {ename}: {e}")
+                    bucket_errors.append(f"{ename}: {e}")
         except Exception as e:
-            logger.warning(f"Retro bucketing failed for {ename}: {e}")
+            logger.warning(f"Retro bucketing query failed: {e}")
+            bucket_errors.append(f"retro query: {e}")
 
     return {
         "status": "Success",
@@ -2327,9 +2376,11 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "auto_advanced": advanced,
         "reclassified": reclassified,
         "action_buckets": bucketed,
+        "bucket_errors": bucket_errors[:10],
         "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified"
                    + (f", {len(reclassified)} reclassified" if reclassified else "")
-                   + (f", {len(bucketed)} action-bucketed" if bucketed else "") + "). "
+                   + (f", {len(bucketed)} action-bucketed" if bucketed else "")
+                   + (f", {len(bucket_errors)} bucket attempts FAILED: {bucket_errors[0]}" if bucket_errors else "") + "). "
                    + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
     }
 
