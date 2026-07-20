@@ -674,23 +674,28 @@ Return ONLY a JSON object:
 
 If you truly cannot estimate even a rough range, set revenue_estimate_m to null."""
 
+        # NOTE: JSON mode (response_mime_type) cannot be combined with tools —
+        # the API rejects it (400 INVALID_ARGUMENT) and this call silently
+        # failed for every company. Grounded search + plain text, then parse.
         google_search_tool = Tool(google_search=GoogleSearch())
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
             config=GenerateContentConfig(
                 tools=[google_search_tool],
-                response_mime_type="application/json",
                 temperature=0.2,
             ),
         )
 
-        text = response.text.strip()
+        text = (response.text or "").strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError(f"No JSON object in response: {text[:120]}")
 
         import json
-        result = json.loads(text)
+        result = json.loads(text[start:end + 1])
         estimate = result.get("revenue_estimate_m")
         confidence = result.get("confidence", "low")
         reasoning = result.get("reasoning", "")
