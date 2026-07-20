@@ -23,7 +23,7 @@ gcloud builds triggers create github \
   --branch-pattern="^main$" --build-config="backend/cloudbuild.yaml" \
   --name="deploy-backend" --description="Auto-deploy backend on push to main" \
   --included-files="backend/**" \
-  --substitutions="_GEMINI_API_KEY=AIzaSyCfqd4hM41uXmBAjs4A1Ig1OP76-VyYTV8" \
+  --substitutions="_GEMINI_API_KEY=${GEMINI_API_KEY:?Set GEMINI_API_KEY env var first - NEVER commit the key}" \
   --quiet || echo "Backend trigger may already exist"
 
 # Create frontend trigger
