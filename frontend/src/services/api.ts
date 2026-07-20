@@ -221,6 +221,18 @@ export const dealApi = {
     return await response.json();
   },
 
+  async smartFillBatch(names: string[]): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/smartfill/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`Batch failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Batch failed'); }
+    return data;
+  },
+
   async smartFill(companyName: string, bulk: boolean = false): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/smartfill/${encodeURIComponent(companyName)}${bulk ? '?bulk=true' : ''}`, { method: 'POST' });
     let data;

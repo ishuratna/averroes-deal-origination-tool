@@ -914,6 +914,51 @@ def _enforce_grounding_budget(weight: int, operation: str):
         )
 
 
+class SmartFillBatchRequest(BaseModel):
+    names: List[str]
+
+
+@app.post("/smartfill/batch")
+async def smartfill_batch(req: SmartFillBatchRequest):
+    """
+    Bulk SmartFill worker: processes as many companies from the list as fit
+    in a ~3.5-minute window, then returns the truth per company plus the
+    remainder. The frontend loops on the remainder. This replaces one fragile
+    60-120s browser request PER company (connections died mid-flight, Chrome
+    silently resent them — double AI spend — then reported phantom failures).
+
+    Idempotency guard: a company SmartFilled in the last 10 minutes is
+    reported as done without re-running, so a dropped batch response never
+    causes double-processing when the frontend re-sends the same list.
+    """
+    import time as _time
+    from google.cloud import bigquery as bq_lib
+    started = _time.time()
+    processed, remaining = [], list(dict.fromkeys(req.names))  # dedupe, keep order
+    while remaining and (_time.time() - started) < 210:
+        name = remaining.pop(0)
+        try:
+            fresh = bq_handler.client.query(
+                f"""SELECT 1 FROM `{bq_handler.table_id}`
+                    WHERE name = @name AND last_smartfill_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE)""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            if fresh.total_rows:
+                processed.append({"name": name, "status": "already done (last 10 min)"})
+                continue
+            result = await smartfill_company(name, bulk=True)
+            processed.append({"name": name, "status": result.get("status") or "OK"})
+        except HTTPException as he:
+            if he.status_code == 429:  # daily cap — stop the whole batch
+                remaining.insert(0, name)
+                return {"processed": processed, "remaining": remaining, "stopped": str(he.detail)}
+            processed.append({"name": name, "status": f"FAILED: {he.detail}"})
+        except Exception as e:
+            processed.append({"name": name, "status": f"FAILED: {e}"})
+    return {"processed": processed, "remaining": remaining, "stopped": None}
+
+
 @app.post("/smartfill/{company_name}")
 async def smartfill_company(company_name: str, bulk: bool = Query(False, description="Bulk mode: skips web-search scoring for Too Large companies (cost gate)")):
     """SmartFill: Qualify (UK/Ireland + Tech) + enrich founder/LinkedIn/website."""

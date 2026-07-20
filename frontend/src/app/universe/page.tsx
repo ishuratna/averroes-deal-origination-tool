@@ -238,33 +238,45 @@ function UniverseInner() {
     }
   };
 
+  // Batch-driven: one request per ~3.5 min processes several companies
+  // SERVER-SIDE and reports the truth per company. Replaces the fragile
+  // per-company long requests (dropped connections caused silent browser
+  // retries — double AI spend — and phantom "failed" counts).
   const runBulkSmartFill = async () => {
     if (!bulkEligibility?.eligible_names?.length || bulkRunning) return;  // guard vs double-start
-    const names: string[] = Array.from(new Set(bulkEligibility.eligible_names));  // dedupe: never hit a company twice
+    const total = new Set(bulkEligibility.eligible_names).size;
+    let remaining: string[] = Array.from(new Set(bulkEligibility.eligible_names));
     bulkCancelRef.current = false;
     setBulkRunning(true);
     setBulkErrors([]);
     let ok = 0, failed = 0;
     const errors: string[] = [];
-    for (let i = 0; i < names.length; i++) {
-      if (bulkCancelRef.current) break;
-      setBulkProgress({ done: i, total: names.length, current: names[i], ok, failed });
+    while (remaining.length > 0 && !bulkCancelRef.current) {
+      setBulkProgress({ done: ok + failed, total, current: remaining[0], ok, failed });
       try {
-        await dealApi.smartFill(names[i], true);  // bulk mode: Too Large skips web-search scoring
-        ok++;
-      } catch (e: any) {
-        if ((e?.message || '').includes('Daily SmartFill limit')) {
-          alert(`Daily cap reached after ${ok} companies — the rest are preserved for tomorrow's run.`);
+        const res = await dealApi.smartFillBatch(remaining);
+        for (const p of res.processed || []) {
+          if (String(p.status).startsWith('FAILED')) {
+            failed++;
+            if (errors.length < 8) errors.push(`${p.name}: ${p.status}`);
+          } else {
+            ok++;
+          }
+        }
+        remaining = res.remaining || [];
+        if (res.stopped) {
+          alert(`${res.stopped} — ${ok} done so far; the rest are preserved.`);
           break;
         }
-        failed++;
-        if (errors.length < 8) errors.push(`${names[i]}: ${e?.message || String(e)}`);
-        console.error(`Bulk SmartFill failed for ${names[i]}`, e);
+      } catch (e: any) {
+        // Network hiccup on a batch: the server is likely still finishing it.
+        // Wait out the full batch window so everything gets stamped, then
+        // re-send — the 10-minute idempotency guard skips completed ones.
+        console.warn('Batch request dropped, retrying after the batch window', e);
+        await new Promise(r => setTimeout(r, 220000));
       }
-      // Rate limiting between companies (each SmartFill already takes 20-60s server-side)
-      await new Promise(r => setTimeout(r, 1500));
     }
-    setBulkProgress({ done: ok + failed, total: names.length, current: '', ok, failed });
+    setBulkProgress({ done: ok + failed, total, current: '', ok, failed });
     setBulkErrors(errors);
     setBulkRunning(false);
     await loadData();
