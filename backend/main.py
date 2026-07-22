@@ -1910,8 +1910,8 @@ async def smartenrich_company(company_name: str):
         # once regardless — detected by the missing v2 marker in the JSON.
         try:
             _stored_cap_date = company.get("ch_cap_table_date") or ""
-            if _stored_cap_date and '"v": 3' not in (company.get("ch_cap_table") or ""):
-                _stored_cap_date = ""  # force one re-parse under the v3 rules (walk-back, SH01 roll-forward, rights, PSC check)
+            if _stored_cap_date and '"fp": 2' not in (company.get("ch_cap_table") or ""):
+                _stored_cap_date = ""  # force one re-parse: v3 rules + founder-proxy v2 (dotted corp suffixes)
             cap = get_cap_table(number, company_name, stored_date=_stored_cap_date,
                                 psc_summary=company.get("ch_psc_summary") or "")
             if cap:

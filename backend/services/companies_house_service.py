@@ -1115,14 +1115,17 @@ def get_cap_table(company_number: str, company_name: str = "", stored_date: str 
 
         # Largest individual (non-corporate) holder as founder proxy —
         # international corporate suffixes included
-        _CORP = (" ltd", " limited", " llp", " lp", " plc", " inc", " gmbh", " bv", " b.v",
-                 " sa", " s.a", " spa", " s.p.a", " ab", " abp", " oy", " as", " aps",
-                 " ehf", " hf", " slhf", " ucits", "cooperatief", " u.a", "nominees",
+        _CORP = (" ltd", " limited", " llp", " lp", " llc", " plc", " inc", " gmbh", " bv",
+                 " sa", " spa", " ab", " abp", " oy", " as", " aps", " scsp", " gp",
+                 " ehf", " hf", " slhf", " ucits", "cooperatief", " ua", "nominees",
                  "fund", "capital", "ventures", "partners", "holdings", "trust",
-                 "stiftelsen", "striftelsen", "foundation", "bank", "s.a.r.l", "sarl")
+                 "investments", "university", "chancellor", "college", "enterprises",
+                 "stiftelsen", "striftelsen", "foundation", "bank", "sarl")
         founder_pct = None
         for r in rows:
-            n = " " + (r.get("name") or "").lower()
+            # Dots stripped so "Addition Three, L.P." matches " lp" — that
+            # dotted suffix once crowned a FUND as the founder (PQShield).
+            n = " " + (r.get("name") or "").lower().replace(".", "")
             if not r["name"].startswith("Others") and not any(t in n for t in _CORP):
                 founder_pct = r["pct"]
                 break
@@ -1148,6 +1151,7 @@ def get_cap_table(company_number: str, company_name: str = "", stored_date: str 
         return {
             "ch_cap_table": json.dumps({
                 "v": 3,
+                "fp": 2,  # founder-proxy rules v2 (dotted suffixes); forces one re-derive on older v3 tables
                 "date": effective_date,
                 "base_date": base_date,
                 "rolled_forward": bool(sh01_applied),
