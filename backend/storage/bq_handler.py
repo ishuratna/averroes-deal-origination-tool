@@ -125,6 +125,9 @@ class BigQueryHandler:
         ("ebitda_margin_pct", "FLOAT64"),
         ("directors", "STRING"),
         ("company_linkedin", "STRING"),
+        # Raw investor/owner lists from Inven (feed the investor miner)
+        ("investors_raw", "STRING"),
+        ("current_owners", "STRING"),
         # CH v4: distress flags, filing intelligence, cap table, watch job
         ("ch_accounts_overdue", "BOOL"),
         ("ch_insolvency_summary", "STRING"),
@@ -666,6 +669,8 @@ class BigQueryHandler:
                 "ebitda_margin_pct": safe_float(c.get("ebitda_margin_pct"), None),
                 "directors": c.get("directors") or "",
                 "company_linkedin": c.get("company_linkedin") or "",
+                "investors_raw": c.get("investors_raw") or "",
+                "current_owners": c.get("current_owners") or "",
             }
             rows_to_insert.append(row)
             existing_names.add(name)
@@ -721,6 +726,7 @@ class BigQueryHandler:
                     f"@{prefix}_revenue_cagr_3yr_pct", f"@{prefix}_employee_growth_1yr_pct",
                     f"@{prefix}_employee_growth_3yr_pct", f"@{prefix}_ebitda_margin_pct",
                     f"@{prefix}_directors", f"@{prefix}_company_linkedin",
+                    f"@{prefix}_investors_raw", f"@{prefix}_current_owners",
                 ])
                 values_clauses.append(f"({placeholders})")
                 params.extend([
@@ -800,6 +806,8 @@ class BigQueryHandler:
                     bigquery.ScalarQueryParameter(f"{prefix}_ebitda_margin_pct", "FLOAT64", row["ebitda_margin_pct"]),
                     bigquery.ScalarQueryParameter(f"{prefix}_directors", "STRING", row["directors"]),
                     bigquery.ScalarQueryParameter(f"{prefix}_company_linkedin", "STRING", row["company_linkedin"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_investors_raw", "STRING", row["investors_raw"]),
+                    bigquery.ScalarQueryParameter(f"{prefix}_current_owners", "STRING", row["current_owners"]),
                 ])
 
             insert_query = f"""
@@ -825,7 +833,7 @@ class BigQueryHandler:
                  revenue_y3, revenue_y3_date, total_assets_y1,
                  revenue_cagr_3yr_pct, employee_growth_1yr_pct,
                  employee_growth_3yr_pct, ebitda_margin_pct,
-                 directors, company_linkedin)
+                 directors, company_linkedin, investors_raw, current_owners)
                 VALUES {', '.join(values_clauses)}
             """
             job_config = bigquery.QueryJobConfig(query_parameters=params)
@@ -882,6 +890,10 @@ class BigQueryHandler:
             ("competitors", "STRING"), ("also_known_as", "STRING"),
             ("legal_name", "STRING"), ("registration_number", "STRING"),
             ("financing_note", "STRING"),
+            ("directors", "STRING"), ("company_linkedin", "STRING"),
+            ("investors_raw", "STRING"), ("current_owners", "STRING"),
+            ("revenue_cagr_3yr_pct", "FLOAT64"), ("employee_growth_1yr_pct", "FLOAT64"),
+            ("employee_growth_3yr_pct", "FLOAT64"), ("ebitda_margin_pct", "FLOAT64"),
         ]
 
         merged = 0

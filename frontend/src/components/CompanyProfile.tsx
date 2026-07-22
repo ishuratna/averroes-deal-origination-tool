@@ -214,15 +214,17 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
+  const [connections, setConnections] = useState<any>({ investors: [], siblings: [] });
   const [noteText, setNoteText] = useState('');
   const [busy, setBusy] = useState('');
   const [outreachOpen, setOutreachOpen] = useState(false);
 
   useEffect(() => {
     if (!company) return;
-    setActivity([]); setEmails([]);
+    setActivity([]); setEmails([]); setConnections({ investors: [], siblings: [] });
     dealApi.getCompanyActivity(company.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(company.name).then(r => setEmails(r.emails || [])).catch(() => {});
+    dealApi.getCompanyConnections(company.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
   }, [company?.name]);
 
   useEffect(() => {
@@ -459,6 +461,39 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                 <div className="cp-stat"><span className="cp-stat-label">Founder holding</span><span className="cp-stat-value">{company.ch_founder_pct != null ? `~${company.ch_founder_pct}%` : '—'}</span></div>
                 <div className="cp-stat"><span className="cp-stat-label">Total raised</span><span className="cp-stat-value">{fmtM(company.total_raised_m) || '—'}</span></div>
               </div>
+
+              {(connections.investors?.length > 0 || connections.siblings?.length > 0) && (
+                <>
+                  <div className="cp-section-title">Investor connections</div>
+                  <div className="cp-card">
+                    {(connections.investors || []).map((inv: any, i: number) => (
+                      <div className="cp-kv" key={i}>
+                        <span className="k">{inv.investor_name}
+                          <span className="cp-feed-tag cp-tag-note" style={{ marginLeft: '0.4rem' }}>{inv.investor_type}</span>
+                        </span>
+                        <span className="v">{inv.pct != null ? `${inv.pct}% · ` : ''}{String(inv.link_type || '').replace(/_/g, ' ')}</span>
+                      </div>
+                    ))}
+                    {(() => {
+                      const sib = new Map<string, string[]>();
+                      (connections.siblings || []).forEach((s: any) => {
+                        const arr = sib.get(s.company_name) || [];
+                        if (!arr.includes(s.via)) arr.push(s.via);
+                        sib.set(s.company_name, arr);
+                      });
+                      if (!sib.size) return null;
+                      return (
+                        <div style={{ marginTop: '0.7rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.6rem' }}>
+                          <p style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 0.35rem' }}>Connected companies (shared investors)</p>
+                          {Array.from(sib.entries()).slice(0, 8).map(([cn, vias], i) => (
+                            <p className="cp-memo-p" key={i}><b>{cn}</b> <span style={{ color: '#94a3b8' }}>via {vias.slice(0, 3).join(', ')}</span></p>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
 
               {cap?.shareholders?.length ? (
                 <>

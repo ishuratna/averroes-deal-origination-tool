@@ -110,6 +110,8 @@ def parse_inven_csv(file_content: bytes) -> List[Dict]:
             "ebitda_margin_pct": _f(g("Latest EBITDA margin %")),
             "directors": g("Directors")[:2000],
             "company_linkedin": g("LinkedIn URL"),
+            "investors_raw": g("Investors")[:2000],
+            "current_owners": g("Current owners")[:2000],
             "financing_note": converted_note if (rev_latest or ebitda_latest) else "",
         }
         targets.append({k: v for k, v in target.items() if v not in (None, "")})

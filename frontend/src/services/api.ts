@@ -221,6 +221,20 @@ export const dealApi = {
     return await response.json();
   },
 
+  async mineAllInvestors(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/mine-all`, { method: 'POST' });
+    let data;
+    try { data = await response.json(); } catch { throw new Error(`Mining failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'Investor mining failed'); }
+    return data;
+  },
+
+  async getCompanyConnections(companyName: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/connections/company/${encodeURIComponent(companyName)}`);
+    if (!response.ok) return { investors: [], siblings: [] };
+    return await response.json();
+  },
+
   async generateIcMemo(companyName: string): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo`, { method: 'POST' });
     let data;

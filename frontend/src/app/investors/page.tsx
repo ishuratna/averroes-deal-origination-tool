@@ -78,6 +78,18 @@ function InvestorsInner() {
     finally { setMining(false); }
   };
 
+  const [miningAll, setMiningAll] = useState(false);
+  const handleMineAll = async () => {
+    setMiningAll(true);
+    try {
+      const res = await dealApi.mineAllInvestors();
+      alert(`Mined ${res.companies_scanned} companies: ${res.new_investors} new investors, `
+        + `${res.overlaps_merged} overlaps merged, ${res.links_saved} connections mapped.`);
+      await loadData();
+    } catch (e: any) { alert(e?.message || "Mining failed — check backend logs."); }
+    finally { setMiningAll(false); }
+  };
+
   const handleFill = async (name: string) => {
     setFilling(name);
     try {
@@ -428,6 +440,23 @@ function InvestorsInner() {
                   </div>
                   <button className="source-refresh" onClick={handleMine} disabled={mining}>
                     {mining ? 'Mining…' : 'Refresh ↻'}
+                  </button>
+                </div>
+
+                <div className="source-card">
+                  <div className="source-card-head">
+                    <span className="source-icon">🕸</span>
+                    <div>
+                      <span className="source-name">Mine All Sources + Connections</span>
+                      <p className="source-desc">Sweeps every Qualified+ company: CH cap tables (with % stakes), PitchBook lists and Inven investor/owner columns. Every investor is typed (Fund / Angel / Agency / Bank / Corporate…), deduped, and each investor↔company relationship is stored in the connection layer for interconnection queries. Refreshes itself daily.</p>
+                    </div>
+                  </div>
+                  <div className="source-stats">
+                    <span><b>{bySource('mining v2').length}</b> investors</span>
+                    {lastIngested(bySource('mining v2')) && <span>Last mined: {lastIngested(bySource('mining v2'))}</span>}
+                  </div>
+                  <button className="source-refresh" onClick={handleMineAll} disabled={miningAll}>
+                    {miningAll ? 'Mining…' : 'Run now ↻'}
                   </button>
                 </div>
               </div>

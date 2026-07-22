@@ -19,7 +19,9 @@ INVESTOR_STAGES = ["Identified", "Researched", "Contacted", "Meeting", "Committe
 
 INVESTOR_TYPES = [
     "Family Office", "Fund of Funds", "HNWI", "UHNWI",
-    "VC", "PE", "Angel", "Corporate", "Sovereign/Institutional", "Unknown",
+    "VC", "PE", "Angel", "Corporate", "Sovereign/Institutional",
+    # Types produced by the portfolio miner (kept for filtering/intel)
+    "Fund", "Agency", "Bank", "Crowdfunding", "Unknown",
 ]
 
 
@@ -419,3 +421,120 @@ class InvestorBQHandler:
         except Exception as e:
             logger.error(f"Failed to add investor note: {e}")
             return False
+
+    # ── Investor ↔ Company connection layer ─────────────────────────────────
+    # Edge table: one row per (investor, company, link_type) with evidence.
+    # This is what makes interconnection queries possible: co-investors,
+    # sibling portfolio companies, shared backers across the universe.
+
+    @property
+    def links_table_id(self) -> str:
+        return self.table_id.rsplit(".", 1)[0] + ".investor_links"
+
+    def _ensure_links_table(self):
+        try:
+            self.client.get_table(self.links_table_id)
+        except Exception:
+            schema = [bigquery.SchemaField(n, t) for n, t in [
+                ("investor_key", "STRING"),   # canonical lowercase key
+                ("investor_name", "STRING"),
+                ("investor_type", "STRING"),
+                ("company_name", "STRING"),
+                ("link_type", "STRING"),      # equity_holder / pitchbook_active / pitchbook_former / inven_investor / inven_owner
+                ("pct", "FLOAT64"),           # stake, when known (cap table)
+                ("detail", "STRING"),
+                ("source", "STRING"),
+                ("updated_at", "TIMESTAMP"),
+            ]]
+            self.client.create_table(bigquery.Table(self.links_table_id, schema=schema))
+            logger.info("Created investor_links table in BigQuery")
+
+    def save_links(self, company_name: str, links: List[Dict]) -> int:
+        """Snapshot semantics per company: mining is authoritative for the
+        companies it just processed — replace their mining edges wholesale."""
+        if not self.client:
+            return 0
+        import json as _json
+        self._ensure_links_table()
+        self.client.query(
+            f"DELETE FROM `{self.links_table_id}` WHERE company_name = @c AND source = 'mining'",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("c", "STRING", company_name)])).result()
+        if not links:
+            return 0
+        payload = _json.dumps([{
+            "k": l.get("investor_key") or "", "n": l.get("investor_name") or "",
+            "t": l.get("investor_type") or "Unknown", "lt": l.get("link_type") or "",
+            "p": l.get("pct"), "d": (l.get("detail") or "")[:400],
+        } for l in links])
+        self.client.query(
+            f"""INSERT INTO `{self.links_table_id}`
+                (investor_key, investor_name, investor_type, company_name, link_type, pct, detail, source, updated_at)
+                SELECT JSON_EXTRACT_SCALAR(j, '$.k'), JSON_EXTRACT_SCALAR(j, '$.n'),
+                       JSON_EXTRACT_SCALAR(j, '$.t'), @c, JSON_EXTRACT_SCALAR(j, '$.lt'),
+                       SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.p') AS FLOAT64),
+                       JSON_EXTRACT_SCALAR(j, '$.d'), 'mining', CURRENT_TIMESTAMP()
+                FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("c", "STRING", company_name),
+                bigquery.ScalarQueryParameter("payload", "STRING", payload)])).result()
+        return len(links)
+
+    def merge_source_companies(self, pairs: List[Dict]) -> int:
+        """Batch-append portfolio overlaps to existing investors in ONE DML.
+        pairs: [{"key": lower_name, "source_companies": merged_string}]"""
+        if not self.client or not pairs:
+            return 0
+        import json as _json
+        payload = _json.dumps([{"k": p["key"], "sc": p["source_companies"][:2000]} for p in pairs])
+        q = f"""MERGE `{self.table_id}` T
+                USING (SELECT JSON_EXTRACT_SCALAR(j, '$.k') AS k, JSON_EXTRACT_SCALAR(j, '$.sc') AS sc
+                       FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j) S
+                ON LOWER(T.name) = S.k
+                WHEN MATCHED THEN UPDATE SET source_companies = S.sc, updated_at = CURRENT_TIMESTAMP()"""
+        self.client.query(q, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("payload", "STRING", payload)])).result()
+        return len(pairs)
+
+    def get_company_connections(self, company_name: str) -> Dict:
+        """Investors of a company + sibling companies that share any of them."""
+        if not self.client:
+            return {"investors": [], "siblings": []}
+        self._ensure_links_table()
+        inv = [dict(r) for r in self.client.query(
+            f"""SELECT investor_key, investor_name, investor_type, link_type, pct, detail
+                FROM `{self.links_table_id}` WHERE company_name = @c
+                ORDER BY pct IS NULL, pct DESC""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("c", "STRING", company_name)])).result()]
+        sib = [dict(r) for r in self.client.query(
+            f"""SELECT l2.company_name, l2.investor_name AS via, l2.investor_type
+                FROM `{self.links_table_id}` l1
+                JOIN `{self.links_table_id}` l2 ON l1.investor_key = l2.investor_key
+                WHERE l1.company_name = @c AND l2.company_name != @c
+                ORDER BY l2.company_name""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("c", "STRING", company_name)])).result()]
+        return {"investors": inv, "siblings": sib}
+
+    def get_investor_connections(self, investor_name: str) -> Dict:
+        """Portfolio companies of an investor + co-investors sharing them."""
+        if not self.client:
+            return {"companies": [], "co_investors": []}
+        self._ensure_links_table()
+        key = (investor_name or "").strip().lower()
+        comp = [dict(r) for r in self.client.query(
+            f"""SELECT company_name, link_type, pct, detail FROM `{self.links_table_id}`
+                WHERE investor_key = @k OR LOWER(investor_name) = @k ORDER BY company_name""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("k", "STRING", key)])).result()]
+        co = [dict(r) for r in self.client.query(
+            f"""SELECT DISTINCT l2.investor_name, l2.investor_type, l2.company_name AS shared_company
+                FROM `{self.links_table_id}` l1
+                JOIN `{self.links_table_id}` l2 ON l1.company_name = l2.company_name
+                WHERE (l1.investor_key = @k OR LOWER(l1.investor_name) = @k)
+                  AND l2.investor_key != l1.investor_key
+                ORDER BY l2.investor_name""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("k", "STRING", key)])).result()]
+        return {"companies": comp, "co_investors": co}

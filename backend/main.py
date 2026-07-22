@@ -754,6 +754,13 @@ async def ch_watch_run(request: Request):
     # Synchronous but bounded (~80 companies ≈ 1-2 minutes worst case):
     # Cloud Run throttles CPU after the response, so background threads stall.
     result = _ch_watch_sweep()
+    # Daily investor-mining refresh rides the same scheduled run, so newly
+    # Qualified companies feed the LP database with zero extra setup.
+    try:
+        result = dict(result or {})
+        result["investor_mining"] = _run_investor_mining()
+    except Exception as e:
+        logger.warning(f"[CH Watch] investor mining refresh failed (non-fatal): {e}")
     return result or {"status": "Success"}
 
 
@@ -817,6 +824,94 @@ async def prequalify_run(request: Request):
     if not expected or token != expected:
         raise HTTPException(status_code=403, detail="Invalid token.")
     return _prequalify_local()
+
+
+# ── Investor mining v2 + connection layer ───────────────────────────────────
+
+def _run_investor_mining() -> dict:
+    """
+    Sweep Qualified-and-later companies, extract their investors from every
+    stored source (CH cap tables, PitchBook, Inven), persist LP profiles
+    (typed, deduped, provenance kept) and the investor_links edge table.
+    Idempotent: safe to re-run daily; snapshot semantics per company.
+    """
+    from services.investor_miner import mine_companies, _canonical_key
+
+    dialogue = ("Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer", "Won")
+    companies = [c for c in bq_handler.get_universe()
+                 if c.get("status") in dialogue and c.get("source") != "Internal Test"]
+    result = mine_companies(companies)
+
+    links_saved, link_companies = 0, 0
+    for cname, links in result["per_company"].items():
+        try:
+            links_saved += investor_handler.save_links(cname, links)
+            link_companies += 1
+        except Exception as e:
+            logger.warning(f"[InvestorMiner] link save failed for {cname}: {e}")
+
+    # Upsert LP profiles: new ones inserted, existing ones get their
+    # portfolio overlap (source_companies) merged — never overwritten.
+    existing_map = {}
+    for r in investor_handler.get_all():
+        nm = (r.get("name") or "").strip()
+        if nm:
+            existing_map[nm.lower()] = r
+            existing_map.setdefault(_canonical_key(nm), r)
+
+    new_investors, merge_pairs = [], []
+    for key, p in result["investors"].items():
+        row = existing_map.get(p["name"].strip().lower()) or existing_map.get(key)
+        joined = ", ".join(sorted(p["companies"]))
+        if row:
+            old = {x.strip() for x in (row.get("source_companies") or "").split(",") if x.strip()}
+            merged = old | p["companies"]
+            if merged != old:
+                merge_pairs.append({"key": (row.get("name") or "").strip().lower(),
+                                    "source_companies": ", ".join(sorted(merged))})
+        else:
+            new_investors.append({
+                "name": p["name"], "investor_type": p["investor_type"],
+                "website": p.get("website") or "", "source": "Portfolio mining v2",
+                "source_companies": joined,
+                "notes": f"Mined from universe portfolio overlap ({len(p['companies'])} company/ies).\n",
+            })
+
+    inserted = investor_handler.save_investors(new_investors)
+    merged_n = investor_handler.merge_source_companies(merge_pairs) if merge_pairs else 0
+    summary = {"status": "Success", "companies_scanned": len(companies),
+               "companies_with_investors": link_companies, "links_saved": links_saved,
+               "new_investors": inserted, "overlaps_merged": merged_n}
+    logger.info(f"[InvestorMiner] {summary}")
+    return summary
+
+
+@app.post("/investors/mine-all")
+async def investors_mine_all():
+    """Mine investors of all Qualified+ companies into the LP database + connection layer."""
+    return _run_investor_mining()
+
+
+@app.get("/investor-mine/run")
+async def investor_mine_run(request: Request):
+    """Token-gated trigger (scheduler / ops) for the daily investor mining refresh."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return _run_investor_mining()
+
+
+@app.get("/connections/company/{company_name}")
+async def company_connections(company_name: str):
+    """Investors of a company + sibling companies sharing any investor."""
+    return investor_handler.get_company_connections(company_name)
+
+
+@app.get("/connections/investor/{investor_name}")
+async def investor_connections(investor_name: str):
+    """Portfolio companies of an investor + co-investors met through them."""
+    return investor_handler.get_investor_connections(investor_name)
 
 
 @app.get("/email/deep-sync/run")
