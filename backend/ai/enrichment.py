@@ -35,6 +35,11 @@ class EnrichmentAgent:
             3. Their LinkedIn profile URL (must be a direct individual profile link)
             4. Their professional email address, ONLY if it is actually published somewhere
             5. A detailed company summary (1-2 paragraphs)
+            6. Known investors: names of funds, angels or owners that have invested in
+               the company, ONLY where a source states it (funding announcements, press
+               releases, the company's own site, Companies House mentions). Return the
+               list of names; NEVER guess or include rumoured investors. Empty list if
+               no investor is named anywhere.
 
             QUALITY GUIDELINES:
             - Website must be the company's main domain (e.g., https://company.com), not a LinkedIn or Crunchbase page
@@ -68,7 +73,7 @@ class EnrichmentAgent:
             3. CEO / Managing Director
 
             Return ONLY valid JSON, no markdown, no explanation:
-            {{"website": "https://company.com", "contact_name": "First Last", "contact_email": "name@company.com", "email_source": "where the email was found, or empty", "linkedin_url": "https://www.linkedin.com/in/...", "description": "1-2 paragraph company summary"}}
+            {{"website": "https://company.com", "contact_name": "First Last", "contact_email": "name@company.com", "email_source": "where the email was found, or empty", "linkedin_url": "https://www.linkedin.com/in/...", "description": "1-2 paragraph company summary", "investors": ["Fund Name", "Angel Name"]}}
             """
 
             response = client.models.generate_content(
@@ -96,6 +101,10 @@ class EnrichmentAgent:
                 "email_source": result.get("email_source", ""),
                 "linkedin_url": result.get("linkedin_url", ""),
                 "description": result.get("description", ""),
+                # Source-stated investor names only (list of strings); the
+                # SmartFill persist layer merges these into investors_raw and
+                # the LP miner extracts them with the rest.
+                "investors": [str(x).strip() for x in (result.get("investors") or []) if str(x).strip()][:15],
             }
             # NOTE: the retry ladder is NOT run here — the contact waterfall
             # (services/contact_finder.resolve_contact_email) invokes it at the

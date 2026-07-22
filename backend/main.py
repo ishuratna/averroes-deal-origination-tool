@@ -1271,6 +1271,24 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             if est["is_estimate"]:
                 revenue_estimate_m = round(est["rev_m"], 2)
 
+    # Investor names found by the grounded enrichment (source-stated only)
+    # are MERGED into investors_raw: union with whatever Inven/PitchBook
+    # already provided, existing names never dropped. The LP miner picks
+    # them up on its next run like any other source.
+    merged_investors = ""
+    try:
+        web_inv = founder_info.get("investors") or []
+        existing_inv = [s.strip() for s in (company_data.get("investors_raw") or "").split(";") if s.strip()]
+        if web_inv:
+            low = {s.lower() for s in existing_inv}
+            for n in web_inv:
+                if n.lower() not in low:
+                    existing_inv.append(n)
+                    low.add(n.lower())
+        merged_investors = "; ".join(existing_inv)[:2000]
+    except Exception as e:
+        logger.warning(f"[SmartFill] investor merge skipped for {company_name}: {e}")
+
     # Step 5: Update BQ (size + CH financials + scoring)
     #
     # DATA PRECEDENCE (doctrine: never overwrite good data with nothing):
@@ -1291,6 +1309,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             status = @status,
             unfit_reason = '',
             website = IFNULL(NULLIF(@website, ''), website),
+            investors_raw = IFNULL(NULLIF(@investors_raw, ''), investors_raw),
             contact_name = IFNULL(NULLIF(@contact_name, ''), contact_name),
             contact_email = IFNULL(NULLIF(@contact_email, ''), contact_email),
             linkedin_url = IFNULL(NULLIF(@linkedin_url, ''), linkedin_url),
@@ -1350,6 +1369,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("status", "STRING", new_status),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
+            bq_lib.ScalarQueryParameter("investors_raw", "STRING", merged_investors),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
