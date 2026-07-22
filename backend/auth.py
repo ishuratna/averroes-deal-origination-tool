@@ -38,7 +38,7 @@ ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").spl
 # /ch-watch/run is exempt from Google auth but guarded by its own shared
 # token (WATCH_TOKEN) — Cloud Scheduler cannot present a user session.
 EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run", "/email/deep-sync/run", "/investor-mine/run"}
-EXEMPT_PREFIXES = ("/ch-pdf/",)
+EXEMPT_PREFIXES = ("/ch-pdf/", "/diag/deep/")  # diag is token-guarded inside the handler
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────
 # Google ID tokens expire after 1 hour, which interrupted long bulk runs.

@@ -1013,6 +1013,67 @@ async def investor_connections(investor_name: str):
     return investor_handler.get_investor_connections(investor_name)
 
 
+# ── Deep diagnostic: everything we read for ONE company, step by step ───────
+# Token-gated (NOT unauthenticated — the last "temporary" diag endpoint's
+# removal accidentally took /chat with it; this one is permanent and safe).
+
+@app.get("/diag/deep/{company_name}")
+async def diag_deep(company_name: str, request: Request,
+                    step: str = Query("stored", description="stored|search|profile|psc|officers|network|charges|filings|captable|sh01|links")):
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+
+    from services import companies_house_service as chs
+    company = next((c for c in bq_handler.get_universe() if c.get("name", "").lower() == company_name.lower()), None)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"'{company_name}' not in the universe")
+    number = company.get("ch_company_number") or ""
+
+    if step == "stored":
+        keys = ["name", "status", "source", "sector", "website", "contact_name", "contact_email",
+                "ch_company_number", "ch_official_name", "ch_status", "ch_incorporated_date", "ch_sic_codes",
+                "ch_match_confidence", "revenue_y1", "revenue_y1_date", "revenue_y2", "revenue_y3",
+                "gross_profit_y1", "profit_y1", "cash_y1", "net_assets_y1", "employees_ch",
+                "ch_psc_summary", "ch_ownership_verified", "ch_founder_pct", "ch_cap_table", "ch_cap_table_date",
+                "ch_charges_count", "ch_charges_summary", "ch_accounts_overdue", "ch_insolvency_summary",
+                "ch_last_resolution", "ch_accounts_regime", "ch_last_share_allotment", "ch_accounts_next_due",
+                "ch_history", "ch_allottees", "ch_officer_network", "ch_watched_at",
+                "investors_raw", "current_owners", "active_investors",
+                "averroes_fit_score", "revenue_band", "last_smartfill_at"]
+        return {"step": "stored (BigQuery row)", "data": {k: company.get(k) for k in keys}}
+    if step == "search":
+        return {"step": "CH search (raw top matches)", "data": chs._search_company(company["name"])[:5]}
+    if not number:
+        return {"step": step, "error": "No CH company number stored — run SmartFill first"}
+    if step == "profile":
+        return {"step": "company health (profile-derived)", "data": chs.get_company_health(number)}
+    if step == "psc":
+        return {"step": "PSC register", "data": chs.get_psc_summary(number)}
+    if step == "officers":
+        return {"step": "active directors", "data": chs.get_officers_summary(number)}
+    if step == "network":
+        return {"step": "officer appointment network",
+                "data": chs.get_officer_network(number, exclude_names=[company.get("contact_name") or ""])}
+    if step == "charges":
+        return {"step": "registered charges", "data": chs.get_charges_summary(number)}
+    if step == "filings":
+        return {"step": "filing intelligence", "data": {
+            "filing_intel": chs.get_filing_intel(number),
+            "capital_events": chs.get_capital_events(number),
+            "filings_since_2024": chs.get_filings_since(number, "2024-01-01")[:12]}}
+    if step == "captable":
+        return {"step": "cap table v3 (fresh parse: walk-back + SH01 roll-forward + rights + PSC check)",
+                "data": chs.get_cap_table(number, company["name"], stored_date="",
+                                          psc_summary=company.get("ch_psc_summary") or "")}
+    if step == "sh01":
+        return {"step": "latest SH01 allottees", "data": chs.get_sh01_allottees(number, company["name"])}
+    if step == "links":
+        return {"step": "connection layer edges", "data": investor_handler.get_company_connections(company["name"])}
+    raise HTTPException(status_code=400, detail=f"Unknown step '{step}'")
+
+
 @app.get("/email/deep-sync/run")
 async def deep_sync_run(request: Request):
     """One-off token-gated trigger: full-history email sync (per-contact IMAP
