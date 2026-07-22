@@ -462,6 +462,40 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                 <div className="cp-stat"><span className="cp-stat-label">Total raised</span><span className="cp-stat-value">{fmtM(company.total_raised_m) || '—'}</span></div>
               </div>
 
+              {(() => {
+                // Reported investors from source data (Inven / PitchBook) — the
+                // unverified layer that sits beside the CS01 cap table and feeds
+                // the LP miner. Shown as-is, provenance labelled.
+                const groups: Array<[string, string | undefined]> = [
+                  ['Investors (Inven)', company.investors_raw],
+                  ['Current owners (Inven)', company.current_owners],
+                  ['Active investors (PitchBook)', company.active_investors],
+                  ['Former investors (PitchBook)', company.former_investors],
+                ];
+                const present = groups.filter(([, v]) => (v || '').trim());
+                if (!present.length) return null;
+                return (
+                  <>
+                    <div className="cp-section-title">Reported investors (source data)</div>
+                    <div className="cp-card">
+                      {present.map(([label, v], gi) => (
+                        <div key={gi} style={{ marginBottom: gi < present.length - 1 ? '0.55rem' : 0 }}>
+                          <p style={{ fontSize: '0.66rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 0.25rem' }}>{label}</p>
+                          <div className="cp-people-grid">
+                            {Array.from(new Set((v || '').split(/[;,]/).map(s => s.trim()).filter(s => s.length > 2))).slice(0, 12).map((n, i) => (
+                              <span className="cp-person-chip" key={i}>{n}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      <p className="cp-memo-p" style={{ color: '#94a3b8', fontSize: '0.72rem', marginTop: '0.5rem' }}>
+                        As reported by source data — verified stakes come from the CS01 cap table above. The LP miner extracts these into the Investors database with connection mapping.
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
+
               {(connections.investors?.length > 0 || connections.siblings?.length > 0) && (
                 <>
                   <div className="cp-section-title">Investor connections</div>

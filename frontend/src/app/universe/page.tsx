@@ -946,6 +946,7 @@ function UniverseInner() {
                   <th><InfoTip label="Revenue (FY)" tip={DEFS.revenueFY} /></th>
                   <th><InfoTip label="Revenue (Prev FY)" tip={DEFS.revenuePrevFY} /></th>
                   <th><InfoTip label="Revenue Band" tip={DEFS.band} /></th>
+                  <th><InfoTip label="Investors" tip={DEFS.investors} /></th>
                   <th><InfoTip label="EBITDA" tip={DEFS.ebitda} /></th>
                   <th><InfoTip label="Profit" tip={DEFS.profit} /></th>
                   <th><InfoTip label="Assets" tip={DEFS.assets} /></th>
@@ -962,7 +963,7 @@ function UniverseInner() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={24}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={25}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   filteredUniverse.map((company, i) => (
@@ -1010,6 +1011,14 @@ function UniverseInner() {
                         ) : '—'}
                       </td>
                       <td>{(() => { const band = getRevenueBand(company); return band ? <span className={`band-badge band-${band.toLowerCase().replace(/\s+/g, '-')}`}>{band}</span> : '—'; })()}</td>
+                      <td className="investors-cell">{(() => {
+                        const raw = [company.investors_raw, company.current_owners, company.active_investors]
+                          .filter(Boolean).join('; ');
+                        if (!raw) return '—';
+                        const names = Array.from(new Set(raw.split(/[;,]/).map(s => s.trim()).filter(s => s && s.length > 2)));
+                        const shown = names.slice(0, 2).join(', ');
+                        return <span title={names.join(' · ')}>{shown}{names.length > 2 ? ` +${names.length - 2}` : ''}</span>;
+                      })()}</td>
                       <td className="num-cell">{company.estimated_ebitda ? `£${company.estimated_ebitda.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.profit_y1 != null ? `£${(company.profit_y1 / 1e6).toFixed(1)}M` : company.net_income_m ? `£${company.net_income_m.toFixed(1)}M` : '—'}</td>
                       <td className="num-cell">{company.total_assets_y1 ? `£${(company.total_assets_y1 / 1e6).toFixed(1)}M` : '—'}</td>
@@ -1071,7 +1080,7 @@ function UniverseInner() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={24} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={25} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
