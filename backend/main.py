@@ -669,13 +669,15 @@ def _ch_watch_sweep(limit: int = 80):
     stores ch_watched_at), so every company is covered every few days while
     each individual run stays fast and well inside request timeouts.
     """
-    from services.companies_house_service import get_filings_since, get_company_health
+    from services.companies_house_service import (get_filings_since, get_company_health,
+                                                  get_sh01_allottees, get_officer_network)
     from google.cloud import bigquery as bq_lib
     from datetime import datetime, timedelta, timezone
 
     default_since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     alerts, watched, stamped = [], 0, []
+    officer_checks = 0  # bounded per sweep: CH rate limit is 600/5min
     eligible = [c for c in bq_handler.get_universe()
                 if c.get("status") in WATCH_STAGES and c.get("ch_company_number")
                 and c.get("source") != "Internal Test"]
@@ -717,6 +719,50 @@ def _ch_watch_sweep(limit: int = 80):
                             bq_lib.ScalarQueryParameter("o", "BOOL", health["ch_accounts_overdue"]),
                             bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
                         ])).result()
+                # CAPITAL EVENT → parse the SH01 for allottee names (the
+                # newest investors, fresher than the last CS01)
+                if any("CAPITAL EVENT" in n for n in notes):
+                    try:
+                        stored = json.loads(c.get("ch_allottees") or "{}").get("date", "")
+                    except Exception:
+                        stored = ""
+                    sh01 = get_sh01_allottees(c["ch_company_number"], c["name"], stored_date=stored)
+                    if sh01.get("allottees"):
+                        bq_handler.client.query(
+                            f"""UPDATE `{bq_handler.table_id}` SET ch_allottees = @a WHERE name = @name""",
+                            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                                bq_lib.ScalarQueryParameter("a", "STRING", json.dumps(sh01)),
+                                bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                            ])).result()
+                        nm = ", ".join(a["name"] for a in sh01["allottees"][:4])
+                        bq_handler.add_activity_note(
+                            c["name"], f"CH Watch: SH01 {sh01['date']} names allottees: {nm}", "ch-watch")
+
+            # Officer appointment network: fund partners / serial angels on the
+            # board. Refreshed at most every 60 days, bounded per sweep.
+            try:
+                _net_checked = json.loads(c.get("ch_officer_network") or "{}").get("checked_at", "")
+            except Exception:
+                _net_checked = ""
+            needs_network = _net_checked < (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%d")
+            if needs_network and officer_checks < 20:
+                officer_checks += 1
+                try:
+                    net = get_officer_network(c["ch_company_number"], exclude_names=[c.get("contact_name") or ""])
+                    bq_handler.client.query(
+                        f"""UPDATE `{bq_handler.table_id}` SET ch_officer_network = @n WHERE name = @name""",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("n", "STRING", json.dumps(net)),
+                            bq_lib.ScalarQueryParameter("name", "STRING", c["name"]),
+                        ])).result()
+                    if net.get("officers"):
+                        for o in net["officers"][:3]:
+                            bq_handler.add_activity_note(
+                                c["name"],
+                                f"CH Watch: director {o['name']} holds {o['other_seats']} other active board seats "
+                                f"(likely investor-affiliated): {', '.join(o['companies'][:4])}", "ch-watch")
+                except Exception as e:
+                    logger.warning(f"[CH Watch] officer network failed for {c.get('name')}: {e}")
             stamped.append(c["name"])
         except Exception as e:
             logger.warning(f"[CH Watch] failed for {c.get('name')}: {e}")
@@ -877,9 +923,46 @@ def _run_investor_mining() -> dict:
 
     inserted = investor_handler.save_investors(new_investors)
     merged_n = investor_handler.merge_source_companies(merge_pairs) if merge_pairs else 0
+
+    # Auto reverse-enrichment: newly discovered institutional investors get an
+    # immediate CH lookup — officers (principals to contact), PSC (who is
+    # behind the vehicle: UHNWI discovery), filed net assets (AUM proxy).
+    # Bounded per run; the rest are picked up on subsequent daily runs.
+    reverse_enriched = 0
+    try:
+        from ai.investor_fill import ch_enrich_investor
+        from google.cloud import bigquery as bq_lib
+        for inv in new_investors:
+            if reverse_enriched >= 12:
+                break
+            if inv.get("investor_type") in ("Angel",):  # individuals: nothing to look up
+                continue
+            info = ch_enrich_investor(inv["name"])
+            if not (info.get("psc_summary") or info.get("officers_summary") or info.get("net_assets_m") is not None):
+                continue
+            reverse_enriched += 1
+            bq_handler.client.query(
+                f"""UPDATE `{investor_handler.table_id}` SET
+                    psc_summary = IFNULL(NULLIF(@psc, ''), psc_summary),
+                    officers_summary = IFNULL(NULLIF(@off, ''), officers_summary),
+                    net_assets_m = IFNULL(@na, net_assets_m),
+                    contact_name = IFNULL(NULLIF(contact_name, ''), @principal),
+                    updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("psc", "STRING", info.get("psc_summary") or ""),
+                    bq_lib.ScalarQueryParameter("off", "STRING", info.get("officers_summary") or ""),
+                    bq_lib.ScalarQueryParameter("na", "FLOAT64", info.get("net_assets_m")),
+                    bq_lib.ScalarQueryParameter("principal", "STRING", info.get("principal_name") or ""),
+                    bq_lib.ScalarQueryParameter("name", "STRING", inv["name"]),
+                ])).result()
+    except Exception as e:
+        logger.warning(f"[InvestorMiner] reverse enrichment failed (non-fatal): {e}")
+
     summary = {"status": "Success", "companies_scanned": len(companies),
                "companies_with_investors": link_companies, "links_saved": links_saved,
-               "new_investors": inserted, "overlaps_merged": merged_n}
+               "new_investors": inserted, "overlaps_merged": merged_n,
+               "reverse_enriched": reverse_enriched}
     logger.info(f"[InvestorMiner] {summary}")
     return summary
 

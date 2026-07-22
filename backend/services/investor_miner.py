@@ -107,7 +107,8 @@ def extract_candidates(company: dict) -> List[Dict]:
     cands, seen = [], set()
     cname_key = _canonical_key(company.get("name") or "")
 
-    def add(name: str, link_type: str, pct=None, detail: str = "", website: str = ""):
+    def add(name: str, link_type: str, pct=None, detail: str = "", website: str = "",
+            default_type: str = None):
         name = re.sub(r"\s+", " ", (name or "").strip())
         if not name or name.lower() in _JUNK:
             return
@@ -120,6 +121,8 @@ def extract_candidates(company: dict) -> List[Dict]:
             return
         seen.add((key, link_type))
         itype = "FounderVehicle" if _founder_vehicle(name, company) else _rule_classify(name)
+        if itype is None and default_type:
+            itype = default_type  # contextual default beats an AI round-trip
         cands.append({"investor_key": key, "investor_name": name, "investor_type": itype,
                       "link_type": link_type, "pct": pct, "detail": detail[:300], "website": website})
 
@@ -141,6 +144,52 @@ def extract_candidates(company: dict) -> List[Dict]:
                     pct = None
                 add(nm, "equity_holder", pct=pct,
                     detail=f"CS01 cap table {str(company.get('ch_cap_table_date') or '')[:10]}")
+        except Exception:
+            pass
+
+    # 1b. Corporate PSCs (25%+ controllers) from the stored register summary.
+    # Format: "Acme Capital LLP (entity, 25-50%); Jane Doe (individual, 75-100%)"
+    for m in re.finditer(r"([^;]+?)\s*\(entity,\s*([^)]+)\)", company.get("ch_psc_summary") or ""):
+        add(m.group(1).strip(), "psc_holder", detail=f"PSC register, {m.group(2).strip()} control")
+
+    # 1c. SH01 allottees — the newest investors, fresher than the last CS01
+    raw_al = company.get("ch_allottees")
+    if raw_al:
+        try:
+            parsed_al = json.loads(raw_al) if isinstance(raw_al, str) else raw_al
+            for a in (parsed_al.get("allottees") or []):
+                if isinstance(a, dict) and (a.get("name") or "").strip():
+                    add(a["name"], "sh01_allottee",
+                        detail=f"SH01 allotment {parsed_al.get('date', '')}")
+        except Exception:
+            pass
+
+    # 1d. Charge holders — secured lenders (real debt relationships)
+    m_ch = re.search(r"held by\s+(.+)$", company.get("ch_charges_summary") or "")
+    if m_ch:
+        for nm in m_ch.group(1).split(","):
+            if nm.strip():
+                add(nm.strip(), "charge_lender", detail="Registered charge (secured debt)",
+                    default_type="Bank")
+
+    # 1e. Officer networks — a director with several other active board seats
+    # is very likely a fund partner or serial angel
+    raw_net = company.get("ch_officer_network")
+    if raw_net:
+        try:
+            parsed_net = json.loads(raw_net) if isinstance(raw_net, str) else raw_net
+            for o in (parsed_net.get("officers") or []):
+                nm = (o.get("name") or "").strip()
+                if not nm:
+                    continue
+                # CH format "SURNAME, First" -> "First Surname"
+                if "," in nm:
+                    parts = [p.strip() for p in nm.split(",")]
+                    nm = " ".join(reversed(parts)).title()
+                add(nm, "board_director",
+                    detail=f"{o.get('other_seats')} other active board seats: "
+                           f"{', '.join((o.get('companies') or [])[:4])}",
+                    default_type="Angel")
         except Exception:
             pass
 

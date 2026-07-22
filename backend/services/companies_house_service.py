@@ -1064,3 +1064,127 @@ def get_filings_since(company_number: str, since_date: str) -> List[dict]:
             out.append({"date": item.get("date", ""), "category": item.get("category", ""),
                         "type": item.get("type", ""), "description": (item.get("description") or "").replace("-", " ")})
     return out
+
+
+# ── CH max-extraction v6: SH01 allottees + officer networks ─────────────────
+# Two more investor-discovery layers from the registry. SH01 documents name
+# the allottees of newly issued shares (the newest investors, fresher than
+# the last CS01); officer appointment graphs reveal fund partners and serial
+# angels sitting on our targets' boards.
+
+def get_sh01_allottees(company_number: str, company_name: str, stored_date: str = "") -> Dict:
+    """
+    Parse the most recent SH01 (share allotment) document for allottee names.
+    Skips work when the newest allotment filing is not newer than stored_date.
+    Returns {"date": ..., "allottees": [{"name", "shares"}], "skipped": bool}.
+    """
+    import base64
+    filings = _fetch_filing_history(company_number, category="capital", items=10)
+    target = None
+    for f in filings:
+        if "allotment" in (f.get("description") or "") or (f.get("type") or "").upper().startswith("SH01"):
+            target = f
+            break
+    if not target:
+        return {"date": "", "allottees": [], "skipped": True}
+    fdate = target.get("date", "")
+    if stored_date and fdate and fdate <= stored_date[:10]:
+        return {"date": fdate, "allottees": [], "skipped": True}
+
+    pdf = _download_accounts_pdf(target)  # generic filing-document downloader
+    if not pdf:
+        return {"date": fdate, "allottees": [], "skipped": False}
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return {"date": fdate, "allottees": [], "skipped": False}
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        pdf_b64 = base64.b64encode(pdf).decode()
+        prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) or similar
+capital filing for {company_name}. Extract the names of the allottees (the people or
+entities the new shares were allotted to) if the document lists them. Many SH01 forms
+do NOT name allottees - in that case return an empty list. NEVER guess names.
+
+Return ONLY valid JSON:
+{{"allottees": [{{"name": "...", "shares": null or number}}], "names_listed": true or false}}"""
+        response = model.generate_content(
+            [{"mime_type": "application/pdf", "data": pdf_b64}, prompt],
+            generation_config={"response_mime_type": "application/json"},
+        )
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(text)
+        allottees = [a for a in (result.get("allottees") or [])
+                     if isinstance(a, dict) and (a.get("name") or "").strip()]
+        logger.info(f"[CH] SH01 {fdate} for '{company_name}': {len(allottees)} allottee(s) named")
+        return {"date": fdate, "allottees": allottees[:12], "skipped": False}
+    except Exception as e:
+        logger.warning(f"[CH] SH01 parse failed for {company_name}: {e}")
+        return {"date": fdate, "allottees": [], "skipped": False}
+
+
+def get_officer_network(company_number: str, exclude_names: List[str] = None,
+                        max_officers: int = 4, min_other_seats: int = 3) -> Dict:
+    """
+    Officer appointment graph: for each active non-founder director, list their
+    OTHER active board seats. A director with several other seats is very
+    likely a fund partner or serial angel - identifying both the investor and
+    their portfolio. Cost: 1 call for officers + 1 per director (bounded).
+    Returns {"checked_at", "officers": [{"name","other_seats","companies":[...]}]}.
+    """
+    from datetime import date as _date
+    auth = _ch_auth()
+    exclude_low = {(_n or "").strip().lower() for _n in (exclude_names or [])}
+
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/officers",
+                            params={"items_per_page": 20}, auth=auth, timeout=15)
+        if resp.status_code != 200:
+            return {"checked_at": str(_date.today()), "officers": []}
+        items = resp.json().get("items", [])
+    except Exception as e:
+        logger.warning(f"[CH] officer network: officers fetch failed for {company_number}: {e}")
+        return {"checked_at": str(_date.today()), "officers": []}
+
+    results = []
+    checked = 0
+    for o in items:
+        if checked >= max_officers:
+            break
+        if o.get("resigned_on") or "director" not in (o.get("officer_role") or ""):
+            continue
+        name = o.get("name", "")
+        # CH officer names come as "SURNAME, First" - normalise for exclusion match
+        flat = " ".join(reversed([p.strip() for p in name.split(",")])).strip().lower()
+        if flat in exclude_low or name.strip().lower() in exclude_low:
+            continue
+        appt_link = ((o.get("links") or {}).get("officer") or {}).get("appointments", "")
+        if not appt_link:
+            continue
+        checked += 1
+        try:
+            aresp = requests.get(f"{CH_API_BASE}{appt_link}",
+                                 params={"items_per_page": 30}, auth=auth, timeout=15)
+            if aresp.status_code != 200:
+                continue
+            appts = aresp.json().get("items", [])
+        except Exception:
+            continue
+        others = []
+        for a in appts:
+            if a.get("resigned_on"):
+                continue
+            comp = (a.get("appointed_to") or {}).get("company_name", "")
+            comp_no = (a.get("appointed_to") or {}).get("company_number", "")
+            if comp_no == company_number or not comp:
+                continue
+            if comp not in others:
+                others.append(comp)
+        if len(others) >= min_other_seats:
+            results.append({"name": name, "other_seats": len(others), "companies": others[:8]})
+
+    return {"checked_at": str(_date.today()), "officers": results}

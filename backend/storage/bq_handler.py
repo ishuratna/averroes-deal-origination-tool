@@ -140,6 +140,10 @@ class BigQueryHandler:
         # Full multi-year financial history from CH filings (JSON) — feeds the
         # profile's revenue chart, employee chart and multi-year P&L table
         ("ch_history", "STRING"),
+        # CH max-extraction v6: SH01 allottees (newest investors) and officer
+        # appointment networks (fund partners / serial angels on the board)
+        ("ch_allottees", "STRING"),
+        ("ch_officer_network", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)
