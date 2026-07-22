@@ -222,10 +222,17 @@ export const dealApi = {
   },
 
   async mineAllInvestors(): Promise<any> {
+    // Streams heartbeat spaces while mining; the final line is the JSON summary.
     const response = await apiFetch(`${API_BASE_URL}/investors/mine-all`, { method: 'POST' });
+    const text = await response.text();
+    if (!response.ok) {
+      try { throw new Error(JSON.parse(text).detail || 'Investor mining failed'); }
+      catch (e: any) { throw new Error(e?.message || `Mining failed: ${response.statusText}`); }
+    }
+    const lines = text.trim().split('\n');
     let data;
-    try { data = await response.json(); } catch { throw new Error(`Mining failed: ${response.statusText}`); }
-    if (!response.ok) { throw new Error(data.detail || 'Investor mining failed'); }
+    try { data = JSON.parse(lines[lines.length - 1]); } catch { throw new Error('Mining response unreadable — it may still have completed server-side'); }
+    if (data.status === 'Error') throw new Error(data.detail || 'Investor mining failed');
     return data;
   },
 

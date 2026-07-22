@@ -449,6 +449,40 @@ class InvestorBQHandler:
             self.client.create_table(bigquery.Table(self.links_table_id, schema=schema))
             logger.info("Created investor_links table in BigQuery")
 
+    def save_links_bulk(self, per_company: Dict[str, List[Dict]]) -> int:
+        """All companies in ONE DELETE + ONE INSERT (per-company DML made the
+        full sweep take minutes and killed the request on hostile networks)."""
+        if not self.client or not per_company:
+            return 0
+        import json as _json
+        self._ensure_links_table()
+        names = list(per_company.keys())
+        self.client.query(
+            f"DELETE FROM `{self.links_table_id}` WHERE source = 'mining' AND company_name IN UNNEST(@names)",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("names", "STRING", names)])).result()
+        rows = []
+        for cname, links in per_company.items():
+            for l in links:
+                rows.append({"c": cname, "k": l.get("investor_key") or "",
+                             "n": l.get("investor_name") or "", "t": l.get("investor_type") or "Unknown",
+                             "lt": l.get("link_type") or "", "p": l.get("pct"),
+                             "d": (l.get("detail") or "")[:400]})
+        if not rows:
+            return 0
+        self.client.query(
+            f"""INSERT INTO `{self.links_table_id}`
+                (investor_key, investor_name, investor_type, company_name, link_type, pct, detail, source, updated_at)
+                SELECT JSON_EXTRACT_SCALAR(j, '$.k'), JSON_EXTRACT_SCALAR(j, '$.n'),
+                       JSON_EXTRACT_SCALAR(j, '$.t'), JSON_EXTRACT_SCALAR(j, '$.c'),
+                       JSON_EXTRACT_SCALAR(j, '$.lt'),
+                       SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.p') AS FLOAT64),
+                       JSON_EXTRACT_SCALAR(j, '$.d'), 'mining', CURRENT_TIMESTAMP()
+                FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("payload", "STRING", _json.dumps(rows))])).result()
+        return len(rows)
+
     def save_links(self, company_name: str, links: List[Dict]) -> int:
         """Snapshot semantics per company: mining is authoritative for the
         companies it just processed — replace their mining edges wholesale."""

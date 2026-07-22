@@ -842,13 +842,11 @@ def _run_investor_mining() -> dict:
                  if c.get("status") in dialogue and c.get("source") != "Internal Test"]
     result = mine_companies(companies)
 
-    links_saved, link_companies = 0, 0
-    for cname, links in result["per_company"].items():
-        try:
-            links_saved += investor_handler.save_links(cname, links)
-            link_companies += 1
-        except Exception as e:
-            logger.warning(f"[InvestorMiner] link save failed for {cname}: {e}")
+    links_saved, link_companies = 0, len(result["per_company"])
+    try:
+        links_saved = investor_handler.save_links_bulk(result["per_company"])
+    except Exception as e:
+        logger.warning(f"[InvestorMiner] bulk link save failed: {e}")
 
     # Upsert LP profiles: new ones inserted, existing ones get their
     # portfolio overlap (source_companies) merged — never overwritten.
@@ -888,8 +886,26 @@ def _run_investor_mining() -> dict:
 
 @app.post("/investors/mine-all")
 async def investors_mine_all():
-    """Mine investors of all Qualified+ companies into the LP database + connection layer."""
-    return _run_investor_mining()
+    """Mine investors of all Qualified+ companies into the LP database +
+    connection layer. Streams heartbeats while working (hostile networks kill
+    silent connections); the final line is the JSON summary."""
+    import asyncio as _asyncio
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    async def _gen():
+        task = _asyncio.create_task(_asyncio.to_thread(_run_investor_mining))
+        while not task.done():
+            await _asyncio.sleep(10)
+            yield " "
+        try:
+            res = task.result()
+        except Exception as e:
+            logger.error(f"[InvestorMiner] run failed: {e}")
+            res = {"status": "Error", "detail": str(e)}
+        yield "\n" + _json.dumps(res)
+
+    return StreamingResponse(_gen(), media_type="text/plain")
 
 
 @app.get("/investor-mine/run")
