@@ -111,8 +111,10 @@ def _index_line_investor(i: dict) -> str:
             f"geo: {i.get('hq_country') or i.get('region') or '-'}")
 
 
-def build_chat_context(message: str, universe: List[dict], investors: List[dict]) -> Dict:
-    """Assemble everything the model may use: matched full records + compact index."""
+def build_chat_context(message: str, universe: List[dict], investors: List[dict],
+                       links: List[dict] = None) -> Dict:
+    """Assemble everything the model may use: matched full records + compact index
+    + the investor-company connection layer (who backs whom)."""
     mc, mi = _match_entities(message, universe, investors)
     context = {
         "matched_companies": [_slim(c, _COMPANY_FIELDS) for c in mc],
@@ -123,6 +125,24 @@ def build_chat_context(message: str, universe: List[dict], investors: List[dict]
         "company_index": [_index_line_company(c) for c in universe[:3000]],
         "investor_index": [_index_line_investor(i) for i in investors[:2000]],
     }
+    if links:
+        # Compact edge list: "Investor [Type] -> Company (link, stake%)".
+        # This is the source of truth for interconnection questions:
+        # who invests in X, what else does Y back, which companies share
+        # investors, who are the co-investors of Z.
+        def _edge(l):
+            pct = f", {l['pct']}%" if l.get("pct") is not None else ""
+            return (f"{l.get('investor_name')} [{l.get('investor_type') or '?'}] -> "
+                    f"{l.get('company_name')} ({str(l.get('link_type') or '').replace('_', ' ')}{pct})")
+        context["connection_index"] = [_edge(l) for l in links[:4000]]
+        # Focused view for matched entities so the model never misses them
+        mc_names = {c.get("name") for c in mc}
+        mi_names = {(i.get("name") or "").lower() for i in mi}
+        focused = [l for l in links
+                   if l.get("company_name") in mc_names
+                   or (l.get("investor_name") or "").lower() in mi_names]
+        if focused:
+            context["matched_connections"] = [_edge(l) for l in focused[:200]]
     return context
 
 
@@ -141,6 +161,12 @@ ABSOLUTE RULES:
 4. For aggregate questions (how many, list, top by fit, which are stale) use the
    INDEX lines. Figures like revenue_y1 are raw GBP; revenue_m and *_m fields are in
    millions of GBP.
+4b. INTERCONNECTIONS: connection_index (and matched_connections) lines have the form
+   "Investor [Type] -> Company (link type, stake%)". Use them for: who invests in a
+   company, an investor's portfolio within our universe, co-investors, and which
+   companies share a backer. These edges come from verified sources (CS01 cap tables,
+   PitchBook, Inven). If there are no edges for an entity, say the connection layer
+   has none yet (mining runs daily) — never invent a relationship.
 5. FORMAT like a consultant's note — scannable, never a wall of text:
    - Open with ONE short takeaway line (no header).
    - Then small sections, each starting with a bold header on its own line,
@@ -155,10 +181,11 @@ Return ONLY valid JSON: {"reply": "your answer", "needs_web_search": true or fal
 """
 
 
-def chat_answer(message: str, history: List[Dict], universe: List[dict], investors: List[dict]) -> Dict:
+def chat_answer(message: str, history: List[Dict], universe: List[dict], investors: List[dict],
+                links: List[dict] = None) -> Dict:
     """Data-only answer. Returns {reply, needs_web_search, matched}."""
     api_key = os.getenv("GEMINI_API_KEY", "")
-    context = build_chat_context(message, universe, investors)
+    context = build_chat_context(message, universe, investors, links=links)
     fallback = {"reply": "The AI service is not configured (GEMINI_API_KEY missing).", "needs_web_search": False}
     if not api_key:
         return fallback
@@ -222,7 +249,8 @@ USER QUESTION: {message}
         return {"reply": f"Chat failed: {e}", "needs_web_search": False, "matched": []}
 
 
-def chat_web_search(message: str, history: List[Dict], universe: List[dict], investors: List[dict]) -> Dict:
+def chat_web_search(message: str, history: List[Dict], universe: List[dict], investors: List[dict],
+                    links: List[dict] = None) -> Dict:
     """
     Grounded answer, run ONLY when the user explicitly pressed 'Run web search'.
     Caller (main.py) enforces the daily grounding budget before invoking this.
@@ -230,7 +258,7 @@ def chat_web_search(message: str, history: List[Dict], universe: List[dict], inv
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         return {"reply": "The AI service is not configured (GEMINI_API_KEY missing).", "needs_web_search": False}
-    context = build_chat_context(message, universe, investors)
+    context = build_chat_context(message, universe, investors, links=links)
     convo = "\n".join(f"{h.get('role', 'user')}: {h.get('content', '')}" for h in history[-10:])
     prompt = f"""You are the Averroes Capital deal intelligence assistant. The user asked a question
 the internal database could not answer, and explicitly asked for a LIVE WEB SEARCH.

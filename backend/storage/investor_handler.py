@@ -538,3 +538,13 @@ class InvestorBQHandler:
             job_config=bigquery.QueryJobConfig(query_parameters=[
                 bigquery.ScalarQueryParameter("k", "STRING", key)])).result()]
         return {"companies": comp, "co_investors": co}
+
+    def get_all_links(self, limit: int = 4000) -> List[Dict]:
+        """Compact edge list for chat context and graph views."""
+        if not self.client:
+            return []
+        self._ensure_links_table()
+        rows = self.client.query(
+            f"""SELECT investor_name, investor_type, company_name, link_type, pct
+                FROM `{self.links_table_id}` ORDER BY investor_name LIMIT {int(limit)}""").result()
+        return [dict(r) for r in rows]

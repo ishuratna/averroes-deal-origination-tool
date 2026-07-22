@@ -235,6 +235,12 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getInvestorConnections(investorName: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/connections/investor/${encodeURIComponent(investorName)}`);
+    if (!response.ok) return { companies: [], co_investors: [] };
+    return await response.json();
+  },
+
   async generateIcMemo(companyName: string): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo`, { method: 'POST' });
     let data;

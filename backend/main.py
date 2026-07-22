@@ -2097,6 +2097,52 @@ async def send_outreach(req: OutreachSendRequest):
     return result
 
 
+# ── Deal Intelligence Chat ───────────────────────────────────────────────────
+# NOTE: restored — the whole endpoint was accidentally deleted in eba21c0
+# ("remove temporary /diag/test-loop endpoint", 15 Jul) and chat has been
+# silently 404ing since. Now also connection-aware (investor_links).
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[Dict]] = []
+    web_search: Optional[bool] = False
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """
+    Chat over the database (companies + LPs + investor connections).
+    Data-only answers; never guesses. web_search=True (user explicitly
+    pressed the button) runs ONE grounded search against the shared budget.
+    """
+    if not req.message or not req.message.strip():
+        raise HTTPException(status_code=400, detail="Empty message.")
+    from services.chat_service import chat_answer, chat_web_search
+    try:
+        universe = bq_handler.get_universe()
+    except Exception:
+        universe = []
+    try:
+        investors = investor_handler.get_all()
+    except Exception:
+        investors = []
+    try:
+        links = investor_handler.get_all_links()
+    except Exception:
+        links = []
+
+    if req.web_search:
+        _enforce_grounding_budget(1, "Chat web search")
+        result = chat_web_search(req.message, req.history or [], universe, investors, links=links)
+        try:
+            bq_handler.log_smartfill("chat", kind="newslookup")  # weight-1 grounded call
+        except Exception:
+            pass
+        return result
+
+    return chat_answer(req.message, req.history or [], universe, investors, links=links)
+
+
 # ── Deal Lifecycle Endpoints ─────────────────────────────────────────────────
 
 class StatusUpdateRequest(BaseModel):

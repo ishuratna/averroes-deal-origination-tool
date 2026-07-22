@@ -79,6 +79,14 @@ function InvestorsInner() {
   };
 
   const [miningAll, setMiningAll] = useState(false);
+  const [connFor, setConnFor] = useState<string | null>(null);
+  const [connData, setConnData] = useState<any>(null);
+  const openConnections = async (name: string) => {
+    setConnFor(name);
+    setConnData(null);
+    try { setConnData(await dealApi.getInvestorConnections(name)); }
+    catch { setConnData({ companies: [], co_investors: [] }); }
+  };
   const handleMineAll = async () => {
     setMiningAll(true);
     try {
@@ -338,7 +346,10 @@ function InvestorsInner() {
                 ) : filtered.length > 0 ? (
                   filtered.map((inv, idx) => (
                     <tr key={idx}>
-                      <td className="name-cell" title={inv.description || ''}>{inv.name}</td>
+                      <td className="name-cell" title={inv.description || ''}>
+                        <button className="inv-name-btn" onClick={() => openConnections(inv.name)}
+                          title="Show portfolio connections">{inv.name}</button>
+                      </td>
                       <td>
                         {inv.lp_fit_score != null ? (
                           <span className={`fit-badge ${inv.lp_fit_score >= 0.7 ? 'high' : inv.lp_fit_score >= 0.4 ? 'mid' : 'low'}`}>
@@ -766,6 +777,50 @@ function InvestorsInner() {
         .fill-score-row.composite { background: #f0fdf4; color: #166534; font-weight: 700; border-bottom: none; }
         .modal-ok { width: 100%; background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0.55rem; font-weight: 700; cursor: pointer; }
       `}</style>
+
+      {/* ── Investor connections overlay ── */}
+      {connFor && (
+        <div className="modal-overlay" onClick={() => setConnFor(null)}>
+          <div className="fill-modal" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
+            <div className="fill-modal-header">
+              <h3>{connFor} — connections</h3>
+              <button className="modal-close" onClick={() => setConnFor(null)}>&times;</button>
+            </div>
+            {!connData ? (
+              <p className="fill-desc">Loading connections…</p>
+            ) : (
+              <>
+                <p className="fill-type">Portfolio companies in our universe ({connData.companies?.length || 0})</p>
+                {(connData.companies || []).length === 0 && (
+                  <p className="fill-desc">No connections mapped yet — the miner runs daily over Qualified+ companies (or press &quot;Mine All Sources&quot; in Sources).</p>
+                )}
+                <div className="fill-scores" style={{ maxHeight: 180, overflowY: 'auto' }}>
+                  {(connData.companies || []).map((c: any, i: number) => (
+                    <div className="fill-score-row" key={i}>
+                      <span><b style={{ color: '#0f172a' }}>{c.company_name}</b></span>
+                      <span>{c.pct != null ? `${c.pct}% · ` : ''}{String(c.link_type || '').replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+                {(connData.co_investors || []).length > 0 && (
+                  <>
+                    <p className="fill-type" style={{ marginTop: '0.6rem' }}>Co-investors (shared portfolio companies)</p>
+                    <div className="fill-scores" style={{ maxHeight: 150, overflowY: 'auto' }}>
+                      {(connData.co_investors || []).slice(0, 20).map((c: any, i: number) => (
+                        <div className="fill-score-row" key={i}>
+                          <span><b style={{ color: '#0f172a' }}>{c.investor_name}</b> <span style={{ color: '#94a3b8' }}>{c.investor_type}</span></span>
+                          <span>via {c.shared_company}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <button className="modal-ok" style={{ marginTop: '0.9rem' }} onClick={() => setConnFor(null)}>Close</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
