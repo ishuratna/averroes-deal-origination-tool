@@ -638,9 +638,10 @@ def extract_ch_financials(
         "ch_last_resolution": filing_intel["ch_last_resolution"],
         "ch_accounts_regime": filing_intel["ch_accounts_regime"],
     }
-    # Cap table (Document API + one ungrounded parse) — best-effort
+    # Cap table (Document API + one ungrounded parse) — best-effort.
+    # PSC summary passed through for the independent founder-% cross-check.
     try:
-        cap = get_cap_table(company_number)
+        cap = get_cap_table(company_number, psc_summary=psc.get("psc_summary", ""))
         if cap:
             registry_intel.update(cap)
     except Exception as e:
@@ -948,22 +949,8 @@ def get_filing_intel(company_number: str) -> Dict:
     return out
 
 
-def get_cap_table(company_number: str, company_name: str = "", stored_date: str = "") -> Dict:
-    """
-    Cap table from the latest shareholder-bearing confirmation statement (CS01).
-    Document API PDF -> Gemini parse (ungrounded). Returns
-    {ch_cap_table: json-string, ch_cap_table_date, ch_founder_pct} or {}.
-    """
-    items = _fetch_filing_history(company_number, category="confirmation-statement", items=8)
-    target = next((i for i in items if "with-updates" in (i.get("type") or "")
-                   or "with updates" in (i.get("description") or "")), None) or (items[0] if items else None)
-    if not target:
-        return {}
-    if stored_date and (target.get("date") or "") <= stored_date:
-        return {}  # nothing newer than what we already parsed
-    pdf = _download_accounts_pdf(target)  # generic document downloader
-    if not pdf:
-        return {}
+def _parse_cs01_pdf(pdf: bytes) -> Dict:
+    """One CS01 PDF -> shareholder + share-class data (v3 prompt). {} on failure."""
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         return {}
@@ -972,12 +959,18 @@ def get_cap_table(company_number: str, company_name: str = "", stored_date: str 
         from google.genai.types import Part
         client = genai.Client(api_key=api_key)
         prompt = """This is a UK Companies House confirmation statement (CS01) PDF. Extract the
-shareholder information if present.
+shareholder information AND the statement of capital (share classes with their
+prescribed particulars of rights) if present.
 
 Return ONLY valid JSON:
 {"has_shareholders": true/false,
  "statement_date": "YYYY-MM-DD",
  "shareholders": [{"name": "...", "shares": number, "share_class": "..."}],
+ "share_classes": [{"class": "...", "total_shares": number or null,
+                    "nominal_value": "e.g. GBP 0.001 or null",
+                    "voting": "one line on voting rights, or null",
+                    "dividend": "one line on dividend rights, or null",
+                    "capital": "one line on capital/liquidation rights, or null"}],
  "treasury_shares": number or null,
  "notes": "one line, e.g. share class nuances"}
 
@@ -986,6 +979,10 @@ Rules:
   truncate, summarise or skip any. A holder appearing under several share
   classes gets one entry per class.
 - shares = the exact number held as stated. Never invent or estimate.
+- share_classes: copy the prescribed particulars of rights VERBATIM-condensed
+  from the statement of capital section (voting / dividend / capital rights).
+  If the document states the rights, summarise each in one line; if it does
+  not, use null. NEVER invent rights.
 - Do NOT compute percentages — the caller does that.
 - If the statement contains no shareholder details, has_shareholders = false."""
         response = client.models.generate_content(
@@ -995,9 +992,71 @@ Rules:
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         start, end = text.find("{"), text.rfind("}")
-        data = json.loads(text[start:end + 1])
-        if not data.get("has_shareholders"):
-            return {}
+        return json.loads(text[start:end + 1])
+    except Exception as e:
+        logger.warning(f"[CH] CS01 parse failed: {e}")
+        return {}
+
+
+def _psc_cross_check(founder_pct, psc_summary: str) -> str:
+    """Independent sanity check: computed founder % vs the PSC control band."""
+    if founder_pct is None:
+        return ""
+    bands = _re.findall(r"\(individual,\s*(\d+)-(\d+)%\)", psc_summary or "")
+    if not bands:
+        return "no individual PSC to compare"
+    lo, hi = max(((int(a), int(b)) for a, b in bands), key=lambda x: x[0])
+    if lo - 3 <= float(founder_pct) <= hi + 3:
+        return "consistent with PSC register"
+    return f"VERIFY: cap table says {founder_pct}% but PSC register band is {lo}-{hi}%"
+
+
+def get_cap_table(company_number: str, company_name: str = "", stored_date: str = "",
+                  psc_summary: str = "") -> Dict:
+    """
+    Cap table v3 from confirmation statements (CS01), Document API PDF ->
+    Gemini parse (ungrounded), percentages computed in code.
+
+    v3 upgrades:
+      - WALK-BACK: if the newest CS01 carries no shareholder list (companies
+        only file a full list periodically), step back through prior CS01s
+        until one does (max 4 document parses).
+      - SH01 ROLL-FORWARD: allotments filed AFTER the base statement dilute
+        the table; allottee names + share counts are applied and percentages
+        recomputed, labelled estimated.
+      - SHARE-CLASS RIGHTS: voting / dividend / capital particulars per class.
+      - PSC CROSS-CHECK: computed founder % validated against the PSC band.
+
+    Returns {ch_cap_table: json-string, ch_cap_table_date, ch_founder_pct} or {}.
+    """
+    items = _fetch_filing_history(company_number, category="confirmation-statement", items=12)
+    if not items:
+        return {}
+    if stored_date and (items[0].get("date") or "") <= stored_date:
+        return {}  # nothing newer than what we already parsed
+
+    # Prefer "with updates" statements, but WALK BACK until a full list appears
+    ordered = sorted(items, key=lambda i: i.get("date") or "", reverse=True)
+    ordered.sort(key=lambda i: 0 if ("with-updates" in (i.get("type") or "")
+                                     or "with updates" in (i.get("description") or "")) else 1)
+    ordered.sort(key=lambda i: i.get("date") or "", reverse=True)
+
+    data, target = {}, None
+    parses = 0
+    for cand in ordered:
+        if parses >= 4:
+            break
+        pdf = _download_accounts_pdf(cand)
+        if not pdf:
+            continue
+        parses += 1
+        parsed = _parse_cs01_pdf(pdf)
+        if parsed.get("has_shareholders"):
+            data, target = parsed, cand
+            break
+    if not data:
+        return {}
+    try:
 
         # Aggregate per HOLDER across share classes; percentages computed here
         # in code on one consistent basis (total of all listed shares), so the
@@ -1014,6 +1073,35 @@ Rules:
         total = sum(e["shares"] for e in agg.values())
         if total <= 0:
             return {}
+        base_date = data.get("statement_date") or target.get("date", "")
+
+        # ── SH01 ROLL-FORWARD: apply allotments filed AFTER the base statement.
+        # New shares dilute everyone; allottees are added/topped-up by name.
+        # Percentages are then recomputed on the enlarged total.
+        sh01_applied = []
+        try:
+            cap_filings = [f for f in _fetch_filing_history(company_number, category="capital", items=10)
+                           if (f.get("date") or "") > base_date
+                           and ("allotment" in (f.get("description") or "")
+                                or (f.get("type") or "").upper().startswith("SH01"))]
+            for filing in sorted(cap_filings, key=lambda f: f.get("date") or "")[:3]:
+                pdf2 = _download_accounts_pdf(filing)
+                if not pdf2:
+                    continue
+                parsed2 = _parse_sh01_pdf(pdf2, company_name)
+                allots = [a for a in (parsed2.get("allottees") or [])
+                          if isinstance(a, dict) and (a.get("name") or "").strip() and (a.get("shares") or 0) > 0]
+                if not allots:
+                    continue
+                for a in allots:
+                    key = _re.sub(r"[^a-z0-9]", "", a["name"].lower())
+                    entry = agg.setdefault(key, {"name": a["name"].strip().title(), "shares": 0, "classes": []})
+                    entry["shares"] += int(a["shares"])
+                    total += int(a["shares"])
+                sh01_applied.append(filing.get("date", ""))
+        except Exception as e:
+            logger.warning(f"[CH] SH01 roll-forward failed for {company_number} (base table kept): {e}")
+
         holders_all = sorted(agg.values(), key=lambda e: -e["shares"])
         top = holders_all[:15]
         rest = holders_all[15:]
@@ -1042,13 +1130,36 @@ Rules:
         notes = data.get("notes", "")
         if data.get("treasury_shares"):
             notes = (notes + " " if notes else "") + f"Treasury shares: {data['treasury_shares']:,} (excluded from percentages)."
+
+        # Share classes with their prescribed particulars (economic/political rights)
+        share_classes = []
+        for sc in (data.get("share_classes") or [])[:8]:
+            if isinstance(sc, dict) and (sc.get("class") or "").strip():
+                share_classes.append({
+                    "class": str(sc.get("class"))[:60],
+                    "total_shares": sc.get("total_shares"),
+                    "nominal_value": (sc.get("nominal_value") or "")[:40] or None,
+                    "voting": (sc.get("voting") or "")[:180] or None,
+                    "dividend": (sc.get("dividend") or "")[:180] or None,
+                    "capital": (sc.get("capital") or "")[:180] or None,
+                })
+
+        effective_date = sh01_applied[-1] if sh01_applied else base_date
         return {
-            "ch_cap_table": json.dumps({"v": 2,
-                                        "date": data.get("statement_date") or target.get("date", ""),
-                                        "total_shares": total,
-                                        "shareholders": rows,
-                                        "notes": notes}),
-            "ch_cap_table_date": data.get("statement_date") or target.get("date", ""),
+            "ch_cap_table": json.dumps({
+                "v": 3,
+                "date": effective_date,
+                "base_date": base_date,
+                "rolled_forward": bool(sh01_applied),
+                "sh01_applied": sh01_applied,
+                "estimated": bool(sh01_applied),
+                "total_shares": total,
+                "shareholders": rows,
+                "share_classes": share_classes,
+                "psc_check": _psc_cross_check(founder_pct, psc_summary),
+                "notes": notes,
+            }),
+            "ch_cap_table_date": effective_date,
             "ch_founder_pct": founder_pct,
         }
     except Exception as e:
@@ -1071,6 +1182,37 @@ def get_filings_since(company_number: str, since_date: str) -> List[dict]:
 # the allottees of newly issued shares (the newest investors, fresher than
 # the last CS01); officer appointment graphs reveal fund partners and serial
 # angels sitting on our targets' boards.
+
+def _parse_sh01_pdf(pdf: bytes, company_name: str) -> Dict:
+    """One SH01 PDF -> {"allottees": [{"name","shares"}], "names_listed": bool}. {} on failure."""
+    import base64
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return {}
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        pdf_b64 = base64.b64encode(pdf).decode()
+        prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) or similar
+capital filing for {company_name}. Extract the names of the allottees (the people or
+entities the new shares were allotted to) if the document lists them. Many SH01 forms
+do NOT name allottees - in that case return an empty list. NEVER guess names.
+
+Return ONLY valid JSON:
+{{"allottees": [{{"name": "...", "shares": null or number}}], "names_listed": true or false}}"""
+        response = model.generate_content(
+            [{"mime_type": "application/pdf", "data": pdf_b64}, prompt],
+            generation_config={"response_mime_type": "application/json"},
+        )
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(text[text.find("{"):text.rfind("}") + 1])
+    except Exception as e:
+        logger.warning(f"[CH] SH01 parse failed for {company_name}: {e}")
+        return {}
+
 
 def get_sh01_allottees(company_number: str, company_name: str, stored_date: str = "") -> Dict:
     """
@@ -1095,36 +1237,11 @@ def get_sh01_allottees(company_number: str, company_name: str, stored_date: str 
     if not pdf:
         return {"date": fdate, "allottees": [], "skipped": False}
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        return {"date": fdate, "allottees": [], "skipped": False}
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        pdf_b64 = base64.b64encode(pdf).decode()
-        prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) or similar
-capital filing for {company_name}. Extract the names of the allottees (the people or
-entities the new shares were allotted to) if the document lists them. Many SH01 forms
-do NOT name allottees - in that case return an empty list. NEVER guess names.
-
-Return ONLY valid JSON:
-{{"allottees": [{{"name": "...", "shares": null or number}}], "names_listed": true or false}}"""
-        response = model.generate_content(
-            [{"mime_type": "application/pdf", "data": pdf_b64}, prompt],
-            generation_config={"response_mime_type": "application/json"},
-        )
-        text = (response.text or "").strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(text)
-        allottees = [a for a in (result.get("allottees") or [])
-                     if isinstance(a, dict) and (a.get("name") or "").strip()]
-        logger.info(f"[CH] SH01 {fdate} for '{company_name}': {len(allottees)} allottee(s) named")
-        return {"date": fdate, "allottees": allottees[:12], "skipped": False}
-    except Exception as e:
-        logger.warning(f"[CH] SH01 parse failed for {company_name}: {e}")
-        return {"date": fdate, "allottees": [], "skipped": False}
+    result = _parse_sh01_pdf(pdf, company_name)
+    allottees = [a for a in (result.get("allottees") or [])
+                 if isinstance(a, dict) and (a.get("name") or "").strip()]
+    logger.info(f"[CH] SH01 {fdate} for '{company_name}': {len(allottees)} allottee(s) named")
+    return {"date": fdate, "allottees": allottees[:12], "skipped": False}
 
 
 def get_officer_network(company_number: str, exclude_names: List[str] = None,

@@ -531,8 +531,29 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
               {cap?.shareholders?.length ? (
                 <>
-                  <div className="cp-section-title">Cap table (CS01, {cap.date || company.ch_cap_table_date})</div>
+                  <div className="cp-section-title">
+                    Cap table (CS01{cap.base_date ? `, ${cap.base_date}` : cap.date ? `, ${cap.date}` : ''})
+                  </div>
                   <div className="cp-card">
+                    {(cap.rolled_forward || cap.psc_check) && (
+                      <div style={{ marginBottom: '0.5rem' }}>
+                        {cap.rolled_forward && (
+                          <span className="cp-feed-tag cp-tag-outreach" title={`Base CS01 ${cap.base_date} rolled forward with SH01 allotment(s): ${(cap.sh01_applied || []).join(', ')}. Percentages recomputed on the enlarged share count — estimated.`}>
+                            estimated · rolled forward to {cap.date}
+                          </span>
+                        )}
+                        {cap.psc_check && cap.psc_check.startsWith('VERIFY') && (
+                          <span className="cp-feed-tag" style={{ background: '#fee2e2', color: '#b91c1c', marginLeft: '0.4rem' }} title={cap.psc_check}>
+                            ⚠ PSC mismatch — verify
+                          </span>
+                        )}
+                        {cap.psc_check && !cap.psc_check.startsWith('VERIFY') && cap.psc_check.startsWith('consistent') && (
+                          <span className="cp-feed-tag cp-tag-reply" style={{ marginLeft: cap.rolled_forward ? '0.4rem' : 0 }} title="Computed founder % agrees with the independent PSC register band">
+                            ✓ PSC consistent
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <table className="cp-table">
                       <thead><tr><th>Shareholder</th><th>Shares</th><th>Class</th><th>%</th></tr></thead>
                       <tbody>
@@ -548,6 +569,27 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                     </table>
                     {cap.notes && <p style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', margin: '0.5rem 0 0' }}>{cap.notes}</p>}
                   </div>
+
+                  {(cap.share_classes || []).length > 0 && (
+                    <>
+                      <div className="cp-section-title">Share classes &amp; rights</div>
+                      <div className="cp-card">
+                        {(cap.share_classes || []).map((sc: any, i: number) => (
+                          <div key={i} style={{ marginBottom: i < cap.share_classes.length - 1 ? '0.6rem' : 0, paddingBottom: i < cap.share_classes.length - 1 ? '0.6rem' : 0, borderBottom: i < cap.share_classes.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                            <p style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                              {sc.class}
+                              {sc.total_shares != null && <span style={{ color: '#94a3b8', fontWeight: 600 }}> · {Number(sc.total_shares).toLocaleString()} shares</span>}
+                              {sc.nominal_value && <span style={{ color: '#94a3b8', fontWeight: 600 }}> · {sc.nominal_value}</span>}
+                            </p>
+                            {sc.voting && <p className="cp-memo-p" style={{ margin: '0.15rem 0 0' }}><b style={{ color: '#64748b' }}>Voting:</b> {sc.voting}</p>}
+                            {sc.dividend && <p className="cp-memo-p" style={{ margin: '0.15rem 0 0' }}><b style={{ color: '#64748b' }}>Dividend:</b> {sc.dividend}</p>}
+                            {sc.capital && <p className="cp-memo-p" style={{ margin: '0.15rem 0 0' }}><b style={{ color: '#64748b' }}>Capital:</b> {sc.capital}</p>}
+                          </div>
+                        ))}
+                        <p style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', margin: '0.5rem 0 0' }}>Prescribed particulars as filed in the statement of capital — economic and voting rights per class.</p>
+                      </div>
+                    </>
+                  )}
                 </>
               ) : <p className="cp-empty">No cap table extracted yet — run SmartEnrich to parse the latest CS01.</p>}
 
