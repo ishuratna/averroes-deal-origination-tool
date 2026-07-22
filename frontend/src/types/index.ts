@@ -139,6 +139,9 @@ export interface CompanyTarget {
   action_set_at?: string;
   action_reply_subject?: string;
   action_reply_body?: string;
+  // IC memo one-pager (JSON string) for Engaged-or-later companies
+  ic_memo?: string;
+  ic_memo_at?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;

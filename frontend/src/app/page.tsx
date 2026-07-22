@@ -121,8 +121,9 @@ function HomeInner() {
 
   // Company drawer
   const [profileIdx, setProfileIdx] = useState<number | null>(null);
-  const [profileTab, setProfileTab] = useState<'Outreach' | undefined>(undefined);
-  const openProfile = (name: string, tab?: 'Outreach') => { setProfileTab(tab); const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
+  const [profileTab, setProfileTab] = useState<string | undefined>(undefined);
+  const [memoBusy, setMemoBusy] = useState<string>('');
+  const openProfile = (name: string, tab?: string) => { setProfileTab(tab); const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
   const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
 
   // Saved views
@@ -650,6 +651,22 @@ function HomeInner() {
                                 {ob.label}
                               </button>
                             ); })()}
+
+                            {/* IC Memo — Engaged and later: the associate's
+                                one-pager for the committee */}
+                            {['Engaged', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
+                              <button className="kc-icmemo" disabled={memoBusy === company.name}
+                                title={company.ic_memo ? 'Open the stored IC memo' : 'Generate a one-page IC memo from the verified record'}
+                                onClick={async () => {
+                                  if (company.ic_memo) { openProfile(company.name, 'IC Memo'); return; }
+                                  setMemoBusy(company.name);
+                                  try { await dealApi.generateIcMemo(company.name); await loadData(); openProfile(company.name, 'IC Memo'); }
+                                  catch (e: any) { alert(e?.message || 'IC memo generation failed'); }
+                                  finally { setMemoBusy(''); }
+                                }}>
+                                {memoBusy === company.name ? 'Generating memo…' : company.ic_memo ? '📄 IC Memo' : 'Generate IC Memo'}
+                              </button>
+                            )}
 
                             {/* Row 6 — secondary actions */}
                             <div className="kc-actions">

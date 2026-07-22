@@ -2147,6 +2147,54 @@ async def get_company_emails(company_name: str, limit: int = Query(30, descripti
         return {"company": company_name, "emails": [], "count": 0}
 
 
+# ── IC Memo (one-pager for Engaged companies) ────────────────────────────────
+
+@app.post("/company/{company_name}/ic-memo")
+async def generate_ic_memo(company_name: str):
+    """
+    Generate the one-page IC memo: all numbers assembled in code from the
+    stored record (source-labelled), narrative written by ONE grounded Gemini
+    call (weight 1). Persisted to ic_memo/ic_memo_at; regenerating overwrites.
+    """
+    from services.ic_memo_service import build_ic_memo
+    from google.cloud import bigquery as bq_lib
+
+    _enforce_grounding_budget(1, "IC memo")
+    company = next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+
+    emails = (await get_company_emails(company_name, limit=30)).get("emails", [])
+    memo = build_ic_memo(company, emails)
+
+    bq_handler.client.query(
+        f"""UPDATE `{bq_handler.table_id}` SET ic_memo = @memo, ic_memo_at = CURRENT_TIMESTAMP()
+            WHERE name = @name""",
+        job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("memo", "STRING", json.dumps(memo)),
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ])).result()
+    bq_handler.log_smartfill(company_name, kind="icmemo")
+    bq_handler.add_activity_note(company_name, "IC memo generated (one-pager)", "icmemo")
+    return {"status": "Success", "memo": memo}
+
+
+@app.get("/company/{company_name}/ic-memo.pdf")
+async def ic_memo_pdf(company_name: str):
+    """Render the stored IC memo as a one-page PDF (generate it first)."""
+    from fastapi.responses import Response
+    from services.ic_memo_pdf import render_ic_memo_pdf
+
+    company = next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    if not company or not company.get("ic_memo"):
+        raise HTTPException(status_code=404, detail="No IC memo stored — generate it first.")
+    memo = json.loads(company["ic_memo"]) if isinstance(company["ic_memo"], str) else company["ic_memo"]
+    pdf_bytes = render_ic_memo_pdf(memo)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", company_name)
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="IC_Memo_{safe}.pdf"'})
+
+
 @app.get("/company/{company_name}/activity")
 async def get_company_activity(company_name: str, limit: int = Query(50, description="Max entries to return")):
     """Get the full activity timeline for a company."""

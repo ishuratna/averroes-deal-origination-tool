@@ -571,3 +571,9 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 /* Sign-out: small quiet button in the sidebar footer */
 .sign-out-btn { margin-left: auto; font-size: 0.68rem; font-weight: 700; color: #94a3b8; background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.25rem 0.55rem; cursor: pointer; white-space: nowrap; }
 .sign-out-btn:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+
+/* IC Memo button on kanban cards + memo paragraph styling in the profile */
+.kc-icmemo { width: 100%; margin-top: 0.35rem; font-size: 0.72rem; font-weight: 800; padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; cursor: pointer; }
+.kc-icmemo:hover { background: #e0e7ff; }
+.kc-icmemo:disabled { opacity: 0.6; cursor: wait; }
+.cp-memo-p { font-size: 0.82rem; color: #334155; line-height: 1.6; margin: 0.3rem 0; }

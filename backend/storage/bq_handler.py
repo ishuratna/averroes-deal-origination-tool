@@ -108,6 +108,9 @@ class BigQueryHandler:
         ("action_set_at", "TIMESTAMP"),
         ("action_reply_subject", "STRING"),
         ("action_reply_body", "STRING"),
+        # IC memo one-pager (JSON) for Engaged-or-later companies
+        ("ic_memo", "STRING"),
+        ("ic_memo_at", "TIMESTAMP"),
         # Companies House registry intelligence
         ("ch_psc_summary", "STRING"),
         ("ch_ownership_verified", "STRING"),
@@ -370,7 +373,7 @@ class BigQueryHandler:
     # The shared daily budget guarantees we NEVER cross the free 1,500/day tier.
     # smartfill/smartenrich +1 (Jul 2026): the contact-finder retry ladder can
     # fire one extra grounded search when the first pass finds no email.
-    GROUNDING_WEIGHTS = {"smartfill": 4, "smartenrich": 3, "investorfill": 1, "newslookup": 1}
+    GROUNDING_WEIGHTS = {"smartfill": 4, "smartenrich": 3, "investorfill": 1, "newslookup": 1, "icmemo": 1}
 
     def count_smartfills_today(self) -> int:
         """How many SmartFill/SmartEnrich runs have been logged today (UTC)."""

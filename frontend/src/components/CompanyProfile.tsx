@@ -18,10 +18,10 @@ interface Props {
   onClose: () => void;
   onNavigate: (index: number) => void;
   onChanged: () => void | Promise<void>;
-  initialTab?: typeof TABS[number];
+  initialTab?: string;
 }
 
-const TABS = ['Summary', 'Financials', 'Ownership', 'People', 'Companies House', 'Outreach'] as const;
+const TABS = ['Summary', 'Financials', 'Ownership', 'People', 'Companies House', 'Outreach', 'IC Memo'] as const;
 const NEXT_STAGE: Record<string, string> = {
   Qualified: 'Contacted', Engaged: 'Contacted', Contacted: 'Meeting', Meeting: 'DD', DD: 'Offer',
 };
@@ -210,7 +210,8 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
 
 export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged, initialTab }: Props) {
   const company = companies[index];
-  const [tab, setTab] = useState<typeof TABS[number]>(initialTab || 'Summary');
+  const [tab, setTab] = useState<typeof TABS[number]>(
+    (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
   const [noteText, setNoteText] = useState('');
@@ -620,6 +621,87 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
               </div>
             </>
           )}
+
+          {tab === 'IC Memo' && (() => {
+            let memo: any = null;
+            try { memo = company.ic_memo ? JSON.parse(company.ic_memo) : null; } catch { memo = null; }
+            const n = memo?.narrative || {};
+            const dm = memo?.deal_math || {};
+            const sc = memo?.scorecard || {};
+            const risks: string[] = [...(memo?.registry_flags || []), ...(n.risks || [])];
+            return (
+              <>
+                <div className="cp-card" style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button className="cp-chip-btn primary" disabled={busy === 'icmemo'} onClick={async () => {
+                    setBusy('icmemo');
+                    try { await dealApi.generateIcMemo(company.name); await onChanged(); }
+                    catch (e: any) { alert(e?.message || 'IC memo generation failed'); }
+                    finally { setBusy(''); }
+                  }}>
+                    {busy === 'icmemo' ? 'Generating…' : memo ? 'Regenerate memo' : 'Generate IC Memo'}
+                  </button>
+                  {memo && (
+                    <button className="cp-chip-btn" onClick={() => dealApi.downloadIcMemoPdf(company.name).catch(e => alert(e.message))}>
+                      Download PDF
+                    </button>
+                  )}
+                  {memo && <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Generated {fmtDate(memo.generated_at)} · numbers from verified record, sources labelled</span>}
+                </div>
+
+                {!memo && <p className="cp-empty">No memo yet — Generate IC Memo builds a one-pager from the verified record (one grounded search for market context).</p>}
+
+                {memo && (
+                  <>
+                    {n.opportunity && (<><div className="cp-section-title">The Opportunity</div>
+                      <div className="cp-card"><p className="cp-memo-p">{n.opportunity}</p></div></>)}
+
+                    {(n.mandate_fit || []).length > 0 && (<><div className="cp-section-title">Mandate Fit</div>
+                      <div className="cp-card">
+                        {(n.mandate_fit || []).map((f: any, i: number) => (
+                          <div className="cp-kv" key={i}>
+                            <span className="k">{f.check}</span>
+                            <span className="v"><b style={{ color: f.verdict === 'PASS' ? '#15803d' : f.verdict === 'FAIL' ? '#b91c1c' : '#b45309' }}>{f.verdict}</b> — {f.evidence}</span>
+                          </div>
+                        ))}
+                      </div></>)}
+
+                    {(memo.financials || []).length > 0 && (<><div className="cp-section-title">Financial Snapshot</div>
+                      <div className="cp-card">
+                        <table className="cp-table"><tbody>
+                          {(memo.financials || []).map((r: any, i: number) => (
+                            <tr key={i}><td>{r.label}</td><td>{r.value}</td><td style={{ color: '#94a3b8', fontSize: '0.72rem' }}>{r.source}</td></tr>
+                          ))}
+                        </tbody></table>
+                      </div></>)}
+
+                    <div className="cp-section-title">Deal Hypothesis</div>
+                    <div className="cp-card">
+                      {dm.available
+                        ? <p className="cp-memo-p"><b>Implied valuation £{dm.val_low_m}M–£{dm.val_high_m}M</b> at 4–6x £{dm.revenue_m}M revenue{dm.estimated ? ' (estimated)' : ''}. {dm.stake_note}</p>
+                        : <p className="cp-memo-p">{dm.note || 'Valuation not computable.'}</p>}
+                      {n.deal_hypothesis && <p className="cp-memo-p">{n.deal_hypothesis}</p>}
+                      {sc.fit != null && <p className="cp-memo-p" style={{ color: '#475569' }}><b>Fit {sc.fit}/100</b> · {(sc.subscores || []).filter((s: any) => s.value != null).map((s: any) => `${s.label} ${s.value}`).join(' · ')}</p>}
+                    </div>
+
+                    {n.engagement_status && (<><div className="cp-section-title">Engagement</div>
+                      <div className="cp-card"><p className="cp-memo-p">{n.engagement_status}</p></div></>)}
+
+                    {n.market_context && (<><div className="cp-section-title">Market Context (sourced)</div>
+                      <div className="cp-card"><p className="cp-memo-p">{n.market_context}</p></div></>)}
+
+                    {risks.length > 0 && (<><div className="cp-section-title">Risks &amp; Red Flags</div>
+                      <div className="cp-card">{risks.slice(0, 6).map((r, i) => <p className="cp-memo-p" key={i}>• {r}</p>)}</div></>)}
+
+                    {(n.open_questions || []).length > 0 && (<><div className="cp-section-title">Open Questions for First Meeting</div>
+                      <div className="cp-card">{(n.open_questions || []).map((q: string, i: number) => <p className="cp-memo-p" key={i}>• {q}</p>)}</div></>)}
+
+                    {n.recommendation && (<><div className="cp-section-title">Recommendation</div>
+                      <div className="cp-card"><p className="cp-memo-p"><b>{n.recommendation}</b></p></div></>)}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 

@@ -221,6 +221,32 @@ export const dealApi = {
     return await response.json();
   },
 
+  async generateIcMemo(companyName: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo`, { method: 'POST' });
+    let data;
+    try { data = await response.json(); } catch (e) { throw new Error(`IC memo failed: ${response.statusText}`); }
+    if (!response.ok) { throw new Error(data.detail || 'IC memo generation failed'); }
+    return data;
+  },
+
+  async downloadIcMemoPdf(companyName: string): Promise<void> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo.pdf`);
+    if (!response.ok) {
+      let detail = 'PDF download failed';
+      try { detail = (await response.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `IC_Memo_${companyName.replace(/[^A-Za-z0-9_-]+/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   async smartFillBatch(names: string[]): Promise<any> {
     // The batch endpoint STREAMS heartbeat spaces while it works (idle
     // connections get killed on some networks) and ends with one JSON line.
