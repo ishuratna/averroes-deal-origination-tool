@@ -75,6 +75,8 @@ class InvestorBQHandler:
         ("psc_summary", "STRING"),           # who controls the vehicle — UHNWI discovery
         ("officers_summary", "STRING"),      # active directors (principals to contact)
         ("net_assets_m", "FLOAT64"),         # filed net assets, £M — AUM proxy
+        # Smart Upload: unmapped source columns preserved as JSON
+        ("extra_data", "STRING"),
         ("ingested_at", "TIMESTAMP"),
         ("updated_at", "TIMESTAMP"),
     ]

@@ -67,8 +67,42 @@ TARGET_FIELDS = {
     "financing_status": "Financing status",
 }
 
+# LP / investor schema (Task 2 mirror). Monetary fields in MILLIONS.
+INVESTOR_TARGET_FIELDS = {
+    "name": "Investor / institution name (REQUIRED)",
+    "investor_type": "Type: Family Office, Fund of Funds, HNWI, UHNWI, VC, PE, Angel, Corporate, Sovereign/Institutional, Unknown",
+    "aum_m": "Assets under management in MILLIONS (keep source currency scale, convert to GBP if stated)",
+    "ticket_min_m": "Minimum commitment/ticket in MILLIONS",
+    "ticket_max_m": "Maximum commitment/ticket in MILLIONS",
+    "region": "Region (UK / Europe / KSA / US ...)",
+    "hq_city": "HQ city",
+    "hq_country": "HQ country",
+    "website": "Website URL",
+    "description": "What the investor is / does",
+    "contact_name": "Named contact person",
+    "contact_email": "Contact email",
+    "contact_title": "Contact job title",
+    "contact_phone": "Contact phone",
+    "linkedin_url": "Contact LinkedIn URL",
+    "aka": "Also known as",
+    "year_founded": "Year founded (integer)",
+    "strategy_preferences": "Strategy preferences (PE, growth, buyout, VC...)",
+    "geo_preferences": "Geographic preferences",
+    "open_to_first_time": "Open to first-time funds (Yes/No)",
+    "num_commitments": "Number of fund commitments (integer)",
+    "num_pe_commitments": "Number of PE commitments (integer)",
+    "total_commitments_m": "Total commitments in MILLIONS",
+    "other_preferences": "Other stated preferences",
+    "registration_number": "Companies House / registration number",
+    "notes": "Freeform notes about the investor",
+}
+
 _TRANSFORMS = ("none", "usd_m_to_gbp_m", "eur_m_to_gbp_m", "raw_to_m",
                "usd_raw_to_gbp_m", "k_to_m", "percent", "int", "year")
+
+
+def _fields_for(kind: str) -> Dict[str, str]:
+    return INVESTOR_TARGET_FIELDS if kind == "investors" else TARGET_FIELDS
 
 
 def _apply_transform(value, transform: str):
@@ -123,13 +157,16 @@ def read_tabular(data: bytes, filename: str) -> Tuple[Optional["object"], str]:
         return None, f"Could not parse file: {e}"
 
 
-def analyze_mapping(headers: List[str], sample_rows: List[dict], filename: str) -> Dict:
+def analyze_mapping(headers: List[str], sample_rows: List[dict], filename: str,
+                    kind: str = "companies") -> Dict:
     """ONE ungrounded call: headers + samples -> column mapping. {} on failure."""
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
-    fields_doc = "\n".join(f"- {k}: {v}" for k, v in TARGET_FIELDS.items())
-    prompt = f"""You are mapping the columns of an uploaded dataset ("{filename}") of companies into a
+    fields = _fields_for(kind)
+    entity = "investors (LPs: family offices, funds of funds, HNWIs, institutions)" if kind == "investors" else "companies"
+    fields_doc = "\n".join(f"- {k}: {v}" for k, v in fields.items())
+    prompt = f"""You are mapping the columns of an uploaded dataset ("{filename}") of {entity} into a
 fixed database schema. You see the headers and a few sample rows. Decide, for EVERY source
 column, which target field it maps to, or "extra" if none fits, or "ignore" for junk
 (row numbers, empty columns, internal IDs with no meaning).
@@ -148,7 +185,7 @@ TRANSFORMS you may assign (code applies them, you only choose):
 - int / year: integers
 
 RULES:
-- Exactly ONE column must map to "name". If no column looks like a company name,
+- Exactly ONE column must map to "name". If no column looks like the entity's name,
   set "no_name_column": true.
 - Read currencies/units from the header text and sample values (e.g. "Revenue ($M)",
   values like 12,500,000). When unsure between millions and units, look at magnitudes
@@ -181,7 +218,7 @@ Return ONLY valid JSON:
             if not isinstance(m, dict) or not m.get("source"):
                 continue
             target = (m.get("target") or "extra").strip()
-            if target not in TARGET_FIELDS and target not in ("extra", "ignore"):
+            if target not in fields and target not in ("extra", "ignore"):
                 target = "extra"
             if target in used_targets and target not in ("extra", "ignore"):
                 target = "extra"  # never two columns onto one field
@@ -226,21 +263,24 @@ def apply_mapping(df, mapping: List[dict]) -> List[dict]:
     return rows
 
 
-def extract_pdf_companies(data: bytes, filename: str) -> Dict:
-    """PDF -> companies. Detects list PDFs (broker books, brochures) vs a
-    single-company document (teaser/CIM) and extracts accordingly."""
+def extract_pdf_companies(data: bytes, filename: str, kind: str = "companies") -> Dict:
+    """PDF -> entities. Detects list PDFs (broker books, brochures, LP
+    directories) vs a single-entity document and extracts accordingly."""
     import base64
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
     if len(data) > 18 * 1024 * 1024:
         return {"error": "PDF too large (max 18MB)"}
-    fields_doc = "\n".join(f"- {k}: {v}" for k, v in TARGET_FIELDS.items())
-    prompt = f"""This PDF ("{filename}") was uploaded to a private equity deal-sourcing database.
+    fields = _fields_for(kind)
+    entity = "INVESTORS (LPs: family offices, funds of funds, HNWIs, wealth managers, institutions)" if kind == "investors" else "companies"
+    single_doc = "ONE investor (fund factsheet, family office profile)" if kind == "investors" else "ONE company (teaser, CIM, one-pager)"
+    fields_doc = "\n".join(f"- {k}: {v}" for k, v in fields.items())
+    prompt = f"""This PDF ("{filename}") was uploaded to a private equity database of {entity}.
 First decide its shape:
-- "list": it presents MANY companies (broker book, conference brochure, award list, directory)
-- "single": it is about ONE company (teaser, CIM, one-pager)
-Then extract every company you can actually see, with whatever attributes the document states.
+- "list": it presents MANY entities (directory, member list, broker book, brochure)
+- "single": it is about {single_doc}
+Then extract every entity you can actually see, with whatever attributes the document states.
 
 TARGET ATTRIBUTES (monetary values: convert to GBP MILLIONS using approx rates
 USD x{USD_GBP}, EUR x{EUR_GBP}; if the document gives raw units, divide to millions):
@@ -274,7 +314,7 @@ Return ONLY valid JSON:
             for k, v in c.items():
                 if k == "extra" and isinstance(v, dict) and v:
                     out["extra_data"] = json.dumps({str(kk)[:80]: str(vv)[:300] for kk, vv in v.items()})[:4000]
-                elif k in TARGET_FIELDS and v not in (None, ""):
+                elif k in fields and v not in (None, ""):
                     out[k] = v
             out["name"] = str(c["name"]).strip()[:150]
             rows.append(out)
@@ -286,13 +326,13 @@ Return ONLY valid JSON:
         return {"error": f"PDF extraction failed: {e}"}
 
 
-def smart_parse(data: bytes, filename: str) -> Dict:
-    """Full pipeline for one file. Returns
+def smart_parse(data: bytes, filename: str, kind: str = "companies") -> Dict:
+    """Full pipeline for one file. kind: 'companies' or 'investors'. Returns
     {kind, dataset_guess, mapping?, companies, total, sample, warnings}."""
     fn = filename.lower()
     warnings = []
     if fn.endswith(".pdf"):
-        res = extract_pdf_companies(data, filename)
+        res = extract_pdf_companies(data, filename, kind=kind)
         if res.get("error"):
             return {"kind": "pdf", "companies": [], "total": 0, "sample": [],
                     "warnings": [res["error"]], "dataset_guess": "", "mapping": []}
@@ -313,7 +353,7 @@ def smart_parse(data: bytes, filename: str) -> Dict:
         {str(k): (str(v)[:120] if v is not None else None) for k, v in row.items()}
         for row in df.head(15).to_dict(orient="records")
     ]
-    analysis = analyze_mapping(headers, sample, filename)
+    analysis = analyze_mapping(headers, sample, filename, kind=kind)
     if analysis.get("error"):
         return {"kind": "tabular", "companies": [], "total": 0, "sample": [],
                 "warnings": [analysis["error"]], "dataset_guess": "", "mapping": []}

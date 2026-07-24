@@ -1196,10 +1196,12 @@ def _weekly_source_refresh() -> dict:
 class SmartUploadConfirmRequest(BaseModel):
     label: str
     companies: List[Dict]
+    kind: Optional[str] = "companies"  # or "investors" (LPs)
 
 
 @app.post("/upload/smart/preview")
-async def smart_upload_preview(file: UploadFile = File(...)):
+async def smart_upload_preview(file: UploadFile = File(...),
+                               kind: str = Query("companies", description="companies | investors")):
     """Analyze any CSV/XLSX/PDF: AI designs the column mapping (tabular) or
     extracts entities (PDF); code applies it. Persists NOTHING. Streamed."""
     from services.smart_upload import smart_parse
@@ -1209,7 +1211,48 @@ async def smart_upload_preview(file: UploadFile = File(...)):
     if len(data) > 25 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 25MB).")
     fname = file.filename or "upload"
-    return _stream_json(lambda: smart_parse(data, fname))
+    k = kind if kind in ("companies", "investors") else "companies"
+    return _stream_json(lambda: smart_parse(data, fname, kind=k))
+
+
+def _smart_confirm_investors(label: str, investors: list) -> dict:
+    """LP flavour: previewed rows -> investors table (name-dedup insert),
+    extra_data filled only where empty."""
+    from google.cloud import bigquery as bq_lib
+    rows, extras = [], []
+    for c in investors:
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        row = {k: v for k, v in c.items() if k != "extra_data" and v not in (None, "")}
+        row["name"] = name
+        row["source"] = label
+        row["status"] = "Identified"
+        rows.append(row)
+        if c.get("extra_data"):
+            extras.append({"k": name, "x": str(c["extra_data"])[:4000]})
+    if not rows:
+        return {"status": "Success", "found": 0, "added": 0, "label": label}
+    added = investor_handler.save_investors(rows)
+    if extras:
+        try:
+            bq_handler.client.query(
+                f"""UPDATE `{investor_handler.table_id}` T SET extra_data = (
+                        SELECT JSON_EXTRACT_SCALAR(j, '$.x')
+                        FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j
+                        WHERE JSON_EXTRACT_SCALAR(j, '$.k') = T.name LIMIT 1)
+                    WHERE (T.extra_data IS NULL OR T.extra_data = '') AND T.name IN (
+                        SELECT JSON_EXTRACT_SCALAR(j, '$.k')
+                        FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j)""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("payload", "STRING", json.dumps(extras)),
+                ])).result()
+        except Exception as e:
+            logger.warning(f"[SmartUpload/LP] extra_data update failed (non-fatal): {e}")
+    logger.info(f"[SmartUpload/LP] '{label}': {len(rows)} rows, {added} new investors")
+    return {"status": "Success", "found": len(rows), "added": added, "label": label,
+            "message": f"Ingested {len(rows)} investors from '{label}' — {added} new "
+                       f"(existing names untouched). Use InvestorFill to research and score."}
 
 
 @app.post("/upload/smart/confirm")
@@ -1218,6 +1261,8 @@ async def smart_upload_confirm(req: SmartUploadConfirmRequest):
     filled only where empty — uploads never overwrite stored extras."""
     from google.cloud import bigquery as bq_lib
     label = (req.label or "Smart Upload").strip()[:80]
+    if (req.kind or "companies") == "investors":
+        return _smart_confirm_investors(label, req.companies or [])
     rows, extras = [], []
     for c in req.companies or []:
         name = str(c.get("name") or "").strip()

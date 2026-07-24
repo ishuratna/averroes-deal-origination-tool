@@ -221,10 +221,10 @@ export const dealApi = {
     return await response.json();
   },
 
-  async smartUploadPreview(file: globalThis.File): Promise<any> {
+  async smartUploadPreview(file: globalThis.File, kind: string = 'companies'): Promise<any> {
     const form = new FormData();
     form.append('file', file);
-    const response = await apiFetch(`${API_BASE_URL}/upload/smart/preview`, { method: 'POST', body: form });
+    const response = await apiFetch(`${API_BASE_URL}/upload/smart/preview?kind=${kind}`, { method: 'POST', body: form });
     const text = await response.text();
     if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Analysis failed'); } }
     const lines = text.trim().split('\n');
@@ -233,10 +233,10 @@ export const dealApi = {
     return data;
   },
 
-  async smartUploadConfirm(label: string, companies: any[]): Promise<any> {
+  async smartUploadConfirm(label: string, companies: any[], kind: string = 'companies'): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/upload/smart/confirm`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, companies }),
+      body: JSON.stringify({ label, companies, kind }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Ingest failed');

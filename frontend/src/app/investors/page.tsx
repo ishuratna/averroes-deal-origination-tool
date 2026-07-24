@@ -110,6 +110,33 @@ function InvestorsInner() {
     finally { setSrcBusy(false); }
   };
 
+  // ── Smart Upload (AI, LP flavour) ──
+  const [suBusy, setSuBusy] = useState(false);
+  const [suError, setSuError] = useState('');
+  const [suPreview, setSuPreview] = useState<any>(null);
+  const [suFilename, setSuFilename] = useState('');
+  const analyzeFile = async (f: globalThis.File) => {
+    setSuBusy(true); setSuError(''); setSuPreview(null); setSuFilename(f.name);
+    try {
+      const r = await dealApi.smartUploadPreview(f, 'investors');
+      setSuPreview(r);
+      if (!r.total) setSuError((r.warnings || []).join('; ') || 'No investors found in that file.');
+    } catch (e: any) { setSuError(e?.message || 'Analysis failed'); }
+    finally { setSuBusy(false); }
+  };
+  const confirmSmartUpload = async () => {
+    if (!suPreview?.companies?.length) return;
+    setSuBusy(true);
+    try {
+      const label = suPreview.dataset_guess || suFilename.replace(/\.[a-z]+$/i, '');
+      const r = await dealApi.smartUploadConfirm(label, suPreview.companies, 'investors');
+      alert(r.message || `Ingested ${r.found} investors, ${r.added} new.`);
+      setSuPreview(null); setSuFilename('');
+      await loadData();
+    } catch (e: any) { alert(e?.message || 'Ingest failed'); }
+    finally { setSuBusy(false); }
+  };
+
   const [connFor, setConnFor] = useState<string | null>(null);
   const [connData, setConnData] = useState<any>(null);
   const openConnections = async (name: string) => {
@@ -464,6 +491,54 @@ function InvestorsInner() {
                   <p className="sources-subtitle">{investors.length} investors ingested across {[mined, uploaded].filter(l => l.length > 0).length} active sources</p>
                 </div>
                 <button className="sources-close" onClick={() => setShowSources(false)}>&times;</button>
+              </div>
+
+              <h3 className="source-type-label">Smart Upload (AI)</h3>
+              <div className="ai-source-box" style={{ marginBottom: '1rem' }}>
+                <div className="ai-source-input-row">
+                  <label className="ai-source-btn" style={{ cursor: suBusy ? 'wait' : 'pointer' }}>
+                    {suBusy ? 'Analyzing…' : 'Choose file (CSV / Excel / PDF)'}
+                    <input type="file" accept=".csv,.tsv,.xlsx,.xls,.pdf" style={{ display: 'none' }} disabled={suBusy}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) analyzeFile(f); e.target.value = ''; }} />
+                  </label>
+                  <span className="ai-source-desc" style={{ alignSelf: 'center' }}>
+                    Any investor dataset — the AI maps its columns to the LP schema. PitchBook LP exports keep their dedicated parser via the normal upload.
+                  </span>
+                </div>
+                {suError && <p className="ai-source-error">{suError}</p>}
+                {suPreview && suPreview.total > 0 && (
+                  <div className="ai-source-preview">
+                    <p className="ai-source-summary">
+                      <b>{suPreview.dataset_guess || suFilename}</b> — {suPreview.total} investors parsed
+                      {suPreview.kind === 'pdf' && suPreview.shape ? ` (PDF, ${suPreview.shape})` : ''}
+                      {(suPreview.warnings || []).length > 0 && <span style={{ color: '#b45309' }}> · {suPreview.warnings.join('; ')}</span>}
+                    </p>
+                    {(suPreview.mapping || []).length > 0 && (
+                      <div className="ai-source-table" style={{ maxHeight: 150, marginBottom: '0.5rem' }}>
+                        {suPreview.mapping.map((m: any, i: number) => (
+                          <div className="ai-source-row" key={i} style={{ cursor: 'default' }}>
+                            <b>{m.source}</b>
+                            <span className="ai-source-desc">→ {m.target}{m.transform && m.transform !== 'none' ? ` (${m.transform.replace(/_/g, ' ')})` : ''}{m.note ? ` · ${m.note}` : ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="ai-source-table" style={{ maxHeight: 180 }}>
+                      {(suPreview.sample || []).map((c: any, i: number) => (
+                        <div className="ai-source-row" key={i} style={{ cursor: 'default' }}>
+                          <b>{c.name}</b>
+                          {c.investor_type && <span className="type-badge">{c.investor_type}</span>}
+                          {c.aum_m != null && <span className="ai-source-desc">AUM {c.aum_m}M</span>}
+                          {c.hq_country && <span className="ai-source-desc">{c.hq_country}</span>}
+                          {c.contact_name && <span className="ai-source-desc">{c.contact_name}</span>}
+                        </div>
+                      ))}
+                    </div>
+                    <button className="ai-source-btn confirm" disabled={suBusy} onClick={confirmSmartUpload}>
+                      {suBusy ? 'Ingesting…' : `Ingest ${suPreview.total} investors (dedup-safe)`}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <h3 className="source-type-label">Add Source (AI Agent)</h3>
