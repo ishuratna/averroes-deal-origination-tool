@@ -37,8 +37,8 @@ TARGET_FIELDS = {
     "hq_country": "HQ country",
     "hq_location": "Full HQ location string",
     "description": "What the company does",
-    "employees": "Employee count (integer)",
-    "year_founded": "Year founded (integer)",
+    "employees": "Employee count (integer; synonyms: headcount, FTEs, staff, team size, No. of employees)",
+    "year_founded": "Year founded (integer; synonyms: founded, established, est., incorporation year, inception)",
     "keywords": "Keywords / tags",
     "verticals": "Verticals",
     "ownership": "Ownership type (Founder-led, VC-backed, PE-backed...)",
@@ -50,11 +50,11 @@ TARGET_FIELDS = {
     "registration_number": "Companies House / registration number",
     "legal_name": "Registered legal name",
     "also_known_as": "Alternative names",
-    "revenue_m": "Latest revenue in GBP MILLIONS",
-    "net_income_m": "Net income in GBP MILLIONS",
-    "total_raised_m": "Total capital raised in GBP MILLIONS",
-    "valuation_estimate_m": "Valuation in GBP MILLIONS",
-    "enterprise_value_m": "Enterprise value in GBP MILLIONS",
+    "revenue_m": "Latest revenue in GBP MILLIONS (synonyms: turnover, sales, T/O, top line, income, net sales, fee income)",
+    "net_income_m": "Net income in GBP MILLIONS (synonyms: profit, net profit, PAT, earnings, bottom line)",
+    "total_raised_m": "Total capital raised in GBP MILLIONS (synonyms: total funding, amount raised, capital secured)",
+    "valuation_estimate_m": "Valuation in GBP MILLIONS (synonyms: post-money, market value, company value)",
+    "enterprise_value_m": "Enterprise value in GBP MILLIONS (synonyms: EV, deal value, transaction value)",
     "revenue_growth_pct": "Revenue growth percent (number)",
     "ebitda_margin_pct": "EBITDA margin percent (number)",
     "revenue_cagr_3yr_pct": "3yr revenue CAGR percent (number)",
@@ -71,9 +71,9 @@ TARGET_FIELDS = {
 INVESTOR_TARGET_FIELDS = {
     "name": "Investor / institution name (REQUIRED)",
     "investor_type": "Type: Family Office, Fund of Funds, HNWI, UHNWI, VC, PE, Angel, Corporate, Sovereign/Institutional, Unknown",
-    "aum_m": "Assets under management in MILLIONS (keep source currency scale, convert to GBP if stated)",
-    "ticket_min_m": "Minimum commitment/ticket in MILLIONS",
-    "ticket_max_m": "Maximum commitment/ticket in MILLIONS",
+    "aum_m": "Assets under management in MILLIONS (synonyms: AUM, FUM, assets, funds under management, portfolio size, wealth)",
+    "ticket_min_m": "Minimum commitment/ticket in MILLIONS (synonyms: min investment, min cheque, min allocation)",
+    "ticket_max_m": "Maximum commitment/ticket in MILLIONS (synonyms: max investment, max cheque, max allocation)",
     "region": "Region (UK / Europe / KSA / US ...)",
     "hq_city": "HQ city",
     "hq_country": "HQ country",
@@ -185,11 +185,21 @@ TRANSFORMS you may assign (code applies them, you only choose):
 - int / year: integers
 
 RULES:
-- Exactly ONE column must map to "name". If no column looks like the entity's name,
-  set "no_name_column": true.
+- MAP BY MEANING, never by exact header text. Real files use synonyms, abbreviations
+  and local jargon: "Turnover", "Sales", "T/O" are all revenue; "Headcount", "FTE",
+  "Staff" are employees; "Est.", "Founded", "Inc. year" are year_founded; "URL",
+  "Web", "Homepage" are website; "Owner", "Backers", "Shareholders" are investor
+  lists. The synonyms listed with each target field are examples, not an exhaustive
+  list - use judgement on anything semantically equivalent.
+- Exactly ONE column must map to "name" (it may be headed "Company", "Target",
+  "Organisation", "Business", "Firm" or similar). If no column plausibly holds the
+  entity's name, set "no_name_column": true.
 - Read currencies/units from the header text and sample values (e.g. "Revenue ($M)",
-  values like 12,500,000). When unsure between millions and units, look at magnitudes
-  in the samples.
+  "Turnover £000s", values like 12,500,000). When unsure between millions and units,
+  look at magnitudes in the samples: a software SME's revenue is millions, not
+  billions; an employee count is rarely above a few thousand.
+- Only when a column's meaning is genuinely ambiguous (could fit two fields, or none)
+  send it to "extra" - a wrong mapping is worse than an unmapped column.
 - Never map two source columns to the same target field.
 - dataset_guess: one short line on what this dataset looks like (e.g. "Beauhurst export").
 
