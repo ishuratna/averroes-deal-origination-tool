@@ -68,6 +68,14 @@ class InvestorBQHandler:
         ("num_active_commitments", "INT64"),
         ("num_pe_commitments", "INT64"),
         ("total_commitments_m", "FLOAT64"),  # $M
+        # Commitments breakdown v2 (PitchBook aggregates, $M USD as reported)
+        ("total_active_commitments_m", "FLOAT64"),
+        ("total_pe_commitments_m", "FLOAT64"),
+        ("num_vc_commitments", "INT64"),
+        ("total_vc_commitments_m", "FLOAT64"),
+        ("sold_secondaries", "STRING"),      # Yes/No — transacts in secondaries
+        ("bought_secondaries", "STRING"),
+        ("policy_description", "STRING"),    # investment policy (profile view)
         ("other_preferences", "STRING"),
         ("registration_number", "STRING"),   # UK Companies House number where present
         ("pb_last_updated", "STRING"),
@@ -205,6 +213,13 @@ class InvestorBQHandler:
                 "num_active_commitments": inv.get("num_active_commitments"),
                 "num_pe_commitments": inv.get("num_pe_commitments"),
                 "total_commitments_m": inv.get("total_commitments_m"),
+                "total_active_commitments_m": inv.get("total_active_commitments_m"),
+                "total_pe_commitments_m": inv.get("total_pe_commitments_m"),
+                "num_vc_commitments": inv.get("num_vc_commitments"),
+                "total_vc_commitments_m": inv.get("total_vc_commitments_m"),
+                "sold_secondaries": inv.get("sold_secondaries") or "",
+                "bought_secondaries": inv.get("bought_secondaries") or "",
+                "policy_description": inv.get("policy_description") or "",
                 "other_preferences": inv.get("other_preferences") or "",
                 "registration_number": inv.get("registration_number") or "",
                 "pb_last_updated": inv.get("pb_last_updated") or "",
@@ -226,15 +241,19 @@ class InvestorBQHandler:
             "aka", "contact_title", "contact_phone", "hq_email", "global_region",
             "strategy_preferences", "geo_preferences", "open_to_first_time",
             "other_preferences", "registration_number", "pb_last_updated",
+            "sold_secondaries", "bought_secondaries", "policy_description",
         ]
         float_cols = ["aum_m", "ticket_min_m", "ticket_max_m", "lp_fit_score",
                       "score_geography", "score_pe_appetite", "score_ticket_fit",
-                      "score_tech_affinity", "total_commitments_m"]
-        int_cols = ["year_founded", "num_commitments", "num_active_commitments", "num_pe_commitments"]
+                      "score_tech_affinity", "total_commitments_m",
+                      "total_active_commitments_m", "total_pe_commitments_m",
+                      "total_vc_commitments_m"]
+        int_cols = ["year_founded", "num_commitments", "num_active_commitments",
+                    "num_pe_commitments", "num_vc_commitments"]
         all_cols = string_cols + float_cols + int_cols
 
         inserted = 0
-        BATCH = 200  # 200 rows × 41 params = 8,200 < BQ's 10,000-parameter limit
+        BATCH = 180  # 180 rows × 48 params = 8,640 < BQ's 10,000-parameter limit
         for b in range(0, len(rows), BATCH):
             batch = rows[b:b + BATCH]
             values_sql = []

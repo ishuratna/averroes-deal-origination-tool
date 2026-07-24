@@ -17,7 +17,8 @@ const INVESTOR_DEFS: Record<string, string> = {
   strategy: "PE-relevant fund strategy preferences from PitchBook (Buyout, Growth/Expansion, FoF, Co-Investment, Secondaries…). 'None relevant' = they state preferences, but not ours — a real negative.",
   geoPref: "Geographies in their stated investment mandate, condensed to our targets (UK/Ireland/Europe/Middle East). 'Global' = 100+ territory mandate.",
   firstTime: "Open to first-time funds (per PitchBook). Decisive when raising a first fund; blank = undisclosed.",
-  commitments: "Track record: number of PE fund commitments · total commitments across all funds ($M). Proof they actually write cheques.",
+  commitments: "Track record: total fund commitments (count · $M, all asset classes, PitchBook USD). Hover for active commitments, average ticket, VC breakdown and secondaries activity.",
+  peCommitments: "PE-specific track record: commitments to PE funds (count · $M). The strongest single proof of appetite for our asset class.",
   portfolio: "Companies in OUR deal universe this investor has backed — warm-intro path and evidence of relevant appetite.",
   stage: "Relationship stage: Identified → Researched (after InvestorFill) → Contacted → Meeting → Committed / Passed.",
   actions: "InvestorFill researches this investor via AI + web search: classifies type, finds AUM/ticket/contacts, scores LP fit.",
@@ -254,7 +255,7 @@ function InvestorsInner() {
 
   // ── CSV export of the current filtered view ──
   const exportCsv = () => {
-    const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'net_assets_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_pe_commitments', 'total_commitments_m', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'psc_summary', 'officers_summary', 'registration_number', 'source', 'source_companies', 'status'];
+    const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'net_assets_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_commitments', 'total_commitments_m', 'num_active_commitments', 'total_active_commitments_m', 'num_pe_commitments', 'total_pe_commitments_m', 'num_vc_commitments', 'total_vc_commitments_m', 'sold_secondaries', 'bought_secondaries', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'psc_summary', 'officers_summary', 'registration_number', 'source', 'source_companies', 'status'];
     const esc = (v: any) => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -301,6 +302,20 @@ function InvestorsInner() {
     const lo = i.ticket_min_m != null ? `$${i.ticket_min_m.toFixed(1)}M` : '?';
     const hi = i.ticket_max_m != null ? `$${i.ticket_max_m.toFixed(1)}M` : '?';
     return `${lo}–${hi}`;
+  };
+
+  // $M formatter: $850M / $2.3B (PitchBook figures are USD millions)
+  const fmtM = (v: number) => v >= 1000 ? `$${(v / 1000).toFixed(1)}B` : `$${v.toFixed(0)}M`;
+
+  // Hover detail for the Commitments cell — everything we know, nothing invented
+  const commitTip = (i: Investor) => {
+    const lines: string[] = [];
+    if (i.num_active_commitments != null) lines.push(`Active: ${i.num_active_commitments}${i.total_active_commitments_m != null ? ` · ${fmtM(i.total_active_commitments_m)}` : ''}`);
+    else if (i.total_active_commitments_m != null) lines.push(`Active: ${fmtM(i.total_active_commitments_m)}`);
+    if (i.num_commitments && i.total_commitments_m != null) lines.push(`Avg ticket: ${fmtM(i.total_commitments_m / i.num_commitments)}`);
+    if (i.num_vc_commitments != null || i.total_vc_commitments_m != null) lines.push(`VC funds: ${i.num_vc_commitments ?? '?'}${i.total_vc_commitments_m != null ? ` · ${fmtM(i.total_vc_commitments_m)}` : ''}`);
+    if (i.sold_secondaries || i.bought_secondaries) lines.push(`Secondaries — sold: ${i.sold_secondaries || '?'}, bought: ${i.bought_secondaries || '?'}`);
+    return lines.join('\n');
   };
 
   return (
@@ -389,6 +404,7 @@ function InvestorsInner() {
                   <th><InfoTip label="Geo Mandate" tip={INVESTOR_DEFS.geoPref} /></th>
                   <th><InfoTip label="1st-Time" tip={INVESTOR_DEFS.firstTime} /></th>
                   <th><InfoTip label="Commitments" tip={INVESTOR_DEFS.commitments} /></th>
+                  <th><InfoTip label="PE" tip={INVESTOR_DEFS.peCommitments} /></th>
                   <th>Contact</th>
                   <th>Email</th>
                   <th><InfoTip label="Portfolio Overlap" tip={INVESTOR_DEFS.portfolio} /></th>
@@ -400,7 +416,7 @@ function InvestorsInner() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={17} className="empty-row">Loading…</td></tr>
+                  <tr><td colSpan={18} className="empty-row">Loading…</td></tr>
                 ) : filtered.length > 0 ? (
                   filtered.map((inv, idx) => (
                     <tr key={idx}>
@@ -429,9 +445,14 @@ function InvestorsInner() {
                         {inv.open_to_first_time === 'Yes' ? <span className="ft-yes">Yes</span>
                           : inv.open_to_first_time === 'No' ? <span className="ft-no">No</span> : '—'}
                       </td>
+                      <td className="num-cell" title={commitTip(inv)}>
+                        {inv.num_commitments != null || inv.total_commitments_m != null
+                          ? <>{inv.num_commitments ?? '—'}{inv.total_commitments_m != null ? ` · ${fmtM(inv.total_commitments_m)}` : ''}</>
+                          : '—'}
+                      </td>
                       <td className="num-cell">
-                        {inv.num_pe_commitments != null || inv.total_commitments_m != null
-                          ? <>{inv.num_pe_commitments != null ? `${inv.num_pe_commitments} PE` : '—'}{inv.total_commitments_m != null ? ` · $${inv.total_commitments_m.toFixed(0)}M` : ''}</>
+                        {inv.num_pe_commitments != null || inv.total_pe_commitments_m != null
+                          ? <>{inv.num_pe_commitments ?? '—'}{inv.total_pe_commitments_m != null ? ` · ${fmtM(inv.total_pe_commitments_m)}` : ''}</>
                           : '—'}
                       </td>
                       <td title={inv.contact_title || ''}>{inv.contact_name || '—'}</td>
@@ -463,7 +484,7 @@ function InvestorsInner() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={17} className="empty-row">
+                  <tr><td colSpan={18} className="empty-row">
                     No investors yet. Click &quot;Mine from High-Fit Companies&quot; to extract investors from your qualified deal universe.
                   </td></tr>
                 )}

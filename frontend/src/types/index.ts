@@ -248,6 +248,15 @@ export interface Investor {
   num_active_commitments?: number;
   num_pe_commitments?: number;
   total_commitments_m?: number;
+  // Commitments breakdown v2 ($M USD as reported by PitchBook)
+  total_active_commitments_m?: number;
+  total_pe_commitments_m?: number;
+  num_vc_commitments?: number;
+  total_vc_commitments_m?: number;
+  sold_secondaries?: string;
+  bought_secondaries?: string;
+  policy_description?: string;
+  extra_data?: string;
   other_preferences?: string;
   registration_number?: string;
   pb_last_updated?: string;

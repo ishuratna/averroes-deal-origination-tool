@@ -1481,6 +1481,66 @@ async def contacts_reverify():
     return _retro_resolve_contacts(force=True)
 
 
+PB_BACKFILL_VERSION = "pb-lp-aggregates-v1"
+
+
+def _backfill_pb_lp_aggregates():
+    """One-time internal backfill: the commitments-breakdown fields extracted
+    from the ORIGINAL PitchBook LP upload (backend/data/pb_lp_backfill_v1.json,
+    generated from the user's file — no re-upload needed). Fill-only: never
+    overwrites a value that already exists. Marker-guarded, runs exactly once."""
+    from google.cloud import bigquery as bq_lib
+    try:
+        rows = list(bq_handler.client.query(
+            f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                WHERE action_type = 'migration' AND note_text = '{PB_BACKFILL_VERSION}'""").result())
+        if rows and int(rows[0].n) > 0:
+            return  # already applied
+        path = os.path.join(os.path.dirname(__file__), "data", "pb_lp_backfill_v1.json")
+        if not os.path.exists(path):
+            logger.warning("[Migration] pb_lp_backfill_v1.json missing — skipping backfill")
+            return
+        payload = open(path).read()
+        logger.info(f"[Migration] Applying {PB_BACKFILL_VERSION} ({len(json.loads(payload))} LPs)...")
+        bq_handler.client.query(
+            f"""MERGE `{investor_handler.table_id}` T
+                USING (
+                    SELECT * FROM (
+                        SELECT LOWER(JSON_EXTRACT_SCALAR(j, '$.name')) AS lname,
+                               SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.total_active_commitments_m') AS FLOAT64) AS tac,
+                               SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.total_pe_commitments_m') AS FLOAT64) AS tpe,
+                               SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.num_vc_commitments') AS INT64) AS nvc,
+                               SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.total_vc_commitments_m') AS FLOAT64) AS tvc,
+                               JSON_EXTRACT_SCALAR(j, '$.sold_secondaries') AS ss,
+                               JSON_EXTRACT_SCALAR(j, '$.bought_secondaries') AS bs,
+                               JSON_EXTRACT_SCALAR(j, '$.policy_description') AS pol,
+                               JSON_EXTRACT_SCALAR(j, '$.global_region') AS gr,
+                               JSON_EXTRACT_SCALAR(j, '$.open_to_first_time') AS oft,
+                               ROW_NUMBER() OVER (PARTITION BY LOWER(JSON_EXTRACT_SCALAR(j, '$.name'))
+                                                  ORDER BY JSON_EXTRACT_SCALAR(j, '$.pb_id')) AS rn
+                        FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j)
+                    WHERE rn = 1
+                ) S ON LOWER(T.name) = S.lname
+                WHEN MATCHED THEN UPDATE SET
+                    total_active_commitments_m = IFNULL(T.total_active_commitments_m, S.tac),
+                    total_pe_commitments_m = IFNULL(T.total_pe_commitments_m, S.tpe),
+                    num_vc_commitments = IFNULL(T.num_vc_commitments, S.nvc),
+                    total_vc_commitments_m = IFNULL(T.total_vc_commitments_m, S.tvc),
+                    sold_secondaries = IFNULL(NULLIF(T.sold_secondaries, ''), S.ss),
+                    bought_secondaries = IFNULL(NULLIF(T.bought_secondaries, ''), S.bs),
+                    policy_description = IFNULL(NULLIF(T.policy_description, ''), S.pol),
+                    global_region = IFNULL(NULLIF(T.global_region, ''), S.gr),
+                    open_to_first_time = IFNULL(NULLIF(T.open_to_first_time, ''), S.oft),
+                    updated_at = CURRENT_TIMESTAMP()""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("payload", "STRING", payload),
+            ])).result()
+        bq_handler._log_activity("__system__", "migration", "migration", note_text=PB_BACKFILL_VERSION)
+        logger.info(f"[Migration] {PB_BACKFILL_VERSION} applied")
+    except Exception as e:
+        logger.warning(f"[Migration] {PB_BACKFILL_VERSION} failed (will retry next boot): {e}")
+
+
 @app.on_event("startup")
 async def _run_migrations():
     import threading
@@ -1489,6 +1549,7 @@ async def _run_migrations():
         _migrate_band_rules()
         _retro_resolve_contacts()
         _retro_qualified_blank()
+        _backfill_pb_lp_aggregates()
 
     threading.Thread(target=_sequence, daemon=True).start()
 
