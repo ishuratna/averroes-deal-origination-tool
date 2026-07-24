@@ -1013,6 +1013,46 @@ async def investor_connections(investor_name: str):
     return investor_handler.get_investor_connections(investor_name)
 
 
+# ── Follow-up reminders ──────────────────────────────────────────────────────
+
+@app.get("/followups")
+async def get_followups(days: int = Query(14, description="Silence threshold in days")):
+    """
+    Companies where WE sent the last email and have heard nothing for `days`+
+    days — the follow-up queue. Reads email_log (single source of truth),
+    active outreach stages only, newest silence first... i.e. longest first.
+    """
+    from google.cloud import bigquery as bq_lib
+    try:
+        email_table = bq_handler._ensure_email_log_table()
+        rows = bq_handler.client.query(f"""
+            WITH latest AS (
+                SELECT entity_name, direction, subject, snippet, counterparty_email, sent_at,
+                       ROW_NUMBER() OVER (PARTITION BY entity_name ORDER BY sent_at DESC) AS rn
+                FROM `{email_table}`
+                WHERE entity_type = 'company'
+            )
+            SELECT l.entity_name AS name, l.subject, l.snippet, l.counterparty_email,
+                   CAST(l.sent_at AS STRING) AS last_email_at,
+                   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) AS days_waiting,
+                   t.status, t.contact_name, t.averroes_fit_score, t.action_bucket
+            FROM latest l
+            JOIN `{bq_handler.table_id}` t ON t.name = l.entity_name
+            WHERE l.rn = 1 AND l.direction = 'sent'
+              AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @days
+              AND t.status IN ('Engaged', 'Contacted', 'Meeting', 'DD', 'Offer')
+              AND IFNULL(t.source, '') != 'Internal Test'
+            ORDER BY days_waiting DESC""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("days", "INT64", max(1, min(days, 365))),
+            ])).result()
+        items = [dict(r) for r in rows]
+        return {"days_threshold": days, "count": len(items), "followups": items}
+    except Exception as e:
+        logger.warning(f"Follow-up query failed: {e}")
+        return {"days_threshold": days, "count": 0, "followups": [], "error": str(e)}
+
+
 # ── Deep diagnostic: everything we read for ONE company, step by step ───────
 # Token-gated (NOT unauthenticated — the last "temporary" diag endpoint's
 # removal accidentally took /chat with it; this one is permanent and safe).

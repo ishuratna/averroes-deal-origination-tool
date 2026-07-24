@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from 'next/link';
-import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand, actionBucketInfo } from "../types";
+import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand, actionBucketInfo, displayStatus } from "../types";
 import { dealApi } from "../services/api";
 import CompanyProfile from "../components/CompanyProfile";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
@@ -122,6 +122,11 @@ function HomeInner() {
   // Company drawer
   const [profileIdx, setProfileIdx] = useState<number | null>(null);
   const [profileTab, setProfileTab] = useState<string | undefined>(undefined);
+  const [followups, setFollowups] = useState<any[]>([]);
+  const [showFollowups, setShowFollowups] = useState(false);
+  useEffect(() => {
+    dealApi.getFollowups(14).then(r => setFollowups(r.followups || [])).catch(() => {});
+  }, []);
   const [memoBusy, setMemoBusy] = useState<string>('');
   const openProfile = (name: string, tab?: string) => { setProfileTab(tab); const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
   const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
@@ -359,6 +364,13 @@ function HomeInner() {
             <p className="subtitle">{filteredPipeline.length} active deals across {Object.values(stageCounts).filter(v => v > 0).length} stages</p>
           </div>
           <div className="header-right">
+            {followups.length > 0 && (
+              <button className={`followup-btn ${showFollowups ? 'open' : ''}`}
+                title={`${followups.length} companies waiting 14+ days on our last email`}
+                onClick={() => setShowFollowups(v => !v)}>
+                ⏰ Follow up <span className="followup-count">{followups.length}</span>
+              </button>
+            )}
             <SyncEmailsButton onSynced={loadData} />
             <div className="view-toggle">
               <button className={`toggle-btn ${viewMode === 'kanban' ? 'active' : ''}`} onClick={() => setViewMode('kanban')}>
@@ -486,6 +498,31 @@ function HomeInner() {
             </div>
           )}
         </div>
+
+        {/* ── Follow-up queue: our last email unanswered for 14+ days ── */}
+        {showFollowups && followups.length > 0 && (
+          <section className="followup-panel">
+            <div className="followup-head">
+              <h3>⏰ Waiting on them — {followups.length} companies, 14+ days since our last email</h3>
+              <button className="followup-close" onClick={() => setShowFollowups(false)}>&times;</button>
+            </div>
+            {followups.map((f, i) => (
+              <div className="followup-row" key={i}>
+                <div className="followup-main">
+                  <button className="followup-name" onClick={() => { setShowFollowups(false); openProfile(f.name, 'Outreach'); }}>
+                    {f.name}
+                  </button>
+                  <span className={`followup-days ${f.days_waiting >= 28 ? 'severe' : ''}`}>{f.days_waiting}d silent</span>
+                  <span className="followup-meta">{displayStatus(f.status)}{f.contact_name ? ` · ${f.contact_name}` : ''}{f.counterparty_email ? ` · ${f.counterparty_email}` : ''}</span>
+                </div>
+                <p className="followup-email" title={f.snippet || ''}>
+                  <b>{f.subject || '(no subject)'}</b> · sent {f.last_email_at ? new Date(f.last_email_at).toLocaleDateString('en-GB') : ''}
+                  {f.snippet ? ` — ${String(f.snippet).slice(0, 140)}…` : ''}
+                </p>
+              </div>
+            ))}
+          </section>
+        )}
 
         {/* Main Content: Kanban or List */}
         {viewMode === 'kanban' ? (

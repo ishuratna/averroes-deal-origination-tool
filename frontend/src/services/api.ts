@@ -221,6 +221,12 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getFollowups(days: number = 14): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}`);
+    if (!response.ok) return { count: 0, followups: [] };
+    return await response.json();
+  },
+
   async mineAllInvestors(): Promise<any> {
     // Streams heartbeat spaces while mining; the final line is the JSON summary.
     const response = await apiFetch(`${API_BASE_URL}/investors/mine-all`, { method: 'POST' });
