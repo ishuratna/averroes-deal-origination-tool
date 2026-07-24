@@ -81,6 +81,37 @@ function UniverseInner() {
 
   // Sources overlay
   const [showSources, setShowSources] = useState(false);
+
+  // ── AI Source Agent state ──
+  const [srcUrl, setSrcUrl] = useState('');
+  const [srcBusy, setSrcBusy] = useState(false);
+  const [srcError, setSrcError] = useState('');
+  const [srcPreview, setSrcPreview] = useState<any>(null);
+  const [srcExcluded, setSrcExcluded] = useState<Set<number>>(new Set());
+  const [aiSources, setAiSources] = useState<any[]>([]);
+  const loadAiSources = () => dealApi.listSources().then(r => setAiSources(r.sources || [])).catch(() => {});
+  useEffect(() => { loadAiSources(); }, []);
+  const analyzeSource = async () => {
+    setSrcBusy(true); setSrcError(''); setSrcPreview(null); setSrcExcluded(new Set());
+    try {
+      const r = await dealApi.sourcePreview(srcUrl.trim());
+      setSrcPreview(r);
+      if (!r.companies?.length) setSrcError('No companies found on that page — is it a list page?');
+    } catch (e: any) { setSrcError(e?.message || 'Analysis failed'); }
+    finally { setSrcBusy(false); }
+  };
+  const confirmSource = async () => {
+    if (!srcPreview) return;
+    setSrcBusy(true);
+    try {
+      const selected = srcPreview.companies.filter((_: any, i: number) => !srcExcluded.has(i));
+      const r = await dealApi.sourceConfirm(srcPreview.url, srcPreview.title, selected);
+      alert(`Added ${r.added} new companies from "${r.label}" (${r.found} reviewed). The source will auto-refresh every Friday.`);
+      setSrcPreview(null); setSrcUrl('');
+      await loadData(); loadAiSources();
+    } catch (e: any) { alert(e?.message || 'Ingest failed'); }
+    finally { setSrcBusy(false); }
+  };
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
 
@@ -630,6 +661,65 @@ function UniverseInner() {
               <button className="sources-close" onClick={() => { setShowSources(false); setExpandedSource(null); }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               </button>
+            </div>
+
+            {/* ── AI Source Agent: paste any URL, preview, confirm ── */}
+            <div className="source-type-section">
+              <h3 className="source-type-label">Add Source (AI Agent)</h3>
+              <div className="ai-source-box">
+                <div className="ai-source-input-row">
+                  <input className="ai-source-input" placeholder="Paste any URL with a company list — portfolio page, award list, cohort, directory…"
+                    value={srcUrl} onChange={e => setSrcUrl(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && srcUrl.trim() && !srcBusy) analyzeSource(); }} />
+                  <button className="ai-source-btn" disabled={!srcUrl.trim() || srcBusy} onClick={analyzeSource}>
+                    {srcBusy ? 'Reading page…' : 'Analyze'}
+                  </button>
+                </div>
+                {srcError && <p className="ai-source-error">{srcError}</p>}
+                {srcPreview && (
+                  <div className="ai-source-preview">
+                    <p className="ai-source-summary">
+                      <b>{srcPreview.title}</b> — found {srcPreview.companies.length} companies
+                      ({srcPreview.pages_scanned} page{srcPreview.pages_scanned > 1 ? 's' : ''} read)
+                      {(srcPreview.warnings || []).length > 0 && <span style={{ color: '#b45309' }}> · {srcPreview.warnings.join('; ')}</span>}
+                    </p>
+                    {srcPreview.companies.length > 0 && (
+                      <>
+                        <div className="ai-source-table">
+                          {srcPreview.companies.map((c: any, i: number) => (
+                            <label className="ai-source-row" key={i}>
+                              <input type="checkbox" checked={!srcExcluded.has(i)}
+                                onChange={() => setSrcExcluded(prev => { const n = new Set(prev); if (n.has(i)) { n.delete(i); } else { n.add(i); } return n; })} />
+                              <b>{c.name}</b>
+                              {c.website && <a href={c.website} target="_blank" rel="noreferrer" className="website-link">{c.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40)}</a>}
+                              {c.description && <span className="ai-source-desc" title={c.description}>{c.description.slice(0, 90)}</span>}
+                            </label>
+                          ))}
+                        </div>
+                        <button className="ai-source-btn confirm" disabled={srcBusy} onClick={confirmSource}>
+                          {srcBusy ? 'Adding…' : `Add ${srcPreview.companies.length - srcExcluded.size} companies as "${srcPreview.title}"`}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                {aiSources.length > 0 && (
+                  <div className="ai-source-saved">
+                    <p className="ai-source-saved-title">Saved AI sources (auto-refresh every Friday)</p>
+                    {aiSources.map((s: any, i: number) => (
+                      <div className="ai-source-saved-row" key={i}>
+                        <b>{s.label}</b>
+                        <span className="ai-source-desc">{s.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 50)}</span>
+                        <span className="ai-source-desc">{s.last_refreshed_at ? `last: ${new Date(s.last_refreshed_at).toLocaleDateString('en-GB')} · ${s.last_count} found` : 'never refreshed'}</span>
+                        <button className="ai-source-btn small" disabled={srcBusy}
+                          onClick={async () => { setSrcBusy(true); try { const r = await dealApi.sourceRefresh(s.url); alert(`${s.label}: ${r.found} found, ${r.added} new added.`); await loadData(); loadAiSources(); } catch (e: any) { alert(e?.message || 'Refresh failed'); } finally { setSrcBusy(false); } }}>
+                          Refresh ↻
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Source type sections */}

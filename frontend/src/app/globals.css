@@ -610,3 +610,25 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .followup-btn.owe .followup-count { background: #b91c1c; }
 .followup-group { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #92400e; margin: 0.6rem 0 0.15rem; }
 .followup-group.owe { color: #b91c1c; }
+
+/* ── AI Source Agent (Universe sources overlay) ─────────────────────────── */
+.ai-source-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem 1rem; }
+.ai-source-input-row { display: flex; gap: 0.5rem; }
+.ai-source-input { flex: 1; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.8rem; }
+.ai-source-btn { background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.78rem; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.ai-source-btn:hover:not(:disabled) { background: #1e293b; }
+.ai-source-btn:disabled { opacity: 0.55; cursor: wait; }
+.ai-source-btn.confirm { margin-top: 0.6rem; background: #15803d; }
+.ai-source-btn.confirm:hover:not(:disabled) { background: #166534; }
+.ai-source-btn.small { padding: 0.25rem 0.6rem; font-size: 0.7rem; margin-left: auto; }
+.ai-source-error { color: #b91c1c; font-size: 0.75rem; margin: 0.5rem 0 0; }
+.ai-source-preview { margin-top: 0.7rem; }
+.ai-source-summary { font-size: 0.8rem; color: #334155; margin: 0 0 0.4rem; }
+.ai-source-table { max-height: 260px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.ai-source-row { display: flex; align-items: baseline; gap: 0.55rem; padding: 0.35rem 0.6rem; border-bottom: 1px solid #f1f5f9; font-size: 0.78rem; cursor: pointer; }
+.ai-source-row:last-child { border-bottom: none; }
+.ai-source-row b { color: #0f172a; }
+.ai-source-desc { color: #94a3b8; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-source-saved { margin-top: 0.8rem; border-top: 1px solid #e2e8f0; padding-top: 0.6rem; }
+.ai-source-saved-title { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0 0 0.35rem; }
+.ai-source-saved-row { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.3rem 0; font-size: 0.78rem; }

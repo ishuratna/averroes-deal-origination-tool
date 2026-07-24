@@ -807,6 +807,14 @@ async def ch_watch_run(request: Request):
         result["investor_mining"] = _run_investor_mining()
     except Exception as e:
         logger.warning(f"[CH Watch] investor mining refresh failed (non-fatal): {e}")
+    # Fridays: weekly source refresh — every built-in scraper + every saved
+    # AI source re-runs; only NEW companies are ingested (merge-only).
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        if _dt.now(_tz.utc).weekday() == 4:
+            result["weekly_source_refresh"] = _weekly_source_refresh()
+    except Exception as e:
+        logger.warning(f"[CH Watch] weekly source refresh failed (non-fatal): {e}")
     return result or {"status": "Success"}
 
 
@@ -1011,6 +1019,142 @@ async def company_connections(company_name: str):
 async def investor_connections(investor_name: str):
     """Portfolio companies of an investor + co-investors met through them."""
     return investor_handler.get_investor_connections(investor_name)
+
+
+# ── AI Source Agent ──────────────────────────────────────────────────────────
+# Paste a URL, the AI reads the page and extracts the company list; preview
+# first, confirm to ingest. NOT code generation — one universal pipeline.
+
+class SourcePreviewRequest(BaseModel):
+    url: str
+
+class SourceConfirmRequest(BaseModel):
+    url: str
+    label: str
+    companies: List[Dict]
+
+
+def _stream_json(work_fn):
+    """Heartbeat-streamed response wrapper (hostile networks kill silent
+    connections): spaces every 10s, final line = JSON result."""
+    import asyncio as _asyncio
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    async def _gen():
+        task = _asyncio.create_task(_asyncio.to_thread(work_fn))
+        while not task.done():
+            await _asyncio.sleep(10)
+            yield " "
+        try:
+            res = task.result()
+        except Exception as e:
+            logger.error(f"[SourceAgent] streamed work failed: {e}")
+            res = {"status": "Error", "detail": str(e)}
+        yield "\n" + _json.dumps(res)
+    return StreamingResponse(_gen(), media_type="text/plain")
+
+
+@app.post("/sources/preview")
+async def source_preview(req: SourcePreviewRequest):
+    """Analyze a URL: fetch, AI-read, paginate (bounded). Persists NOTHING."""
+    if not (req.url or "").strip():
+        raise HTTPException(status_code=400, detail="Empty URL.")
+    from services.source_agent import extract_source
+    return _stream_json(lambda: extract_source(req.url))
+
+
+def _ingest_source_companies(url: str, label: str, companies: list) -> dict:
+    """Save reviewed companies (merge-never-overwrite) + register the source."""
+    from google.cloud import bigquery as bq_lib
+    rows = []
+    for c in companies:
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        rows.append({"name": name, "website": c.get("website") or "",
+                     "description": c.get("description") or "",
+                     "source": label, "status": "Scraped", "match_score": 0.0})
+    if not rows:
+        return {"status": "Success", "found": 0, "added": 0}
+    # How many are genuinely new (save_targets merges existing silently)
+    names = [r["name"] for r in rows]
+    existing = {r.name for r in bq_handler.client.query(
+        f"SELECT name FROM `{bq_handler.table_id}` WHERE name IN UNNEST(@names)",
+        job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ArrayQueryParameter("names", "STRING", names)])).result()}
+    added = len([n for n in names if n not in existing])
+    bq_handler.save_targets(rows)
+    bq_handler.upsert_ai_source(url, label)
+    bq_handler.stamp_ai_source(url, found=len(rows), added=added)
+    logger.info(f"[SourceAgent] '{label}': {len(rows)} found, {added} new ingested")
+    return {"status": "Success", "found": len(rows), "added": added, "label": label}
+
+
+@app.post("/sources/confirm")
+async def source_confirm(req: SourceConfirmRequest):
+    """Ingest the previewed (and possibly pruned) company list."""
+    return _ingest_source_companies(req.url.strip(), (req.label or "AI Source").strip(), req.companies or [])
+
+
+@app.get("/sources/list")
+async def sources_list():
+    return {"sources": bq_handler.list_ai_sources()}
+
+
+def _refresh_ai_source(url: str, label: str = "") -> dict:
+    """Re-extract a saved source and auto-ingest NEW companies only."""
+    from services.source_agent import extract_source
+    result = extract_source(url)
+    lbl = label or result.get("title") or "AI Source"
+    out = _ingest_source_companies(url, lbl, result.get("companies") or [])
+    out["warnings"] = result.get("warnings") or []
+    return out
+
+
+@app.post("/sources/refresh")
+async def source_refresh(req: SourcePreviewRequest):
+    src = next((s for s in bq_handler.list_ai_sources() if s["url"] == req.url.strip()), None)
+    if not src:
+        raise HTTPException(status_code=404, detail="Source not registered — add it first.")
+    return _stream_json(lambda: _refresh_ai_source(src["url"], src["label"]))
+
+
+def _weekly_source_refresh() -> dict:
+    """Friday job: re-run every built-in scraper AND every saved AI source.
+    New companies auto-ingest (merge-only); everything else untouched."""
+    summary = {"builtin": {}, "ai_sources": {}}
+    for scraper in (market_scraper, conf_scraper, rank_scraper, directory_scraper, network_scraper):
+        try:
+            for src_name in scraper.get_supported_sources():
+                try:
+                    raw = scraper.scrape_source(src_name)
+                    for c in raw or []:
+                        c["source"] = c.get("source", src_name)
+                        c["status"] = "Scraped"
+                        c["match_score"] = 0.0
+                    if raw:
+                        bq_handler.save_targets(raw)
+                    summary["builtin"][src_name] = len(raw or [])
+                except Exception as e:
+                    summary["builtin"][src_name] = f"failed: {e}"
+        except Exception as e:
+            logger.warning(f"[WeeklyRefresh] scraper enumeration failed: {e}")
+    for s in bq_handler.list_ai_sources():
+        if (s.get("status") or "active") != "active":
+            continue
+        try:
+            r = _refresh_ai_source(s["url"], s["label"])
+            summary["ai_sources"][s["label"]] = f"{r.get('found', 0)} found, {r.get('added', 0)} new"
+        except Exception as e:
+            summary["ai_sources"][s["label"]] = f"failed: {e}"
+    try:
+        bq_handler._log_activity("__system__", "note", "weekly-refresh",
+                                 note_text=f"Weekly source refresh: {json.dumps(summary)[:900]}")
+    except Exception:
+        pass
+    logger.info(f"[WeeklyRefresh] {summary}")
+    return summary
 
 
 # ── Follow-up reminders ──────────────────────────────────────────────────────

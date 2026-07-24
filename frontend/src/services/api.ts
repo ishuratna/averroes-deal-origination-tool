@@ -221,6 +221,47 @@ export const dealApi = {
     return await response.json();
   },
 
+  async sourcePreview(url: string): Promise<any> {
+    // Heartbeat-streamed: spaces while working, final line = JSON
+    const response = await apiFetch(`${API_BASE_URL}/sources/preview`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+    });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Preview failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Preview failed');
+    return data;
+  },
+
+  async sourceConfirm(url: string, label: string, companies: any[]): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/sources/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, label, companies }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Ingest failed');
+    return data;
+  },
+
+  async listSources(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/sources/list`);
+    if (!response.ok) return { sources: [] };
+    return await response.json();
+  },
+
+  async sourceRefresh(url: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/sources/refresh`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+    });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Refresh failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Refresh failed');
+    return data;
+  },
+
   async getFollowups(days: number = 14): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}`);
     if (!response.ok) return { count: 0, followups: [] };

@@ -1039,3 +1039,54 @@ class BigQueryHandler:
         except Exception as e:
             logger.error(f"BigQuery Query Failed: {e}")
             return []
+
+    # ── AI Source Agent registry ─────────────────────────────────────────────
+
+    @property
+    def sources_table_id(self) -> str:
+        return f"{self.project_id}.{self.dataset_id}.ai_sources"
+
+    def _ensure_sources_table(self):
+        try:
+            self.client.get_table(self.sources_table_id)
+        except Exception:
+            schema = [bigquery.SchemaField(n, t) for n, t in [
+                ("url", "STRING"), ("label", "STRING"), ("status", "STRING"),
+                ("added_at", "TIMESTAMP"), ("last_refreshed_at", "TIMESTAMP"),
+                ("last_count", "INT64"), ("total_added", "INT64"),
+            ]]
+            self.client.create_table(bigquery.Table(self.sources_table_id, schema=schema))
+            logger.info("Created ai_sources table in BigQuery")
+        return self.sources_table_id
+
+    def list_ai_sources(self):
+        if not self.client:
+            return []
+        t = self._ensure_sources_table()
+        rows = [dict(r) for r in self.client.query(
+            f"SELECT url, label, status, CAST(added_at AS STRING) AS added_at, "
+            f"CAST(last_refreshed_at AS STRING) AS last_refreshed_at, last_count, total_added "
+            f"FROM `{t}` ORDER BY added_at DESC").result()]
+        return rows
+
+    def upsert_ai_source(self, url: str, label: str):
+        t = self._ensure_sources_table()
+        self.client.query(
+            f"""MERGE `{t}` T USING (SELECT @url AS url) S ON T.url = S.url
+                WHEN MATCHED THEN UPDATE SET label = @label
+                WHEN NOT MATCHED THEN INSERT (url, label, status, added_at, last_count, total_added)
+                VALUES (@url, @label, 'active', CURRENT_TIMESTAMP(), 0, 0)""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("url", "STRING", url),
+                bigquery.ScalarQueryParameter("label", "STRING", label)])).result()
+
+    def stamp_ai_source(self, url: str, found: int, added: int):
+        t = self._ensure_sources_table()
+        self.client.query(
+            f"""UPDATE `{t}` SET last_refreshed_at = CURRENT_TIMESTAMP(),
+                last_count = @found, total_added = IFNULL(total_added, 0) + @added
+                WHERE url = @url""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("found", "INT64", found),
+                bigquery.ScalarQueryParameter("added", "INT64", added),
+                bigquery.ScalarQueryParameter("url", "STRING", url)])).result()
