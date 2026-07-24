@@ -128,6 +128,9 @@ class BigQueryHandler:
         # Raw investor/owner lists from Inven (feed the investor miner)
         ("investors_raw", "STRING"),
         ("current_owners", "STRING"),
+        # Smart Upload: source columns with no schema match, kept as JSON so
+        # nothing a user uploads is ever lost
+        ("extra_data", "STRING"),
         # CH v4: distress flags, filing intelligence, cap table, watch job
         ("ch_accounts_overdue", "BOOL"),
         ("ch_insolvency_summary", "STRING"),

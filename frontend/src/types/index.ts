@@ -145,6 +145,8 @@ export interface CompanyTarget {
   // Raw investor/owner lists from the Inven export
   investors_raw?: string;
   current_owners?: string;
+  // Smart Upload: unmapped source columns preserved as JSON
+  extra_data?: string;
   // Stage timeline
   stage_entered_at?: string;
   qualified_at?: string;
