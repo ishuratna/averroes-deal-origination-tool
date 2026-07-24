@@ -759,57 +759,91 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   {memo && <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Generated {fmtDate(memo.generated_at)} · numbers from verified record, sources labelled</span>}
                 </div>
 
-                {!memo && <p className="cp-empty">No memo yet — Generate IC Memo builds a one-pager from the verified record (one grounded search for market context).</p>}
+                {!memo && <p className="cp-empty">No memo yet — Generate IC Memo builds the 10-section memo from the verified record (one grounded search for the market section).</p>}
 
-                {memo && (
-                  <>
-                    {n.opportunity && (<><div className="cp-section-title">The Opportunity</div>
-                      <div className="cp-card"><p className="cp-memo-p">{n.opportunity}</p></div></>)}
-
-                    {(n.mandate_fit || []).length > 0 && (<><div className="cp-section-title">Mandate Fit</div>
-                      <div className="cp-card">
-                        {(n.mandate_fit || []).map((f: any, i: number) => (
-                          <div className="cp-kv" key={i}>
-                            <span className="k">{f.check}</span>
-                            <span className="v"><b style={{ color: f.verdict === 'PASS' ? '#15803d' : f.verdict === 'FAIL' ? '#b91c1c' : '#b45309' }}>{f.verdict}</b> — {f.evidence}</span>
-                          </div>
-                        ))}
-                      </div></>)}
-
-                    {(memo.financials || []).length > 0 && (<><div className="cp-section-title">Financial Snapshot</div>
-                      <div className="cp-card">
-                        <table className="cp-table"><tbody>
-                          {(memo.financials || []).map((r: any, i: number) => (
-                            <tr key={i}><td>{r.label}</td><td>{r.value}</td><td style={{ color: '#94a3b8', fontSize: '0.72rem' }}>{r.source}</td></tr>
-                          ))}
-                        </tbody></table>
-                      </div></>)}
-
-                    <div className="cp-section-title">Deal Hypothesis</div>
-                    <div className="cp-card">
-                      {dm.available
-                        ? <p className="cp-memo-p"><b>Implied valuation £{dm.val_low_m}M–£{dm.val_high_m}M</b> at 4–6x £{dm.revenue_m}M revenue{dm.estimated ? ' (estimated)' : ''}. {dm.stake_note}</p>
-                        : <p className="cp-memo-p">{dm.note || 'Valuation not computable.'}</p>}
-                      {n.deal_hypothesis && <p className="cp-memo-p">{n.deal_hypothesis}</p>}
-                      {sc.fit != null && <p className="cp-memo-p" style={{ color: '#475569' }}><b>Fit {sc.fit}/100</b> · {(sc.subscores || []).filter((s: any) => s.value != null).map((s: any) => `${s.label} ${s.value}`).join(' · ')}</p>}
-                    </div>
-
-                    {n.engagement_status && (<><div className="cp-section-title">Engagement</div>
-                      <div className="cp-card"><p className="cp-memo-p">{n.engagement_status}</p></div></>)}
-
-                    {n.market_context && (<><div className="cp-section-title">Market Context (sourced)</div>
-                      <div className="cp-card"><p className="cp-memo-p">{n.market_context}</p></div></>)}
-
-                    {risks.length > 0 && (<><div className="cp-section-title">Risks &amp; Red Flags</div>
-                      <div className="cp-card">{risks.slice(0, 6).map((r, i) => <p className="cp-memo-p" key={i}>• {r}</p>)}</div></>)}
-
-                    {(n.open_questions || []).length > 0 && (<><div className="cp-section-title">Open Questions for First Meeting</div>
-                      <div className="cp-card">{(n.open_questions || []).map((q: string, i: number) => <p className="cp-memo-p" key={i}>• {q}</p>)}</div></>)}
-
-                    {n.recommendation && (<><div className="cp-section-title">Recommendation</div>
-                      <div className="cp-card"><p className="cp-memo-p"><b>{n.recommendation}</b></p></div></>)}
-                  </>
+                {memo && memo.v !== 2 && (
+                  <p className="cp-empty" style={{ color: '#b45309' }}>This memo uses the old format — press Regenerate for the 10-section IC structure.</p>
                 )}
+
+                {memo && memo.v === 2 && (() => {
+                  const ex = memo.executive_summary || {}; const facts = ex.facts || {};
+                  const ov = memo.company_overview || {}; const mk = memo.market || {};
+                  const dd = memo.diligence || {}; const oq = dd.open_questions || {};
+                  const rt = memo.returns || {};
+                  const kvs = (obj: any, pairs: Array<[string, string]>) => pairs
+                    .filter(([, k]) => obj[k])
+                    .map(([lbl, k], i) => <div className="cp-kv" key={i}><span className="k">{lbl}</span><span className="v" style={{ textAlign: 'left', fontWeight: 500 }}>{obj[k]}</span></div>);
+                  return (
+                    <>
+                      <div className="cp-section-title">1 · Executive Summary</div>
+                      <div className="cp-card">
+                        {kvs(facts, [['Company', 'company'], ['Sector', 'sector'], ['Indicative EV', 'indicative_ev'], ['Equity investment', 'equity_investment'], ['Ownership targeted', 'ownership_targeted']])}
+                        {facts.fit_score != null && <div className="cp-kv"><span className="k">Fit score</span><span className="v">{facts.fit_score}/100</span></div>}
+                        {facts.recommendation && <div className="cp-kv"><span className="k">Recommendation</span><span className="v" style={{ color: '#15803d' }}>{facts.recommendation}</span></div>}
+                        {ex.summary && <p className="cp-memo-p" style={{ marginTop: '0.5rem' }}>{ex.summary}</p>}
+                      </div>
+
+                      {(memo.investment_thesis || []).length > 0 && (<><div className="cp-section-title">2 · Investment Thesis</div>
+                        <div className="cp-card">{memo.investment_thesis.map((b: string, i: number) => <p className="cp-memo-p" key={i}>• {b}</p>)}</div></>)}
+
+                      {Object.keys(ov).length > 0 && (<><div className="cp-section-title">3 · Company Overview</div>
+                        <div className="cp-card">{kvs(ov, [['History', 'history'], ['Products', 'products'], ['Geography', 'geography'], ['Customers', 'customers'], ['Revenue mix', 'revenue_mix'], ['Team', 'team']])}</div></>)}
+
+                      {Object.keys(mk).length > 0 && (<><div className="cp-section-title">4 · Market (sourced)</div>
+                        <div className="cp-card">{kvs(mk, [['Size', 'size'], ['Growth', 'growth'], ['Competitors', 'competitors'], ['Demand drivers', 'demand_drivers'], ['Regulation', 'regulation']])}</div></>)}
+
+                      {(memo.financials || []).length > 0 && (<><div className="cp-section-title">5 · Financials (source-tagged)</div>
+                        <div className="cp-card">
+                          <table className="cp-table"><tbody>
+                            {memo.financials.map((r: any, i: number) => (
+                              <tr key={i}><td>{r.label}</td><td>{r.value}</td><td style={{ color: '#94a3b8', fontSize: '0.72rem' }}>{r.source}</td></tr>
+                            ))}
+                          </tbody></table>
+                          {sc.fit != null && <p className="cp-memo-p" style={{ color: '#475569', marginTop: '0.4rem' }}><b>Fit {sc.fit}/100</b> · {(sc.subscores || []).filter((s: any) => s.value != null).map((s: any) => `${s.label} ${s.value}`).join(' · ')}</p>}
+                        </div></>)}
+
+                      {((dd.verified || []).length > 0 || Object.keys(oq).length > 0) && (<><div className="cp-section-title">6 · Diligence Status (pre-DD)</div>
+                        <div className="cp-card">
+                          {(dd.verified || []).map((v: string, i: number) => <p className="cp-memo-p" key={i}><span style={{ color: '#15803d' }}>✓</span> {v}</p>)}
+                          {(['commercial', 'financial', 'legal', 'technology'] as const).map(ws => (oq[ws] || []).length > 0 && (
+                            <p className="cp-memo-p" key={ws}><b style={{ color: '#64748b', textTransform: 'capitalize' }}>{ws}:</b> {(oq[ws] || []).join(' · ')}</p>
+                          ))}
+                        </div></>)}
+
+                      {(memo.value_creation || []).length > 0 && (<><div className="cp-section-title">7 · Value Creation Plan (hypotheses)</div>
+                        <div className="cp-card">{memo.value_creation.map((b: string, i: number) => <p className="cp-memo-p" key={i}>• {b}</p>)}</div></>)}
+
+                      {((memo.risks || []).length > 0 || (memo.registry_flags || []).length > 0) && (<><div className="cp-section-title">8 · Risks &amp; Mitigations</div>
+                        <div className="cp-card">
+                          <table className="cp-table"><thead><tr><th style={{ textAlign: 'left' }}>Risk</th><th style={{ textAlign: 'left' }}>Mitigation</th></tr></thead><tbody>
+                            {(memo.registry_flags || []).slice(0, 2).map((f: string, i: number) => (
+                              <tr key={`f${i}`}><td style={{ textAlign: 'left' }}>{f}</td><td style={{ textAlign: 'left', color: '#64748b' }}>Verify in DD; registry-flagged</td></tr>
+                            ))}
+                            {(memo.risks || []).map((r: any, i: number) => (
+                              <tr key={i}><td style={{ textAlign: 'left' }}>{r.risk}</td><td style={{ textAlign: 'left', color: '#64748b' }}>{r.mitigation}</td></tr>
+                            ))}
+                          </tbody></table>
+                        </div></>)}
+
+                      <div className="cp-section-title">9 · Illustrative Returns</div>
+                      <div className="cp-card">
+                        {rt.available ? (
+                          <>
+                            <table className="cp-table"><thead><tr><th style={{ textAlign: 'left' }}>Scenario</th><th>Growth</th><th>Exit</th><th>MOIC</th><th>IRR</th></tr></thead><tbody>
+                              {(rt.scenarios || []).map((s: any, i: number) => (
+                                <tr key={i}><td style={{ textAlign: 'left' }}>{s.scenario}</td><td>{s.revenue_growth_pct}%/yr</td><td>{s.exit_multiple}x</td><td><b>{s.moic}x</b></td><td><b>{s.irr_pct}%</b></td></tr>
+                              ))}
+                            </tbody></table>
+                            <p className="cp-memo-p" style={{ color: '#94a3b8', fontSize: '0.7rem', marginTop: '0.4rem' }}>{rt.note}</p>
+                          </>
+                        ) : <p className="cp-memo-p">{rt.note || 'Not computable without a revenue figure.'}</p>}
+                      </div>
+
+                      {memo.recommendation && (<><div className="cp-section-title">10 · Recommendation</div>
+                        <div className="cp-card"><p className="cp-memo-p"><b>{memo.recommendation}</b></p></div></>)}
+                    </>
+                  );
+                })()}
               </>
             );
           })()}

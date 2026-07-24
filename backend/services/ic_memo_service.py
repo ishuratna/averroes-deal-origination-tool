@@ -139,11 +139,74 @@ def _flags(c: dict) -> list:
     return out
 
 
+def _returns_scenarios(c: dict) -> dict:
+    """ILLUSTRATIVE pre-DD returns, computed in code, unlevered, 5-year hold.
+    Entry at 5x current revenue; scenarios vary exit multiple and growth.
+    Labelled illustrative everywhere - never presented as underwritten."""
+    dm = _deal_math(c)
+    if not dm.get("available"):
+        return {"available": False, "note": "No revenue on record; returns not computable."}
+    rev = dm["revenue_m"]
+    entry_ev = round(5 * rev, 1)
+    hold = 5
+    rows = []
+    for label, growth, exit_mult in (("Downside", 0.05, 4.0), ("Base", 0.15, 5.0), ("Upside", 0.25, 6.0)):
+        exit_rev = rev * ((1 + growth) ** hold)
+        exit_ev = exit_rev * exit_mult
+        moic = exit_ev / entry_ev
+        irr = moic ** (1 / hold) - 1
+        rows.append({"scenario": label, "revenue_growth_pct": round(growth * 100),
+                     "exit_multiple": exit_mult, "moic": round(moic, 1),
+                     "irr_pct": round(irr * 100)})
+    return {"available": True, "entry_ev_m": entry_ev, "entry_multiple": 5.0,
+            "hold_years": hold, "estimated_revenue": dm.get("estimated", False),
+            "scenarios": rows,
+            "note": ("Illustrative only, pre-diligence: unlevered, entry at 5x current revenue, "
+                     "no margin assumptions. Sensitivities to test in DD: exit multiple, revenue growth, "
+                     "EBITDA margin, leverage, holding period."
+                     + (" Revenue is an ESTIMATE." if dm.get("estimated") else ""))}
+
+
+def _verified_vs_tbd(c: dict) -> dict:
+    """Diligence status at origination stage: what the registry has already
+    verified vs the workstreams a real DD must cover. Code-built, honest."""
+    verified = []
+    if c.get("ch_company_number"):
+        verified.append(f"Registry identity confirmed ({c.get('ch_official_name') or ''} #{c['ch_company_number']}, {c.get('ch_match_confidence') or ''} confidence)")
+    if c.get("revenue_y1") or c.get("ch_history"):
+        verified.append("Filed financials extracted from Companies House accounts (multi-year)")
+    if c.get("ch_cap_table"):
+        verified.append(f"Cap table built from CS01 ({str(c.get('ch_cap_table_date') or '')[:10]})"
+                        + (", PSC cross-checked" if '"psc_check": "consistent' in (c.get("ch_cap_table") or "") else ""))
+    if c.get("ch_psc_summary"):
+        verified.append("Ownership control verified via PSC register")
+    if c.get("ch_charges_count") == 0:
+        verified.append("No outstanding registered charges (no secured debt on record)")
+    if not c.get("ch_accounts_overdue") and c.get("ch_company_number"):
+        verified.append("Accounts filings up to date")
+    return {"verified": verified}
+
+
 def build_ic_memo(company: dict, emails: List[dict]) -> dict:
-    """Assemble the memo: deterministic facts + one grounded narrative call."""
+    """Assemble the memo (v2, classic 10-section IC flow):
+    1 Executive Summary  2 Investment Thesis  3 Company Overview  4 Market
+    5 Financials  6 Diligence Status  7 Value Creation  8 Risks  9 Returns
+    10 Recommendation. All numbers computed in code; AI writes prose only."""
     narrative = _narrative(company, emails)
+    dm = _deal_math(company)
+    exec_facts = {
+        "company": company.get("name"),
+        "sector": company.get("sector") or "",
+        "indicative_ev": (f"£{dm['val_low_m']}M-£{dm['val_high_m']}M (4-6x revenue"
+                          + (", estimated" if dm.get("estimated") else "") + ")") if dm.get("available") else "Not yet known",
+        "equity_investment": "£15-40M (mandate)",
+        "ownership_targeted": dm.get("stake_note") or "25%+ (mandate minimum)",
+        "stage": company.get("status") or "",
+        "fit_score": _scorecard(company).get("fit"),
+        "recommendation": narrative.get("recommendation_action") or "",
+    }
     return {
-        "v": 1,
+        "v": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "header": {
             "name": company.get("name"),
@@ -156,12 +219,22 @@ def build_ic_memo(company: dict, emails: List[dict]) -> dict:
             "stage": company.get("status") or "",
             "band": company.get("revenue_band") or "",
         },
+        "executive_summary": {"facts": exec_facts, "summary": narrative.get("executive_summary") or ""},
+        "investment_thesis": narrative.get("investment_thesis") or [],
+        "company_overview": narrative.get("company_overview") or {},
+        "market": narrative.get("market") or {},
         "financials": _financial_rows(company),
-        "deal_math": _deal_math(company),
+        "deal_math": dm,
         "scorecard": _scorecard(company),
         "cap_table": _cap_table(company),
+        "diligence": {**_verified_vs_tbd(company),
+                      "open_questions": narrative.get("diligence_open_questions") or {}},
+        "value_creation": narrative.get("value_creation") or [],
+        "risks": narrative.get("risks") or [],
         "registry_flags": _flags(company),
-        "narrative": narrative,
+        "returns": _returns_scenarios(company),
+        "recommendation": narrative.get("recommendation") or "",
+        "narrative": narrative,  # kept for backward compatibility with v1 renderers
     }
 
 
@@ -196,13 +269,14 @@ def _narrative(company: dict, emails: List[dict]) -> dict:
     is told that inventing a number that is not in the record or its cited
     search results is a failure."""
     api_key = os.getenv("GEMINI_API_KEY")
-    empty = {"opportunity": "", "mandate_fit": [], "deal_hypothesis": "",
-             "engagement_status": "", "market_context": "", "risks": [],
-             "open_questions": [], "recommendation": ""}
+    empty = {"executive_summary": "", "recommendation_action": "", "investment_thesis": [],
+             "company_overview": {}, "market": {}, "diligence_open_questions": {},
+             "value_creation": [], "risks": [], "recommendation": "",
+             "engagement_status": ""}
     if not api_key:
         return empty
     dm = _deal_math(company)
-    prompt = f"""You are an associate at Averroes Capital writing the narrative sections of a one page IC memo. Be concise, factual and honest. Where information is missing, write "Not yet known" instead of guessing. NEVER invent a number that is not in the record below or in your search results. No em dashes anywhere.
+    prompt = f"""You are an associate at Averroes Capital writing the prose sections of an IC memo that follows the classic PE structure. Be concise, factual and honest. Where information is missing, write "Not yet known" instead of guessing. NEVER invent a number that is not in the record below or in your search results. This is an ORIGINATION-stage memo (pre-diligence): recommendations are about progressing the deal (first meeting, management session, proceed to DD), never about approving an acquisition. No em dashes anywhere.
 
 THE MANDATE: {_MANDATE}
 
@@ -214,17 +288,19 @@ DEAL MATH (already computed, do not recompute): {json.dumps(dm)}
 EMAIL THREAD WITH THE FOUNDER (oldest first):
 {_email_block(emails)}
 
-You may use Google Search ONCE conceptually: for the market_context section only (market size, obvious competitors, notable recent news about the company or its space). Name sources inline in plain text, e.g. "(per TechCrunch, Jan 2026)".
+You may use Google Search ONCE conceptually: for the market section only (market size, growth, competitors, demand drivers, regulation). Name sources inline in plain text, e.g. "(per Gartner, 2026)".
 
 Write these sections:
-1. opportunity: 2-3 sentences. What the company does, that Averroes sourced it proprietarily through direct founder outreach, and the single most compelling reason it is interesting.
-2. mandate_fit: exactly 3 items, each {{"check": "...", "verdict": "PASS"|"FAIL"|"UNKNOWN", "evidence": "one sentence citing the record"}}. Checks: revenue envelope (2.5 to 40m GBP), UK or Ireland B2B software thesis, ownership amenable to a 25 percent plus stake.
-3. deal_hypothesis: 2-3 sentences using ONLY the deal math above plus any structure signals from the founder emails. Label it as a hypothesis.
-4. engagement_status: 2 sentences. When we reached out, what the founder said (use the thread), and the current next step.
-5. market_context: 2-3 sentences from search, sources named. If search yields nothing solid, write "No reliable market context found."
-6. risks: 3-5 short strings. Start with any registry red flags in the record, then data gaps and business risks. Honest.
-7. open_questions: 3-4 short strings. The questions the first meeting must answer.
-8. recommendation: one sentence, e.g. "Proceed to a first meeting to validate X and Y."
+1. executive_summary: 3-4 sentences. What the company does, how we sourced it (proprietary founder outreach), the size/fit picture from the record, and where the deal stands.
+2. recommendation_action: 2-5 words, one of the spirit of: "Advance to first meeting" / "Progress to DD" / "Hold - revisit [when]" / "Pass". Choose from the record and thread.
+3. investment_thesis: 4-6 short bullet strings. Only claims supported by the record or search (growth rates, recurring revenue nature, founder strength, buy-and-build angle). Where a classic thesis point (e.g. net revenue retention) is unknown, DO NOT list it.
+4. company_overview: {{"history": "1-2 sentences", "products": "...", "geography": "...", "customers": "...", "revenue_mix": "...", "team": "..."}} - each from the record or "Not yet known".
+5. market: {{"size": "...", "growth": "...", "competitors": "...", "demand_drivers": "...", "regulation": "..."}} - 1-2 sentences each FROM SEARCH with sources named; "Not yet known" where search gives nothing solid.
+6. diligence_open_questions: {{"commercial": ["..."], "financial": ["..."], "legal": ["..."], "technology": ["..."]}} - 1-3 questions per workstream that a real DD must answer for THIS company.
+7. value_creation: 3-5 short bullet strings, labelled as hypotheses, grounded in what the company actually does (pricing, geographic expansion, enterprise motion, bolt-ons, product extensions, operational efficiency).
+8. risks: 3-5 items, each {{"risk": "...", "mitigation": "..."}}. Start with any registry red flags in the record; mitigations must be realistic (diversify, verify in DD, structure protections).
+9. engagement_status: 2 sentences from the thread: when we reached out, what the founder said, current next step.
+10. recommendation: one closing paragraph (3-4 sentences): the action, why the record supports it, what the illustrative economics suggest, and the key risks with how they are manageable. Never claim diligence findings that have not happened.
 
 Return ONLY valid JSON with exactly those keys."""
     try:
