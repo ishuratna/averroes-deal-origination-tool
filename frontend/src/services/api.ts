@@ -221,10 +221,10 @@ export const dealApi = {
     return await response.json();
   },
 
-  async sourcePreview(url: string): Promise<any> {
+  async sourcePreview(url: string, kind: string = 'companies'): Promise<any> {
     // Heartbeat-streamed: spaces while working, final line = JSON
     const response = await apiFetch(`${API_BASE_URL}/sources/preview`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, kind }),
     });
     const text = await response.text();
     if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Preview failed'); } }
@@ -234,18 +234,18 @@ export const dealApi = {
     return data;
   },
 
-  async sourceConfirm(url: string, label: string, companies: any[]): Promise<any> {
+  async sourceConfirm(url: string, label: string, companies: any[], kind: string = 'companies'): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/sources/confirm`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, label, companies }),
+      body: JSON.stringify({ url, label, companies, kind }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Ingest failed');
     return data;
   },
 
-  async listSources(): Promise<any> {
-    const response = await apiFetch(`${API_BASE_URL}/sources/list`);
+  async listSources(kind: string = ''): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/sources/list${kind ? `?kind=${kind}` : ''}`);
     if (!response.ok) return { sources: [] };
     return await response.json();
   },

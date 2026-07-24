@@ -1046,39 +1046,52 @@ class BigQueryHandler:
     def sources_table_id(self) -> str:
         return f"{self.project_id}.{self.dataset_id}.ai_sources"
 
+    _SOURCES_SCHEMA = [
+        ("url", "STRING"), ("label", "STRING"), ("status", "STRING"),
+        ("kind", "STRING"),  # 'companies' (deal targets) or 'investors' (LPs)
+        ("added_at", "TIMESTAMP"), ("last_refreshed_at", "TIMESTAMP"),
+        ("last_count", "INT64"), ("total_added", "INT64"),
+    ]
+
     def _ensure_sources_table(self):
         try:
-            self.client.get_table(self.sources_table_id)
+            table = self.client.get_table(self.sources_table_id)
+            existing = {f.name for f in table.schema}
+            missing = [(n, t) for n, t in self._SOURCES_SCHEMA if n not in existing]
+            if missing:
+                table.schema = list(table.schema) + [bigquery.SchemaField(n, t) for n, t in missing]
+                self.client.update_table(table, ["schema"])
         except Exception:
-            schema = [bigquery.SchemaField(n, t) for n, t in [
-                ("url", "STRING"), ("label", "STRING"), ("status", "STRING"),
-                ("added_at", "TIMESTAMP"), ("last_refreshed_at", "TIMESTAMP"),
-                ("last_count", "INT64"), ("total_added", "INT64"),
-            ]]
+            schema = [bigquery.SchemaField(n, t) for n, t in self._SOURCES_SCHEMA]
             self.client.create_table(bigquery.Table(self.sources_table_id, schema=schema))
             logger.info("Created ai_sources table in BigQuery")
         return self.sources_table_id
 
-    def list_ai_sources(self):
+    def list_ai_sources(self, kind: str = ""):
         if not self.client:
             return []
         t = self._ensure_sources_table()
+        where = "WHERE IFNULL(kind, 'companies') = @kind" if kind else ""
         rows = [dict(r) for r in self.client.query(
-            f"SELECT url, label, status, CAST(added_at AS STRING) AS added_at, "
+            f"SELECT url, label, status, IFNULL(kind, 'companies') AS kind, "
+            f"CAST(added_at AS STRING) AS added_at, "
             f"CAST(last_refreshed_at AS STRING) AS last_refreshed_at, last_count, total_added "
-            f"FROM `{t}` ORDER BY added_at DESC").result()]
+            f"FROM `{t}` {where} ORDER BY added_at DESC",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("kind", "STRING", kind)]) if kind else None).result()]
         return rows
 
-    def upsert_ai_source(self, url: str, label: str):
+    def upsert_ai_source(self, url: str, label: str, kind: str = "companies"):
         t = self._ensure_sources_table()
         self.client.query(
             f"""MERGE `{t}` T USING (SELECT @url AS url) S ON T.url = S.url
-                WHEN MATCHED THEN UPDATE SET label = @label
-                WHEN NOT MATCHED THEN INSERT (url, label, status, added_at, last_count, total_added)
-                VALUES (@url, @label, 'active', CURRENT_TIMESTAMP(), 0, 0)""",
+                WHEN MATCHED THEN UPDATE SET label = @label, kind = @kind
+                WHEN NOT MATCHED THEN INSERT (url, label, status, kind, added_at, last_count, total_added)
+                VALUES (@url, @label, 'active', @kind, CURRENT_TIMESTAMP(), 0, 0)""",
             job_config=bigquery.QueryJobConfig(query_parameters=[
                 bigquery.ScalarQueryParameter("url", "STRING", url),
-                bigquery.ScalarQueryParameter("label", "STRING", label)])).result()
+                bigquery.ScalarQueryParameter("label", "STRING", label),
+                bigquery.ScalarQueryParameter("kind", "STRING", kind or "companies")])).result()
 
     def stamp_ai_source(self, url: str, found: int, added: int):
         t = self._ensure_sources_table()

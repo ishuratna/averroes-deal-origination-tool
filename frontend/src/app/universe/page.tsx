@@ -89,7 +89,7 @@ function UniverseInner() {
   const [srcPreview, setSrcPreview] = useState<any>(null);
   const [srcExcluded, setSrcExcluded] = useState<Set<number>>(new Set());
   const [aiSources, setAiSources] = useState<any[]>([]);
-  const loadAiSources = () => dealApi.listSources().then(r => setAiSources(r.sources || [])).catch(() => {});
+  const loadAiSources = () => dealApi.listSources('companies').then(r => setAiSources(r.sources || [])).catch(() => {});
   useEffect(() => { loadAiSources(); }, []);
   const analyzeSource = async () => {
     setSrcBusy(true); setSrcError(''); setSrcPreview(null); setSrcExcluded(new Set());

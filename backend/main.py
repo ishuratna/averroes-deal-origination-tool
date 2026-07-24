@@ -1027,11 +1027,13 @@ async def investor_connections(investor_name: str):
 
 class SourcePreviewRequest(BaseModel):
     url: str
+    kind: Optional[str] = "companies"  # or "investors" (LPs)
 
 class SourceConfirmRequest(BaseModel):
     url: str
     label: str
     companies: List[Dict]
+    kind: Optional[str] = "companies"
 
 
 def _stream_json(work_fn):
@@ -1061,7 +1063,8 @@ async def source_preview(req: SourcePreviewRequest):
     if not (req.url or "").strip():
         raise HTTPException(status_code=400, detail="Empty URL.")
     from services.source_agent import extract_source
-    return _stream_json(lambda: extract_source(req.url))
+    kind = req.kind or "companies"
+    return _stream_json(lambda: extract_source(req.url, kind=kind))
 
 
 def _ingest_source_companies(url: str, label: str, companies: list) -> dict:
@@ -1091,23 +1094,54 @@ def _ingest_source_companies(url: str, label: str, companies: list) -> dict:
     return {"status": "Success", "found": len(rows), "added": added, "label": label}
 
 
+def _ingest_source_investors(url: str, label: str, investors: list) -> dict:
+    """Save reviewed INVESTORS into the LP database (dedup by name) + register the source."""
+    rows = []
+    for c in investors:
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        desc = (c.get("description") or "")
+        if c.get("hq_location"):
+            desc = (desc + f" HQ: {c['hq_location']}.").strip()
+        rows.append({"name": name,
+                     "investor_type": c.get("investor_type") or "Unknown",
+                     "website": c.get("website") or "",
+                     "contact_name": c.get("contact_name") or "",
+                     "description": desc[:1000],
+                     "source": label, "status": "Identified"})
+    if not rows:
+        return {"status": "Success", "found": 0, "added": 0, "label": label}
+    added = investor_handler.save_investors(rows)  # dedups by name internally
+    bq_handler.upsert_ai_source(url, label, kind="investors")
+    bq_handler.stamp_ai_source(url, found=len(rows), added=added)
+    logger.info(f"[SourceAgent/LP] '{label}': {len(rows)} found, {added} new LPs ingested")
+    return {"status": "Success", "found": len(rows), "added": added, "label": label}
+
+
 @app.post("/sources/confirm")
 async def source_confirm(req: SourceConfirmRequest):
-    """Ingest the previewed (and possibly pruned) company list."""
-    return _ingest_source_companies(req.url.strip(), (req.label or "AI Source").strip(), req.companies or [])
+    """Ingest the previewed (and possibly pruned) list — companies or investors."""
+    url, label = req.url.strip(), (req.label or "AI Source").strip()
+    if (req.kind or "companies") == "investors":
+        return _ingest_source_investors(url, label, req.companies or [])
+    return _ingest_source_companies(url, label, req.companies or [])
 
 
 @app.get("/sources/list")
-async def sources_list():
-    return {"sources": bq_handler.list_ai_sources()}
+async def sources_list(kind: str = Query("", description="Filter: companies | investors")):
+    return {"sources": bq_handler.list_ai_sources(kind=kind)}
 
 
-def _refresh_ai_source(url: str, label: str = "") -> dict:
-    """Re-extract a saved source and auto-ingest NEW companies only."""
+def _refresh_ai_source(url: str, label: str = "", kind: str = "companies") -> dict:
+    """Re-extract a saved source and auto-ingest NEW entities only."""
     from services.source_agent import extract_source
-    result = extract_source(url)
+    result = extract_source(url, kind=kind)
     lbl = label or result.get("title") or "AI Source"
-    out = _ingest_source_companies(url, lbl, result.get("companies") or [])
+    if kind == "investors":
+        out = _ingest_source_investors(url, lbl, result.get("companies") or [])
+    else:
+        out = _ingest_source_companies(url, lbl, result.get("companies") or [])
     out["warnings"] = result.get("warnings") or []
     return out
 
@@ -1117,7 +1151,7 @@ async def source_refresh(req: SourcePreviewRequest):
     src = next((s for s in bq_handler.list_ai_sources() if s["url"] == req.url.strip()), None)
     if not src:
         raise HTTPException(status_code=404, detail="Source not registered — add it first.")
-    return _stream_json(lambda: _refresh_ai_source(src["url"], src["label"]))
+    return _stream_json(lambda: _refresh_ai_source(src["url"], src["label"], kind=src.get("kind") or "companies"))
 
 
 def _weekly_source_refresh() -> dict:
@@ -1144,8 +1178,8 @@ def _weekly_source_refresh() -> dict:
         if (s.get("status") or "active") != "active":
             continue
         try:
-            r = _refresh_ai_source(s["url"], s["label"])
-            summary["ai_sources"][s["label"]] = f"{r.get('found', 0)} found, {r.get('added', 0)} new"
+            r = _refresh_ai_source(s["url"], s["label"], kind=s.get("kind") or "companies")
+            summary["ai_sources"][s["label"]] = f"{r.get('found', 0)} found, {r.get('added', 0)} new ({s.get('kind') or 'companies'})"
         except Exception as e:
             summary["ai_sources"][s["label"]] = f"failed: {e}"
     try:

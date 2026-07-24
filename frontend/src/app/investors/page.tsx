@@ -79,6 +79,37 @@ function InvestorsInner() {
   };
 
   const [miningAll, setMiningAll] = useState(false);
+  // ── AI Source Agent (LP flavour) ──
+  const [srcUrl, setSrcUrl] = useState('');
+  const [srcBusy, setSrcBusy] = useState(false);
+  const [srcError, setSrcError] = useState('');
+  const [srcPreview, setSrcPreview] = useState<any>(null);
+  const [srcExcluded, setSrcExcluded] = useState<Set<number>>(new Set());
+  const [aiSources, setAiSources] = useState<any[]>([]);
+  const loadAiSources = () => dealApi.listSources('investors').then(r => setAiSources(r.sources || [])).catch(() => {});
+  useEffect(() => { loadAiSources(); }, []);
+  const analyzeSource = async () => {
+    setSrcBusy(true); setSrcError(''); setSrcPreview(null); setSrcExcluded(new Set());
+    try {
+      const r = await dealApi.sourcePreview(srcUrl.trim(), 'investors');
+      setSrcPreview(r);
+      if (!r.companies?.length) setSrcError('No investors found on that page — is it an investor list?');
+    } catch (e: any) { setSrcError(e?.message || 'Analysis failed'); }
+    finally { setSrcBusy(false); }
+  };
+  const confirmSource = async () => {
+    if (!srcPreview) return;
+    setSrcBusy(true);
+    try {
+      const selected = srcPreview.companies.filter((_: any, i: number) => !srcExcluded.has(i));
+      const r = await dealApi.sourceConfirm(srcPreview.url, srcPreview.title, selected, 'investors');
+      alert(`Added ${r.added} new investors from "${r.label}" (${r.found} reviewed). The source auto-refreshes every Friday.`);
+      setSrcPreview(null); setSrcUrl('');
+      await loadData(); loadAiSources();
+    } catch (e: any) { alert(e?.message || 'Ingest failed'); }
+    finally { setSrcBusy(false); }
+  };
+
   const [connFor, setConnFor] = useState<string | null>(null);
   const [connData, setConnData] = useState<any>(null);
   const openConnections = async (name: string) => {
@@ -433,6 +464,63 @@ function InvestorsInner() {
                   <p className="sources-subtitle">{investors.length} investors ingested across {[mined, uploaded].filter(l => l.length > 0).length} active sources</p>
                 </div>
                 <button className="sources-close" onClick={() => setShowSources(false)}>&times;</button>
+              </div>
+
+              <h3 className="source-type-label">Add Source (AI Agent)</h3>
+              <div className="ai-source-box" style={{ marginBottom: '1rem' }}>
+                <div className="ai-source-input-row">
+                  <input className="ai-source-input" placeholder="Paste any URL with an investor list — LP directories, family office lists, association members…"
+                    value={srcUrl} onChange={e => setSrcUrl(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && srcUrl.trim() && !srcBusy) analyzeSource(); }} />
+                  <button className="ai-source-btn" disabled={!srcUrl.trim() || srcBusy} onClick={analyzeSource}>
+                    {srcBusy ? 'Reading page…' : 'Analyze'}
+                  </button>
+                </div>
+                {srcError && <p className="ai-source-error">{srcError}</p>}
+                {srcPreview && (
+                  <div className="ai-source-preview">
+                    <p className="ai-source-summary">
+                      <b>{srcPreview.title}</b> — found {srcPreview.companies.length} investors
+                      ({srcPreview.pages_scanned} page{srcPreview.pages_scanned > 1 ? 's' : ''} read)
+                      {(srcPreview.warnings || []).length > 0 && <span style={{ color: '#b45309' }}> · {srcPreview.warnings.join('; ')}</span>}
+                    </p>
+                    {srcPreview.companies.length > 0 && (
+                      <>
+                        <div className="ai-source-table">
+                          {srcPreview.companies.map((c: any, i: number) => (
+                            <label className="ai-source-row" key={i}>
+                              <input type="checkbox" checked={!srcExcluded.has(i)}
+                                onChange={() => setSrcExcluded(prev => { const n = new Set(prev); if (n.has(i)) { n.delete(i); } else { n.add(i); } return n; })} />
+                              <b>{c.name}</b>
+                              {c.investor_type && c.investor_type !== 'Unknown' && <span className="type-badge">{c.investor_type}</span>}
+                              {c.hq_location && <span className="ai-source-desc">{c.hq_location}</span>}
+                              {c.description && <span className="ai-source-desc" title={c.description}>{c.description.slice(0, 70)}</span>}
+                            </label>
+                          ))}
+                        </div>
+                        <button className="ai-source-btn confirm" disabled={srcBusy} onClick={confirmSource}>
+                          {srcBusy ? 'Adding…' : `Add ${srcPreview.companies.length - srcExcluded.size} investors as "${srcPreview.title}"`}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                {aiSources.length > 0 && (
+                  <div className="ai-source-saved">
+                    <p className="ai-source-saved-title">Saved LP sources (auto-refresh every Friday)</p>
+                    {aiSources.map((s: any, i: number) => (
+                      <div className="ai-source-saved-row" key={i}>
+                        <b>{s.label}</b>
+                        <span className="ai-source-desc">{s.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 50)}</span>
+                        <span className="ai-source-desc">{s.last_refreshed_at ? `last: ${new Date(s.last_refreshed_at).toLocaleDateString('en-GB')} · ${s.last_count} found` : 'never refreshed'}</span>
+                        <button className="ai-source-btn small" disabled={srcBusy}
+                          onClick={async () => { setSrcBusy(true); try { const r = await dealApi.sourceRefresh(s.url); alert(`${s.label}: ${r.found} found, ${r.added} new.`); await loadData(); loadAiSources(); } catch (e: any) { alert(e?.message || 'Refresh failed'); } finally { setSrcBusy(false); } }}>
+                          Refresh ↻
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <h3 className="source-type-label">Portfolio Intelligence</h3>

@@ -69,12 +69,7 @@ def _clean(html: str, base_url: str) -> str:
     return text[:60000]
 
 
-def ai_extract(page_text: str, url: str) -> Dict:
-    """One ungrounded call: read the page, return the companies it lists."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        return {"error": "GEMINI_API_KEY not configured"}
-    prompt = f"""You are reading a web page fetched from {url}. Decide whether it presents a list
+_COMPANY_PROMPT = """You are reading a web page fetched from {url}. Decide whether it presents a list
 of COMPANIES (portfolio pages, award lists, accelerator cohorts, directories, league tables,
 member lists and similar all count). Extract every company you can actually see.
 
@@ -97,6 +92,46 @@ Return ONLY valid JSON:
  "source_title": "...",
  "companies": [{{"name": "...", "website": "", "description": ""}}],
  "next_page_url": ""}}"""
+
+_INVESTOR_PROMPT = """You are reading a web page fetched from {url}. Decide whether it presents a list
+of INVESTORS (LP directories, family office lists, fund-of-funds portfolios, wealth manager
+registers, investor association member lists, HNWI/angel networks and similar all count).
+Extract every investor you can actually see, with whatever attributes the page states.
+
+STRICT RULES:
+- Only investors whose names appear in the content below. NEVER invent, complete from
+  memory, or add investors you believe should be on this list.
+- investor_type: one of "Family Office", "Fund of Funds", "HNWI", "VC", "PE",
+  "Sovereign/Institutional", "Corporate", "Angel", "Unknown" - ONLY when the page states
+  or clearly implies it; else "Unknown".
+- website: only if a link for that investor appears in the content ([text](href)).
+- aum_m / ticket info / location: ONLY if numbers or places are stated on the page,
+  copied faithfully into description; never computed or guessed.
+- description: only from text on the page about that investor, max 2 sentences, else "".
+- contact_name: only if the page names a person for that investor.
+- Ignore navigation, sponsors, the site's own brand and non-investor entries.
+- next_page_url: an absolute URL ONLY if the content clearly shows a next-page link
+  for THIS list; else "".
+- source_title: a short human name for this source, e.g. "Campden FB Family Offices".
+
+PAGE CONTENT:
+{page_text}
+
+Return ONLY valid JSON:
+{{"is_company_list": true/false,
+ "source_title": "...",
+ "companies": [{{"name": "...", "website": "", "description": "", "investor_type": "Unknown", "contact_name": "", "hq_location": ""}}],
+ "next_page_url": ""}}"""
+
+
+def ai_extract(page_text: str, url: str, kind: str = "companies") -> Dict:
+    """One ungrounded call: read the page, return the entities it lists.
+    kind: 'companies' (deal targets) or 'investors' (LPs)."""
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        return {"error": "GEMINI_API_KEY not configured"}
+    template = _INVESTOR_PROMPT if kind == "investors" else _COMPANY_PROMPT
+    prompt = template.format(url=url, page_text=page_text)
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
@@ -111,9 +146,14 @@ Return ONLY valid JSON:
         clean = []
         for c in (data.get("companies") or []):
             if isinstance(c, dict) and (c.get("name") or "").strip():
-                clean.append({"name": c["name"].strip()[:120],
-                              "website": (c.get("website") or "").strip()[:300],
-                              "description": (c.get("description") or "").strip()[:500]})
+                row = {"name": c["name"].strip()[:120],
+                       "website": (c.get("website") or "").strip()[:300],
+                       "description": (c.get("description") or "").strip()[:500]}
+                if kind == "investors":
+                    row["investor_type"] = (c.get("investor_type") or "Unknown").strip()[:40]
+                    row["contact_name"] = (c.get("contact_name") or "").strip()[:100]
+                    row["hq_location"] = (c.get("hq_location") or "").strip()[:100]
+                clean.append(row)
         return {"is_company_list": bool(data.get("is_company_list")),
                 "source_title": (data.get("source_title") or "").strip()[:80],
                 "companies": clean,
@@ -123,7 +163,7 @@ Return ONLY valid JSON:
         return {"error": f"AI extraction failed: {e}"}
 
 
-def extract_source(url: str, max_pages: int = 4) -> Dict:
+def extract_source(url: str, max_pages: int = 4, kind: str = "companies") -> Dict:
     """Full extraction: fetch -> AI read -> follow pagination (bounded)."""
     url = url.strip()
     if not urlparse(url).scheme:
@@ -140,7 +180,7 @@ def extract_source(url: str, max_pages: int = 4) -> Dict:
         if err:
             warnings.append(f"page {pages}: {err}")
             break
-        result = ai_extract(text, current)
+        result = ai_extract(text, current, kind=kind)
         if result.get("error"):
             warnings.append(f"page {pages}: {result['error']}")
             break
