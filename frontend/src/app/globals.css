@@ -603,3 +603,10 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .followup-meta { font-size: 0.72rem; color: #92400e; }
 .followup-email { font-size: 0.75rem; color: #78716c; margin: 0.15rem 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .followup-email b { color: #44403c; }
+
+/* Follow-up queue: we-owe-them variant */
+.followup-btn.owe { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
+.followup-btn.owe:hover, .followup-btn.owe.open { background: #fee2e2; }
+.followup-btn.owe .followup-count { background: #b91c1c; }
+.followup-group { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #92400e; margin: 0.6rem 0 0.15rem; }
+.followup-group.owe { color: #b91c1c; }

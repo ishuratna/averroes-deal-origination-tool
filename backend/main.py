@@ -1016,11 +1016,15 @@ async def investor_connections(investor_name: str):
 # ── Follow-up reminders ──────────────────────────────────────────────────────
 
 @app.get("/followups")
-async def get_followups(days: int = Query(14, description="Silence threshold in days")):
+async def get_followups(days: int = Query(14, description="'Waiting on them' threshold (our last email unanswered)"),
+                        reply_days: int = Query(3, description="'We owe a reply' threshold (their email unanswered by us)")):
     """
-    Companies where WE sent the last email and have heard nothing for `days`+
-    days — the follow-up queue. Reads email_log (single source of truth),
-    active outreach stages only, newest silence first... i.e. longest first.
+    The follow-up queue, both directions, from email_log (single source of truth):
+      - we_owe_reply: THEY sent the last email and we have not replied for
+        reply_days+ days. Companies deliberately parked (do-not-respond /
+        declined action buckets) are excluded — intentional silence never nags.
+      - waiting_on_them: WE sent the last email, silence for days+ days.
+    Active outreach stages only; longest silence first; we-owe items lead.
     """
     from google.cloud import bigquery as bq_lib
     try:
@@ -1035,19 +1039,30 @@ async def get_followups(days: int = Query(14, description="Silence threshold in 
             SELECT l.entity_name AS name, l.subject, l.snippet, l.counterparty_email,
                    CAST(l.sent_at AS STRING) AS last_email_at,
                    TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) AS days_waiting,
+                   IF(l.direction = 'sent', 'waiting_on_them', 'we_owe_reply') AS type,
                    t.status, t.contact_name, t.averroes_fit_score, t.action_bucket
             FROM latest l
             JOIN `{bq_handler.table_id}` t ON t.name = l.entity_name
-            WHERE l.rn = 1 AND l.direction = 'sent'
-              AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @days
+            WHERE l.rn = 1
               AND t.status IN ('Engaged', 'Contacted', 'Meeting', 'DD', 'Offer')
               AND IFNULL(t.source, '') != 'Internal Test'
-            ORDER BY days_waiting DESC""",
+              AND (
+                (l.direction = 'sent'
+                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @days)
+                OR
+                (l.direction = 'received'
+                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @reply_days
+                 AND IFNULL(t.action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close'))
+              )
+            ORDER BY IF(l.direction = 'received', 0, 1), days_waiting DESC""",
             job_config=bq_lib.QueryJobConfig(query_parameters=[
                 bq_lib.ScalarQueryParameter("days", "INT64", max(1, min(days, 365))),
+                bq_lib.ScalarQueryParameter("reply_days", "INT64", max(1, min(reply_days, 365))),
             ])).result()
         items = [dict(r) for r in rows]
-        return {"days_threshold": days, "count": len(items), "followups": items}
+        owe = sum(1 for i in items if i["type"] == "we_owe_reply")
+        return {"days_threshold": days, "reply_days_threshold": reply_days,
+                "count": len(items), "we_owe_count": owe, "followups": items}
     except Exception as e:
         logger.warning(f"Follow-up query failed: {e}")
         return {"days_threshold": days, "count": 0, "followups": [], "error": str(e)}

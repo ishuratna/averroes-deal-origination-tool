@@ -365,8 +365,8 @@ function HomeInner() {
           </div>
           <div className="header-right">
             {followups.length > 0 && (
-              <button className={`followup-btn ${showFollowups ? 'open' : ''}`}
-                title={`${followups.length} companies waiting 14+ days on our last email`}
+              <button className={`followup-btn ${showFollowups ? 'open' : ''} ${followups.some(f => f.type === 'we_owe_reply') ? 'owe' : ''}`}
+                title={`${followups.filter(f => f.type === 'we_owe_reply').length} awaiting OUR reply · ${followups.filter(f => f.type === 'waiting_on_them').length} waiting on them 14+ days`}
                 onClick={() => setShowFollowups(v => !v)}>
                 ⏰ Follow up <span className="followup-count">{followups.length}</span>
               </button>
@@ -499,28 +499,43 @@ function HomeInner() {
           )}
         </div>
 
-        {/* ── Follow-up queue: our last email unanswered for 14+ days ── */}
+        {/* ── Follow-up queue: both directions of dropped threads ── */}
         {showFollowups && followups.length > 0 && (
           <section className="followup-panel">
             <div className="followup-head">
-              <h3>⏰ Waiting on them — {followups.length} companies, 14+ days since our last email</h3>
+              <h3>⏰ Follow-up queue — {followups.length} companies</h3>
               <button className="followup-close" onClick={() => setShowFollowups(false)}>&times;</button>
             </div>
-            {followups.map((f, i) => (
-              <div className="followup-row" key={i}>
-                <div className="followup-main">
-                  <button className="followup-name" onClick={() => { setShowFollowups(false); openProfile(f.name, 'Outreach'); }}>
-                    {f.name}
-                  </button>
-                  <span className={`followup-days ${f.days_waiting >= 28 ? 'severe' : ''}`}>{f.days_waiting}d silent</span>
-                  <span className="followup-meta">{displayStatus(f.status)}{f.contact_name ? ` · ${f.contact_name}` : ''}{f.counterparty_email ? ` · ${f.counterparty_email}` : ''}</span>
+            {(['we_owe_reply', 'waiting_on_them'] as const).map(group => {
+              const items = followups.filter(f => f.type === group);
+              if (!items.length) return null;
+              return (
+                <div key={group}>
+                  <p className={`followup-group ${group === 'we_owe_reply' ? 'owe' : ''}`}>
+                    {group === 'we_owe_reply'
+                      ? `🔴 You owe them a reply (${items.length}) — their email is waiting on us`
+                      : `🟠 Waiting on them (${items.length}) — our last email unanswered 14+ days`}
+                  </p>
+                  {items.map((f, i) => (
+                    <div className="followup-row" key={i}>
+                      <div className="followup-main">
+                        <button className="followup-name" onClick={() => { setShowFollowups(false); openProfile(f.name, 'Outreach'); }}>
+                          {f.name}
+                        </button>
+                        <span className={`followup-days ${(group === 'we_owe_reply' && f.days_waiting >= 7) || f.days_waiting >= 28 ? 'severe' : ''}`}>
+                          {f.days_waiting}d {group === 'we_owe_reply' ? 'unanswered' : 'silent'}
+                        </span>
+                        <span className="followup-meta">{displayStatus(f.status)}{f.contact_name ? ` · ${f.contact_name}` : ''}{f.counterparty_email ? ` · ${f.counterparty_email}` : ''}</span>
+                      </div>
+                      <p className="followup-email" title={f.snippet || ''}>
+                        <b>{f.subject || '(no subject)'}</b> · {group === 'we_owe_reply' ? 'received' : 'sent'} {f.last_email_at ? new Date(f.last_email_at).toLocaleDateString('en-GB') : ''}
+                        {f.snippet ? ` — ${String(f.snippet).slice(0, 140)}…` : ''}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-                <p className="followup-email" title={f.snippet || ''}>
-                  <b>{f.subject || '(no subject)'}</b> · sent {f.last_email_at ? new Date(f.last_email_at).toLocaleDateString('en-GB') : ''}
-                  {f.snippet ? ` — ${String(f.snippet).slice(0, 140)}…` : ''}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </section>
         )}
 
