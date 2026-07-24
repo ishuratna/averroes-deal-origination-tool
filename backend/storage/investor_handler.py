@@ -6,6 +6,7 @@ funds of funds, family offices, HNWIs/UHNWIs, and other private-capital investor
 
 Relationship stages: Identified → Researched → Contacted → Meeting → Committed / Passed
 """
+import json
 import uuid
 import logging
 from typing import List, Dict, Optional
@@ -95,11 +96,18 @@ class InvestorBQHandler:
         "contact_name", "contact_email", "linkedin_url", "aka", "contact_title",
         "contact_phone", "hq_email", "global_region", "strategy_preferences",
         "geo_preferences", "open_to_first_time", "other_preferences", "registration_number",
+        "sold_secondaries", "bought_secondaries", "policy_description",
     ]
     _MERGE_FILL_NUMERICS = [
         "aum_m", "ticket_min_m", "ticket_max_m", "year_founded",
         "num_commitments", "num_active_commitments", "num_pe_commitments", "total_commitments_m",
+        "total_active_commitments_m", "total_pe_commitments_m",
+        "num_vc_commitments", "total_vc_commitments_m",
     ]
+    _MERGE_INT_NUMERICS = (
+        "year_founded", "num_commitments", "num_active_commitments",
+        "num_pe_commitments", "num_vc_commitments",
+    )
 
     def __init__(self, client: Optional[bigquery.Client], project_id: str, dataset_id: str = "averroes_deal_flow"):
         self.client = client
@@ -299,13 +307,65 @@ class InvestorBQHandler:
         to_merge = [i for i in investors if (i.get("name") or "").strip().lower() in existing]
 
         inserted = self.save_investors(new_rows)
-
-        merged = 0
-        for inv in to_merge:
-            if self._merge_investor(inv):
-                merged += 1
+        merged = self.merge_fill_bulk(to_merge)
         logger.info(f"Upsert complete: {inserted} inserted, {merged} merged")
         return {"inserted": inserted, "merged": merged}
+
+    def merge_fill_bulk(self, investors: List[Dict]) -> int:
+        """Fill-only MERGE of upload fields into EXISTING rows — one statement
+        per batch (per-row UPDATEs take hours at PitchBook scale). Rules match
+        _merge_investor: strings fill blanks, numerics fill NULLs, description
+        longer-wins, pb_id/pb_last_updated refresh (authoritative). Never
+        overwrites an existing value with a thinner one."""
+        if not self.client or not investors:
+            return 0
+
+        # Source SELECT: extract every merge field from the JSON payload
+        sel = ["LOWER(JSON_EXTRACT_SCALAR(j, '$.name')) AS lname"]
+        for c in self._MERGE_FILL_STRINGS + ["pb_id", "pb_last_updated"]:
+            sel.append(f"JSON_EXTRACT_SCALAR(j, '$.{c}') AS {c}")
+        for c in self._MERGE_FILL_NUMERICS:
+            bq_type = "INT64" if c in self._MERGE_INT_NUMERICS else "FLOAT64"
+            sel.append(f"SAFE_CAST(JSON_EXTRACT_SCALAR(j, '$.{c}') AS {bq_type}) AS {c}")
+        sel.append("ROW_NUMBER() OVER (PARTITION BY LOWER(JSON_EXTRACT_SCALAR(j, '$.name')) "
+                   "ORDER BY JSON_EXTRACT_SCALAR(j, '$.pb_id')) AS rn")
+
+        sets = []
+        for c in self._MERGE_FILL_STRINGS:
+            if c == "description":  # longer wins — never replace good text with thinner text
+                sets.append("description = IF(LENGTH(IFNULL(S.description, '')) > "
+                            "LENGTH(IFNULL(T.description, '')), S.description, T.description)")
+            else:
+                sets.append(f"{c} = IFNULL(NULLIF(T.{c}, ''), S.{c})")
+        for c in self._MERGE_FILL_NUMERICS:
+            sets.append(f"{c} = IFNULL(T.{c}, S.{c})")
+        for c in ("pb_id", "pb_last_updated"):  # PitchBook identifiers always refresh
+            sets.append(f"{c} = IFNULL(NULLIF(S.{c}, ''), T.{c})")
+        sets.append("updated_at = CURRENT_TIMESTAMP()")
+
+        keys = ["name", "pb_id", "pb_last_updated"] + self._MERGE_FILL_STRINGS + self._MERGE_FILL_NUMERICS
+        merged = 0
+        BATCH = 400
+        for b in range(0, len(investors), BATCH):
+            batch = [{k: inv.get(k) for k in keys if inv.get(k) not in (None, "")}
+                     for inv in investors[b:b + BATCH]]
+            query = f"""
+                MERGE `{self.table_id}` T
+                USING (
+                    SELECT * FROM (SELECT {', '.join(sel)}
+                                   FROM UNNEST(JSON_EXTRACT_ARRAY(@payload)) j)
+                    WHERE rn = 1
+                ) S ON LOWER(T.name) = S.lname
+                WHEN MATCHED THEN UPDATE SET {', '.join(sets)}"""
+            try:
+                job = self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("payload", "STRING", json.dumps(batch)),
+                ]))
+                job.result()
+                merged += int(job.num_dml_affected_rows or 0)
+            except Exception as e:
+                logger.error(f"Bulk fill-merge failed for batch {b}-{b + len(batch)}: {e}")
+        return merged
 
     def _merge_investor(self, inv: Dict) -> bool:
         """Fill-gaps merge of one investor's PitchBook fields into an existing row."""
@@ -324,7 +384,7 @@ class InvestorBQHandler:
         for col in self._MERGE_FILL_NUMERICS:
             val = inv.get(col)
             if val is not None:
-                bq_type = "INT64" if col in ("year_founded", "num_commitments", "num_active_commitments", "num_pe_commitments") else "FLOAT64"
+                bq_type = "INT64" if col in self._MERGE_INT_NUMERICS else "FLOAT64"
                 set_clauses.append(f"{col} = IFNULL({col}, @{col})")
                 params.append(bigquery.ScalarQueryParameter(col, bq_type, val))
 

@@ -1541,6 +1541,60 @@ def _backfill_pb_lp_aggregates():
         logger.warning(f"[Migration] {PB_BACKFILL_VERSION} failed (will retry next boot): {e}")
 
 
+GCS_REFILL_VERSION = "lp-gcs-refill-v1"
+
+
+def _refill_lp_from_gcs_uploads(force: bool = False):
+    """Re-parse EVERY archived PitchBook LP upload from GCS with the CURRENT
+    parser and fill-only merge into investors. Fixes uploads made before new
+    columns existed (e.g. the commitments breakdown) without any re-upload:
+    the raw files are archived at uploads/investors/ on every upload.
+    Marker-guarded; only stamped once at least one file was processed."""
+    try:
+        if not force:
+            rows = list(bq_handler.client.query(
+                f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                    WHERE action_type = 'migration' AND note_text = '{GCS_REFILL_VERSION}'""").result())
+            if rows and int(rows[0].n) > 0:
+                return {"status": "Already applied"}
+        files = [f for f in gcs_handler.list_files(prefix="uploads/investors/")
+                 if f.lower().endswith((".xlsx", ".xls", ".csv"))]
+        if not files:
+            logger.warning(f"[Migration] {GCS_REFILL_VERSION}: no archived LP uploads found in GCS — not stamping, will retry")
+            return {"status": "No files", "detail": "No archived investor uploads at uploads/investors/"}
+        results, total_new, total_merged = [], 0, 0
+        for fname in files:
+            try:
+                content = gcs_handler.download_file(fname)
+                if not content:
+                    results.append(f"{fname}: download failed")
+                    continue
+                invs = parse_investor_file(content, os.path.basename(fname))
+                r = investor_handler.upsert_investors(invs)
+                total_new += r["inserted"]
+                total_merged += r["merged"]
+                results.append(f"{fname}: {len(invs)} parsed, {r['inserted']} new, {r['merged']} enriched")
+            except Exception as fe:
+                results.append(f"{fname}: FAILED — {fe}")
+        bq_handler._log_activity("__system__", "migration", "migration", note_text=GCS_REFILL_VERSION)
+        logger.info(f"[Migration] {GCS_REFILL_VERSION} applied: {results}")
+        return {"status": "Success", "files": results, "inserted": total_new, "enriched": total_merged}
+    except Exception as e:
+        logger.warning(f"[Migration] {GCS_REFILL_VERSION} failed (will retry next boot): {e}")
+        return {"status": "Failed", "detail": str(e)}
+
+
+@app.post("/investors/gcs-refill/run")
+async def investors_gcs_refill_run(request: Request):
+    """Token-gated ops trigger: re-parse archived LP uploads from GCS and
+    fill-only merge (same routine as the boot migration, force-run)."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return _refill_lp_from_gcs_uploads(force=True)
+
+
 @app.on_event("startup")
 async def _run_migrations():
     import threading
@@ -1550,6 +1604,7 @@ async def _run_migrations():
         _retro_resolve_contacts()
         _retro_qualified_blank()
         _backfill_pb_lp_aggregates()
+        _refill_lp_from_gcs_uploads()
 
     threading.Thread(target=_sequence, daemon=True).start()
 

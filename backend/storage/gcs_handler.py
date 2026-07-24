@@ -70,6 +70,17 @@ class GCSHandler:
             logger.error(f"Failed to upload raw file to GCS: {str(e)}")
             return None
 
+    def download_file(self, filename: str):
+        """Download a file's bytes from GCS (full blob name incl. prefix)."""
+        if not self.storage_client:
+            return None
+        try:
+            bucket = self.storage_client.bucket(self.bucket_name)
+            return bucket.blob(filename).download_as_bytes()
+        except Exception as e:
+            logger.error(f"Failed to download {filename} from GCS: {e}")
+            return None
+
     def list_files(self, prefix: str = "scraped/"):
         """List files in GCS bucket with given prefix."""
         if not self.storage_client:
