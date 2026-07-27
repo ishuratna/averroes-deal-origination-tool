@@ -180,14 +180,18 @@ def compute_stats(bq_handler) -> Dict:
     except Exception as e:
         logger.warning(f"[Analytics] weekly email stats failed: {e}")
 
-    # SEMANTICS FIX: the stored stage 'Contacted' historically meant "WE
-    # contacted them" (outbound) before it was redefined as "Responded" (a
-    # reply exists). Stage history therefore inflates responded-ever. The
-    # honest ever-count for Responded is actual inbound-reply evidence: the
-    # 'replied' ledger event (email_log received + last_reply_at stamps).
+    # SEMANTICS FIX: stage history is unreliable for the outreach stages
+    # (stored 'Contacted' historically meant "WE contacted them" before it was
+    # redefined as Responded; Engaged predates part of the send history and
+    # has no permanent stamp column). Ever-counts for both come from email
+    # EVIDENCE instead, which is deletion-proof and semantically true:
+    #   Engaged ever   = companies we ever emailed ('emailed' event)
+    #   Responded ever = companies that ever replied ('replied' event +
+    #                    last_reply_at stamps)
+    _EVIDENCE = {"Engaged": "emailed", "Contacted": "replied"}
     funnel = [{
         "stage": s,
-        "ever": ever.get("replied", 0) if s == "Contacted" else ever.get(s, 0),
+        "ever": ever.get(_EVIDENCE.get(s, s), 0),
         "current": current.get(s, 0),
     } for s in FUNNEL_ORDER]
 

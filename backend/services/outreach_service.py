@@ -195,19 +195,15 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        hands-on operational support alongside capital." (Use only these
        facts. NEVER invent fund sizes, AUM figures, or any numbers.)
     6. HUMILITY + OPEN DOOR, own paragraph. There is NO ask in this email
-       beyond an open invitation to talk. Nothing about calls, meetings,
-       documents, numbers or details: "I appreciate this may not be a
-       priority right now, but I would love to learn more about what you are
-       building at {name}. If you see an opportunity for us to work
-       together, now or in the future, it would be great to hear from you."
-       (Vary the wording naturally, and never repeat a phrase like "I would
-       love" twice in the paragraph. The substance never changes: we want to
-       learn more, and the door stays open whether the timing is right today
-       or only later, so a founder never has to say no just because of
-       timing.)
-    7. CLOSING LINE, own line, warm and brief. It must NOT repeat "hear from
-       you" or any phrase already used in item 6: "Either way, wishing you
-       and the team continued success." (light variations fine).
+       beyond an open invitation to a dialogue. Nothing about calls,
+       meetings, documents, numbers or details: "I appreciate this may not
+       be a priority right now, but we would love to start a dialogue, hear
+       more about your ambitions for the future, and get to introduce you to
+       Averroes." (Vary the wording lightly and naturally; the substance
+       never changes: start a dialogue, their ambitions, introduce Averroes.
+       No timing pressure anywhere, so a founder never has to say no just
+       because of timing.)
+    7. CLOSING LINE, own line: "Look forward to hearing from you."
     8. SIGN-OFF: end the body with exactly "Best," on its own line and NOTHING
        after it. Do not write a name. The full signature (Maria Beatrice
        Carrara, Partner, phone, email) is appended automatically on send.
@@ -474,10 +470,10 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"We have been following {name} for some time and like what you are building.\n\n"
         f"At Averroes, we have backed similar companies such as Journey and Glowday, "
         f"and helped them scale with hands-on operational support alongside capital.\n\n"
-        f"I appreciate this may not be a priority right now, but I would love to learn "
-        f"more about what you are building at {name}. If you see an opportunity for us "
-        f"to work together, now or in the future, it would be great to hear from you.\n\n"
-        f"Either way, wishing you and the team continued success.\n\n"
+        f"I appreciate this may not be a priority right now, but we would love to start "
+        f"a dialogue, hear more about your ambitions for the future, and get to "
+        f"introduce you to Averroes.\n\n"
+        f"Look forward to hearing from you.\n\n"
         f"Best,"
     )
 
