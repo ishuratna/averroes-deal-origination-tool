@@ -112,6 +112,12 @@ def ledger_sync(bq_handler) -> int:
               AND LOWER(company_name) NOT IN
                   (SELECT LOWER(name) FROM `{targets}` WHERE source = 'Internal Test')
             UNION ALL
+            -- true inbound-reply evidence from the targets row itself
+            -- (last_reply_at is only ever stamped by an actual received email)
+            SELECT LOWER(name), name, 'replied', last_reply_at
+            FROM `{targets}`
+            WHERE last_reply_at IS NOT NULL AND IFNULL(source,'') != 'Internal Test'
+            UNION ALL
             -- outreach + replies (survives row deletion)
             SELECT LOWER(entity_name), entity_name,
                    IF(direction = 'sent', 'emailed', 'replied'), sent_at
@@ -174,9 +180,14 @@ def compute_stats(bq_handler) -> Dict:
     except Exception as e:
         logger.warning(f"[Analytics] weekly email stats failed: {e}")
 
+    # SEMANTICS FIX: the stored stage 'Contacted' historically meant "WE
+    # contacted them" (outbound) before it was redefined as "Responded" (a
+    # reply exists). Stage history therefore inflates responded-ever. The
+    # honest ever-count for Responded is actual inbound-reply evidence: the
+    # 'replied' ledger event (email_log received + last_reply_at stamps).
     funnel = [{
         "stage": s,
-        "ever": ever.get(s, 0),
+        "ever": ever.get("replied", 0) if s == "Contacted" else ever.get(s, 0),
         "current": current.get(s, 0),
     } for s in FUNNEL_ORDER]
 

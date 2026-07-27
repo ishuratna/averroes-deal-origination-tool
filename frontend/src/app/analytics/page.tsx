@@ -171,7 +171,7 @@ function AnalyticsInner() {
                 <span><i className="an-dot an-dot-ever" /> ever reached stage</span>
                 <span><i className="an-dot an-dot-current" /> currently in stage</span>
                 <span className="an-legend-note">
-                  Not a Fit: {data.not_a_fit_ever.toLocaleString()} ever · {data.not_a_fit_current.toLocaleString()} current
+                  Responded ever = actual inbound replies (email evidence) · Not a Fit: {data.not_a_fit_ever.toLocaleString()} ever · {data.not_a_fit_current.toLocaleString()} current
                 </span>
               </div>
             </section>
