@@ -815,6 +815,15 @@ async def ch_watch_run(request: Request):
             result["weekly_source_refresh"] = _weekly_source_refresh()
     except Exception as e:
         logger.warning(f"[CH Watch] weekly source refresh failed (non-fatal): {e}")
+    # Daily analytics: sync the immutable stage ledger + write today's snapshot
+    # so funnel trends keep recording even if nobody opens the Analytics page.
+    try:
+        from services import analytics_service
+        analytics_service.ledger_sync(bq_handler)
+        analytics_service.write_snapshot(bq_handler, analytics_service.compute_stats(bq_handler))
+        result["analytics_snapshot"] = "written"
+    except Exception as e:
+        logger.warning(f"[CH Watch] analytics snapshot failed (non-fatal): {e}")
     return result or {"status": "Success"}
 
 
@@ -1007,6 +1016,20 @@ async def investor_mine_run(request: Request):
     if not expected or token != expected:
         raise HTTPException(status_code=403, detail="Invalid token.")
     return _run_investor_mining()
+
+
+@app.get("/analytics")
+async def get_analytics(refresh: int = Query(0, description="1 = force ledger sync + fresh snapshot")):
+    """Retention-proof pipeline analytics: ever vs current per stage (from the
+    immutable analytics_ledger, survives deletions), response rate, weekly
+    email volume and the daily snapshot trend series."""
+    from services import analytics_service
+    stats = analytics_service.refresh_and_stats(bq_handler, force=bool(refresh))
+    if not stats or (not stats.get("stored_ever") and not stats.get("stored_current")):
+        # Still return the shape; frontend shows an empty state
+        stats.setdefault("funnel", [])
+        stats.setdefault("snapshots", [])
+    return stats
 
 
 @app.get("/connections/company/{company_name}")

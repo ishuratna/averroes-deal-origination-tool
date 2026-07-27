@@ -290,6 +290,12 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getAnalytics(refresh: boolean = false): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/analytics${refresh ? '?refresh=1' : ''}`);
+    if (!response.ok) throw new Error('Failed to load analytics');
+    return await response.json();
+  },
+
   async mineAllInvestors(): Promise<any> {
     // Streams heartbeat spaces while mining; the final line is the JSON summary.
     const response = await apiFetch(`${API_BASE_URL}/investors/mine-all`, { method: 'POST' });
