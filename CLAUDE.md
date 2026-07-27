@@ -55,7 +55,9 @@ Read this before building anything. These rules are binding for all future work.
 ## 6. Outreach content
 
 - ZERO em dashes anywhere in `outreach_service.py` (instruction text included —
-  the model mimics instruction style). Founder email structure v7 lives in
+  the model mimics instruction style). Founder email structure v8 (no meeting
+  ask in the first email; ask for company details, status and growth, with a
+  call only as a soft later step) lives in
   `draft_outreach_email`; change structure only there.
 
 ## 7. Verification before push (hard-learned)
