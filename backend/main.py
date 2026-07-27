@@ -1541,6 +1541,35 @@ def _backfill_pb_lp_aggregates():
         logger.warning(f"[Migration] {PB_BACKFILL_VERSION} failed (will retry next boot): {e}")
 
 
+DRAFT_CLEAR_VERSION = "clear-v7-drafts-v1"
+
+
+def _clear_v7_drafts():
+    """One-time strategy migration: wipe every UNSENT outreach draft written
+    under the v7 structure (20-minute-call ask). Sent emails and their history
+    are untouched. Cleared companies simply regenerate a fresh v8 draft on the
+    next Draft click. Covers both never-sent drafts and unsent redrafts made
+    after a send (drafted_at > sent_at). Marker-guarded, runs exactly once."""
+    try:
+        rows = list(bq_handler.client.query(
+            f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
+                WHERE action_type = 'migration' AND note_text = '{DRAFT_CLEAR_VERSION}'""").result())
+        if rows and int(rows[0].n) > 0:
+            return
+        job = bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                    outreach_draft_subject = NULL, outreach_draft_body = NULL,
+                    outreach_draft_to = NULL, outreach_drafted_at = NULL
+                WHERE outreach_draft_body IS NOT NULL
+                  AND (outreach_sent_at IS NULL OR outreach_drafted_at > outreach_sent_at)""")
+        job.result()
+        cleared = int(job.num_dml_affected_rows or 0)
+        bq_handler._log_activity("__system__", "migration", "migration", note_text=DRAFT_CLEAR_VERSION)
+        logger.info(f"[Migration] {DRAFT_CLEAR_VERSION} applied: {cleared} unsent v7 drafts cleared")
+    except Exception as e:
+        logger.warning(f"[Migration] {DRAFT_CLEAR_VERSION} failed (will retry next boot): {e}")
+
+
 GCS_REFILL_VERSION = "lp-gcs-refill-v1"
 
 
@@ -1605,6 +1634,7 @@ async def _run_migrations():
         _retro_qualified_blank()
         _backfill_pb_lp_aggregates()
         _refill_lp_from_gcs_uploads()
+        _clear_v7_drafts()
 
     threading.Thread(target=_sequence, daemon=True).start()
 
