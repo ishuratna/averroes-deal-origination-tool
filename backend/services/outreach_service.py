@@ -194,19 +194,21 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        companies such as Journey and Glowday, and helped them scale with
        hands-on operational support alongside capital." (Use only these
        facts. NEVER invent fund sizes, AUM figures, or any numbers.)
-    6. HUMILITY + ASK FOR DETAILS, own paragraph. The ask is for INFORMATION,
-       never for a meeting: "I appreciate this may not be a priority right
-       now, but I would love to learn more about what you are building at
-       {name}. Could you share more details about the company, where things
-       stand today, and how growth has been?" (Vary the wording naturally;
-       the substance of the ask is always: more details on the company, its
-       current status, and growth.)
-    7. SOFT NEXT STEP, own paragraph: "I would be glad to review and,
-       if it makes sense on your side, set up a call for further discussion."
-       A call is mentioned only as a possible later step after reviewing what
-       they share, never proposed with a time or duration.
-    8. CLOSING LINE, own line: "Look forward to hearing back from you."
-    9. SIGN-OFF: end the body with exactly "Best," on its own line and NOTHING
+    6. HUMILITY + OPEN DOOR, own paragraph. There is NO ask in this email
+       beyond an open invitation to talk. Nothing about calls, meetings,
+       documents, numbers or details: "I appreciate this may not be a
+       priority right now, but I would love to learn more about what you are
+       building at {name}. If you see an opportunity for us to work
+       together, now or in the future, it would be great to hear from you."
+       (Vary the wording naturally, and never repeat a phrase like "I would
+       love" twice in the paragraph. The substance never changes: we want to
+       learn more, and the door stays open whether the timing is right today
+       or only later, so a founder never has to say no just because of
+       timing.)
+    7. CLOSING LINE, own line, warm and brief. It must NOT repeat "hear from
+       you" or any phrase already used in item 6: "Either way, wishing you
+       and the team continued success." (light variations fine).
+    8. SIGN-OFF: end the body with exactly "Best," on its own line and NOTHING
        after it. Do not write a name. The full signature (Maria Beatrice
        Carrara, Partner, phone, email) is appended automatically on send.
 
@@ -242,10 +244,12 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        or a plain reference to their space). Never clickbait, never "Quick question".
     6. Do NOT include email headers (To/From/Date), and never mention databases, research
        tools, or how you found them.
-    7. NEVER propose a meeting, call time, or call length in this first email. No
-       "20-minute call", no "next couple of weeks", no calendar language. The only ask
-       is for more details; a call exists only as the soft possible next step in
-       structure item 7.
+    7. NEVER mention a meeting, call, or calendar in any form in this first email.
+       No "20-minute call", no "set up a call", no "next couple of weeks". Also NEVER
+       ask for company details, financials, metrics, decks or documents. Requests for
+       an overview come later, only after the founder shows interest (they will likely
+       want an NDA first). The ONLY invitation in this email is the open door in
+       structure item 6.
 
     VARIETY: Do not follow a template. Vary the opening line, sentence rhythm and structure
     from other emails you might write. Two founders comparing notes should not see the same
@@ -471,11 +475,9 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"At Averroes, we have backed similar companies such as Journey and Glowday, "
         f"and helped them scale with hands-on operational support alongside capital.\n\n"
         f"I appreciate this may not be a priority right now, but I would love to learn "
-        f"more about what you are building at {name}. Could you share more details about "
-        f"the company, where things stand today, and how growth has been?\n\n"
-        f"I would be glad to review and, if it makes sense on your side, set up a call "
-        f"for further discussion.\n\n"
-        f"Look forward to hearing back from you.\n\n"
+        f"more about what you are building at {name}. If you see an opportunity for us "
+        f"to work together, now or in the future, it would be great to hear from you.\n\n"
+        f"Either way, wishing you and the team continued success.\n\n"
         f"Best,"
     )
 

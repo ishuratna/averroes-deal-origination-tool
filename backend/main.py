@@ -1541,15 +1541,17 @@ def _backfill_pb_lp_aggregates():
         logger.warning(f"[Migration] {PB_BACKFILL_VERSION} failed (will retry next boot): {e}")
 
 
-DRAFT_CLEAR_VERSION = "clear-v7-drafts-v1"
+DRAFT_CLEAR_VERSION = "clear-pre-v9-drafts-v2"
 
 
 def _clear_v7_drafts():
     """One-time strategy migration: wipe every UNSENT outreach draft written
-    under the v7 structure (20-minute-call ask). Sent emails and their history
-    are untouched. Cleared companies simply regenerate a fresh v8 draft on the
-    next Draft click. Covers both never-sent drafts and unsent redrafts made
-    after a send (drafted_at > sent_at). Marker-guarded, runs exactly once."""
+    under a pre-v9 structure (call ask / details ask). Sent emails and their
+    history are untouched. Cleared companies simply regenerate a fresh v9 draft
+    on the next Draft click. Covers both never-sent drafts and unsent redrafts
+    made after a send (drafted_at > sent_at). Marker-guarded, runs exactly once.
+    v2 marker: re-runs once even where the v1 clear already applied, so any
+    drafts generated in the brief v8 window are wiped too."""
     try:
         rows = list(bq_handler.client.query(
             f"""SELECT COUNT(*) AS n FROM `{bq_handler.activity_table_id}`
