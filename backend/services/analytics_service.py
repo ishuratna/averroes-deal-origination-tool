@@ -155,12 +155,29 @@ def compute_stats(bq_handler) -> Dict:
             f"SELECT event, COUNT(*) AS n FROM `{_ledger_id(bq_handler)}` GROUP BY event").result():
         ever[r.event] = int(r.n)
 
+    # Current counts, WITH email evidence per row (live stamps + ledger), so
+    # the outreach stages can be evidence-consistent with their ever-counts:
+    #   Engaged current   = in Engaged stage AND we actually emailed them
+    #   Responded current = in Responded stage AND an inbound reply exists
+    # Rows in those stages WITHOUT evidence are surfaced as inconsistencies,
+    # never silently counted or silently dropped.
     current: Dict[str, int] = {}
+    with_email: Dict[str, int] = {}
+    with_reply: Dict[str, int] = {}
     total_current = 0
     for r in bq_handler.client.query(
-            f"""SELECT IFNULL(status, 'Unset') AS s, COUNT(*) AS n FROM `{targets}`
-                WHERE IFNULL(source,'') != 'Internal Test' GROUP BY s""").result():
+            f"""SELECT IFNULL(t.status, 'Unset') AS s, COUNT(*) AS n,
+                       COUNTIF(t.outreach_sent_at IS NOT NULL OR le.k IS NOT NULL) AS we,
+                       COUNTIF(t.last_reply_at IS NOT NULL OR lr.k IS NOT NULL) AS wr
+                FROM `{targets}` t
+                LEFT JOIN (SELECT DISTINCT company_key AS k FROM `{_ledger_id(bq_handler)}`
+                           WHERE event = 'emailed') le ON LOWER(t.name) = le.k
+                LEFT JOIN (SELECT DISTINCT company_key AS k FROM `{_ledger_id(bq_handler)}`
+                           WHERE event = 'replied') lr ON LOWER(t.name) = lr.k
+                WHERE IFNULL(t.source,'') != 'Internal Test' GROUP BY s""").result():
         current[r.s] = int(r.n)
+        with_email[r.s] = int(r.we)
+        with_reply[r.s] = int(r.wr)
         total_current += int(r.n)
 
     emailed_ever = ever.get("emailed", 0)
@@ -189,11 +206,31 @@ def compute_stats(bq_handler) -> Dict:
     #   Responded ever = companies that ever replied ('replied' event +
     #                    last_reply_at stamps)
     _EVIDENCE = {"Engaged": "emailed", "Contacted": "replied"}
+
+    def _current(s: str) -> int:
+        if s == "Engaged":
+            return with_email.get(s, 0)
+        if s == "Contacted":
+            return with_reply.get(s, 0)
+        return current.get(s, 0)
+
     funnel = [{
         "stage": s,
         "ever": ever.get(_EVIDENCE.get(s, s), 0),
-        "current": current.get(s, 0),
+        "current": _current(s),
     } for s in FUNNEL_ORDER]
+
+    # Stage/evidence disagreements, surfaced for the page (0 = clean):
+    inconsistencies = {
+        # sitting in Engaged but no outbound email on record
+        "engaged_without_email": current.get("Engaged", 0) - with_email.get("Engaged", 0),
+        # sitting in Responded but no inbound reply on record
+        "responded_without_reply": current.get("Contacted", 0) - with_reply.get("Contacted", 0),
+        # replied although we never emailed them (inbound-first threads);
+        # this is why Responded-ever is not mathematically forced to be a
+        # subset of Engaged-ever
+        "replied_never_emailed": max(0, ever.get("replied", 0) - ever.get("emailed", 0)),
+    }
 
     return {
         "stored_ever": ever.get("stored", 0),
@@ -205,6 +242,7 @@ def compute_stats(bq_handler) -> Dict:
         "replied_ever": replied_ever,
         "response_rate": round(replied_ever / emailed_ever, 4) if emailed_ever else None,
         "weekly_emails": weekly,
+        "inconsistencies": inconsistencies,
     }
 
 
