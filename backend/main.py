@@ -1393,6 +1393,23 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
 # Token-gated (NOT unauthenticated — the last "temporary" diag endpoint's
 # removal accidentally took /chat with it; this one is permanent and safe).
 
+@app.get("/diag/verify-email")
+async def diag_verify_email(request: Request, emails: str = Query(..., description="comma-separated, max 10")):
+    """Token-gated one-off email verification via the same Hunter.io verifier
+    the contact finder uses. Ops tool: never stores anything."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    from services.contact_finder import verify_email
+    out = {}
+    for e in [x.strip() for x in emails.split(",") if x.strip()][:10]:
+        out[e] = verify_email(e)
+    if all(v == "unavailable" for v in out.values()):
+        out["note"] = "HUNTER_API_KEY not configured on the service"
+    return out
+
+
 @app.get("/diag/deep/{company_name}")
 async def diag_deep(company_name: str, request: Request,
                     step: str = Query("stored", description="stored|search|profile|psc|officers|network|charges|filings|captable|sh01|links")):
