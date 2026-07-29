@@ -108,12 +108,19 @@ export const dealApi = {
   },
 
   async uploadFile(file: File): Promise<any> {
+    // Streamed endpoint: heartbeat spaces while parsing/saving big files,
+    // final line = JSON result (survives silent-connection-killing networks).
     const formData = new FormData();
     formData.append('file', file);
     const response = await apiFetch(`${API_BASE_URL}/ingest/upload`, { method: 'POST', body: formData });
-    let data;
-    try { data = await response.json(); } catch (e) { throw new Error(`Server returned invalid response: ${response.statusText}`); }
-    if (!response.ok) { throw new Error(data.detail || data.message || 'File upload failed'); }
+    const text = await response.text();
+    if (!response.ok) {
+      try { throw new Error(JSON.parse(text).detail); }
+      catch (e: any) { throw new Error(e?.message || 'File upload failed'); }
+    }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'File upload failed');
     return data;
   },
 

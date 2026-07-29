@@ -378,72 +378,78 @@ async def ingest_directory(source_name: str = Query("TheSaaSDirectory", descript
 
 @app.post("/ingest/upload")
 async def upload_custom_file(file: UploadFile = File(...)):
-    """Fast upload: Parse Excel -> deduplicate -> save to BigQuery. No Gemini calls."""
+    """Fast upload: Parse Excel -> deduplicate -> save to BigQuery. No Gemini
+    calls. STREAMED with heartbeats: big files (Gain = 8,500+ rows) take
+    minutes and silent connections get killed by hostile networks; the final
+    line of the response is the JSON result."""
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(status_code=400, detail="Only Excel or CSV files are supported.")
-    try:
-        content = await file.read()
-        logger.info(f"Received file for ingestion: {file.filename} ({len(content)} bytes)")
-        try:
-            gcs = GCSHandler()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_filename = f"{timestamp}_{file.filename.replace(' ', '_')}"
-            gcs.save_raw_file(content, safe_filename, file.content_type)
-        except Exception as gcs_err:
-            logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
-        is_pitchbook = "pitchbook" in file.filename.lower()
-        is_inven = "inven" in file.filename.lower()
-        is_gain = "gain" in file.filename.lower()
-        try:
-            if is_pitchbook:
-                logger.info(f"PitchBook file detected: {file.filename}")
-                targets = parse_pitchbook_excel(content)
-            elif is_inven:
-                logger.info(f"Inven file detected: {file.filename}")
-                from services.inven_service import parse_inven_csv
-                targets = parse_inven_csv(content)
-            elif is_gain:
-                logger.info(f"Gain.pro file detected: {file.filename}")
-                from services.gain_service import parse_gain_excel
-                targets = parse_gain_excel(content)
-            else:
-                targets = parse_proprietary_excel(content)
-            logger.info(f"Parsed {len(targets)} targets from {file.filename} "
-                        f"({'PitchBook' if is_pitchbook else 'Inven' if is_inven else 'Gain' if is_gain else 'Generic'})")
-        except Exception as parse_err:
-            raise HTTPException(status_code=422, detail=f"Parse failed: {str(parse_err)}")
-        if not targets:
-            return {"status": "Complete", "count": 0, "message": "No valid targets found."}
-        source_label = f"Upload: {file.filename}"
-        for t in targets:
-            t["source"] = source_label
-            t["status"] = "Uploaded"
-        success = bq_handler.save_targets(targets)
-        if not success:
-            raise HTTPException(status_code=500, detail="Database save failed.")
+    content = await file.read()
+    filename = file.filename
+    content_type = file.content_type
+    logger.info(f"Received file for ingestion: {filename} ({len(content)} bytes)")
 
-        # Data-rich uploads (Inven) get instant zero-AI hard-filter triage —
-        # geography, industry and revenue are already in the file.
-        # DORMANT until PREQUALIFY_ON_UPLOAD=1 (awaiting sign-off).
-        preq = None
-        if (is_inven or is_gain) and os.getenv("PREQUALIFY_ON_UPLOAD", "0") == "1":
+    def _work():
+        try:
             try:
-                preq = _prequalify_local(only_names={t["name"] for t in targets})
-            except Exception as e:
-                logger.warning(f"Pre-qualification after upload failed (non-fatal): {e}")
+                gcs = GCSHandler()
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_filename = f"{timestamp}_{filename.replace(' ', '_')}"
+                gcs.save_raw_file(content, safe_filename, content_type)
+            except Exception as gcs_err:
+                logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
+            is_pitchbook = "pitchbook" in filename.lower()
+            is_inven = "inven" in filename.lower()
+            is_gain = "gain" in filename.lower()
+            try:
+                if is_pitchbook:
+                    logger.info(f"PitchBook file detected: {filename}")
+                    targets = parse_pitchbook_excel(content)
+                elif is_inven:
+                    logger.info(f"Inven file detected: {filename}")
+                    from services.inven_service import parse_inven_csv
+                    targets = parse_inven_csv(content)
+                elif is_gain:
+                    logger.info(f"Gain.pro file detected: {filename}")
+                    from services.gain_service import parse_gain_excel
+                    targets = parse_gain_excel(content)
+                else:
+                    targets = parse_proprietary_excel(content)
+                logger.info(f"Parsed {len(targets)} targets from {filename} "
+                            f"({'PitchBook' if is_pitchbook else 'Inven' if is_inven else 'Gain' if is_gain else 'Generic'})")
+            except Exception as parse_err:
+                return {"status": "Error", "detail": f"Parse failed: {parse_err}"}
+            if not targets:
+                return {"status": "Complete", "count": 0, "message": "No valid targets found."}
+            source_label = f"Upload: {filename}"
+            for t in targets:
+                t["source"] = source_label
+                t["status"] = "Uploaded"
+            if not bq_handler.save_targets(targets):
+                return {"status": "Error", "detail": "Database save failed."}
 
-        msg = f"Uploaded {len(targets)} targets from {file.filename}."
-        if preq:
-            msg += (f" Hard-filter triage (0 AI calls): {preq['not_a_fit']} Not a Fit, "
-                    f"{preq['passed_awaiting_smartfill']} passed and awaiting SmartFill scoring.")
-        else:
-            msg += " Use SmartFill to enrich."
-        return {"status": "Success", "message": msg, "count": len(targets), "source": source_label, "prequalified": preq}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            # Data-rich uploads (Inven/Gain) get instant zero-AI hard-filter
+            # triage. DORMANT until PREQUALIFY_ON_UPLOAD=1 (awaiting sign-off).
+            preq = None
+            if (is_inven or is_gain) and os.getenv("PREQUALIFY_ON_UPLOAD", "0") == "1":
+                try:
+                    preq = _prequalify_local(only_names={t["name"] for t in targets})
+                except Exception as e:
+                    logger.warning(f"Pre-qualification after upload failed (non-fatal): {e}")
+
+            msg = f"Uploaded {len(targets)} targets from {filename}."
+            if preq:
+                msg += (f" Hard-filter triage (0 AI calls): {preq['not_a_fit']} Not a Fit, "
+                        f"{preq['passed_awaiting_smartfill']} passed and awaiting SmartFill scoring.")
+            else:
+                msg += " Use SmartFill to enrich."
+            return {"status": "Success", "message": msg, "count": len(targets),
+                    "source": source_label, "prequalified": preq}
+        except Exception as e:
+            logger.error(f"Upload failed: {e}")
+            return {"status": "Error", "detail": str(e)}
+
+    return _stream_json(_work)
 
 
 # ── One-time data migration: revenue bands v3 (£15-40M cheque mandate) ──────
