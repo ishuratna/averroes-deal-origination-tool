@@ -393,6 +393,7 @@ async def upload_custom_file(file: UploadFile = File(...)):
             logger.warning(f"GCS Archival failed (continuing): {gcs_err}")
         is_pitchbook = "pitchbook" in file.filename.lower()
         is_inven = "inven" in file.filename.lower()
+        is_gain = "gain" in file.filename.lower()
         try:
             if is_pitchbook:
                 logger.info(f"PitchBook file detected: {file.filename}")
@@ -401,10 +402,14 @@ async def upload_custom_file(file: UploadFile = File(...)):
                 logger.info(f"Inven file detected: {file.filename}")
                 from services.inven_service import parse_inven_csv
                 targets = parse_inven_csv(content)
+            elif is_gain:
+                logger.info(f"Gain.pro file detected: {file.filename}")
+                from services.gain_service import parse_gain_excel
+                targets = parse_gain_excel(content)
             else:
                 targets = parse_proprietary_excel(content)
             logger.info(f"Parsed {len(targets)} targets from {file.filename} "
-                        f"({'PitchBook' if is_pitchbook else 'Inven' if is_inven else 'Generic'})")
+                        f"({'PitchBook' if is_pitchbook else 'Inven' if is_inven else 'Gain' if is_gain else 'Generic'})")
         except Exception as parse_err:
             raise HTTPException(status_code=422, detail=f"Parse failed: {str(parse_err)}")
         if not targets:
@@ -421,7 +426,7 @@ async def upload_custom_file(file: UploadFile = File(...)):
         # geography, industry and revenue are already in the file.
         # DORMANT until PREQUALIFY_ON_UPLOAD=1 (awaiting sign-off).
         preq = None
-        if is_inven and os.getenv("PREQUALIFY_ON_UPLOAD", "0") == "1":
+        if (is_inven or is_gain) and os.getenv("PREQUALIFY_ON_UPLOAD", "0") == "1":
             try:
                 preq = _prequalify_local(only_names={t["name"] for t in targets})
             except Exception as e:
