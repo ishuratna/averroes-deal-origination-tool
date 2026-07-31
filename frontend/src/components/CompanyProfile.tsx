@@ -209,7 +209,13 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
 }
 
 export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged, initialTab }: Props) {
-  const company = companies[index];
+  const baseCompany = companies[index];
+  // The universe list is SLIM (heavy fields like cap tables, filing history,
+  // IC memos are excluded server-side so 13k rows stay lightweight). The
+  // profile fetches the FULL record on open; until it arrives the slim row
+  // renders, then depth fills in.
+  const [fullCompany, setFullCompany] = useState<typeof baseCompany | null>(null);
+  const company = (fullCompany && fullCompany.name === baseCompany?.name) ? fullCompany : baseCompany;
   const [tab, setTab] = useState<typeof TABS[number]>(
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
@@ -220,12 +226,16 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
   const [outreachOpen, setOutreachOpen] = useState(false);
 
   useEffect(() => {
-    if (!company) return;
+    if (!baseCompany) return;
     setActivity([]); setEmails([]); setConnections({ investors: [], siblings: [] });
-    dealApi.getCompanyActivity(company.name).then(r => setActivity(r.activity || [])).catch(() => {});
-    dealApi.getCompanyEmails(company.name).then(r => setEmails(r.emails || [])).catch(() => {});
-    dealApi.getCompanyConnections(company.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
-  }, [company?.name]);
+    setFullCompany(null);
+    dealApi.getCompanyFull(baseCompany.name).then(r => {
+      if (r && r.name) setFullCompany({ ...baseCompany, ...r });
+    }).catch(() => {});
+    dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
+    dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
+    dealApi.getCompanyConnections(baseCompany.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
+  }, [baseCompany?.name]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

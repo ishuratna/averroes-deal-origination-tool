@@ -53,6 +53,12 @@ os.makedirs("data", exist_ok=True)
 
 app = FastAPI(title="Averroes Deal Origination API")
 
+# GZip: tabular JSON compresses ~10x. Registered FIRST so it wraps innermost
+# (compresses actual responses); makes the 13k-row universe a few MB on the
+# wire instead of tens.
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Google Sign-In authentication (enforced only when GOOGLE_OAUTH_CLIENT_ID is set).
 # Registered BEFORE CORS so CORS is outermost — auth 401/403 responses then
 # carry CORS headers and are readable by the frontend.
@@ -237,12 +243,23 @@ async def get_pipeline():
 @app.get("/universe", response_model=List[dict])
 async def get_universe():
     """
-    Returns the complete Data Lake (Universe) from BigQuery.
+    Returns the complete Data Lake (Universe) from BigQuery — SLIM columns.
+    List views never show the heavy blob fields; at 13k rows SELECT * OOM-
+    killed the container. Profiles fetch full depth via /company/{name}/full.
     """
     try:
-        return bq_handler.get_universe()
+        return bq_handler.get_universe_slim()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load universe: {str(e)}")
+
+
+@app.get("/company/{company_name}/full")
+async def get_company_full(company_name: str):
+    """Every stored column for one company (profile depth on demand)."""
+    row = bq_handler.get_company_full(company_name)
+    if not row:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    return row
 
 @app.post("/ingest/marketplace")
 async def ingest_marketplace(marketplace_name: Optional[str] = Query(None, description="Name of the marketplace to scrape. If None, scrapes all.")):
@@ -1027,6 +1044,71 @@ async def investor_mine_run(request: Request):
     if not expected or token != expected:
         raise HTTPException(status_code=403, detail="Invalid token.")
     return _run_investor_mining()
+
+
+# ── Document Q&A (vector RAG over uploaded documents) ───────────────────────
+
+@app.post("/docs/upload")
+async def docs_upload(file: UploadFile = File(...), company: str = Query("", description="optional company tag")):
+    """Ingest a document into the RAG library: extract -> chunk -> embed ->
+    store. Streamed with heartbeats (embedding a big IM takes a while)."""
+    if not file.filename.lower().endswith((".pdf", ".docx", ".txt", ".md")):
+        raise HTTPException(status_code=400, detail="Use PDF, DOCX, TXT or MD.")
+    content = await file.read()
+    filename = file.filename
+    content_type = file.content_type
+
+    def _work():
+        from services import doc_rag
+        gcs_path = ""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            gcs_path = f"docs/{timestamp}_{filename.replace(' ', '_')}"
+            gcs_handler.save_raw_file(content, gcs_path, content_type)
+        except Exception as e:
+            logger.warning(f"GCS archival of doc failed (continuing): {e}")
+        try:
+            return doc_rag.ingest_document(bq_handler, content, filename,
+                                           company_name=company, gcs_path=gcs_path)
+        except Exception as e:
+            logger.error(f"[DocRAG] ingest failed: {e}")
+            return {"status": "Error", "detail": str(e)}
+
+    return _stream_json(_work)
+
+
+@app.get("/docs")
+async def docs_list():
+    from services import doc_rag
+    return {"documents": doc_rag.list_documents(bq_handler)}
+
+
+@app.post("/docs/ask")
+async def docs_ask(req: dict):
+    """RAG answer: embed the question, retrieve top-K chunks by cosine
+    similarity, generate with a strict cite-doc-and-page contract."""
+    question = (req.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+    from services import doc_rag
+
+    def _work():
+        try:
+            return doc_rag.ask(bq_handler, question,
+                               doc_id=(req.get("doc_id") or ""),
+                               company_name=(req.get("company") or ""))
+        except Exception as e:
+            logger.error(f"[DocRAG] ask failed: {e}")
+            return {"status": "Error", "detail": str(e)}
+
+    return _stream_json(_work)
+
+
+@app.delete("/docs/{doc_id}")
+async def docs_delete(doc_id: str):
+    from services import doc_rag
+    doc_rag.delete_document(bq_handler, doc_id)
+    return {"status": "Success"}
 
 
 @app.get("/analytics")

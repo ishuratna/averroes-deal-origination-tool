@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from google.cloud import bigquery
 from datetime import datetime
 
@@ -988,6 +988,44 @@ class BigQueryHandler:
         """
         return self._run_query(query)
 
+    # Heavy blob columns excluded from the SLIM universe (list views never
+    # display them; profiles fetch the full row via get_company_full). At 13k
+    # rows SELECT * OOM-killed the container (503) and the response blew past
+    # transfer limits.
+    _SLIM_DROP = (
+        "ch_history", "ch_cap_table", "ch_officer_network", "ch_allottees",
+        "ic_memo", "score_details", "extra_data", "outreach_draft_body",
+        "action_reply_body", "action_rationale", "ch_charges_summary",
+        "ch_insolvency_summary",
+    )
+    # Long text columns kept but truncated for list display (full in profile)
+    _SLIM_TRUNC = {
+        "description": 600, "investors_raw": 400, "current_owners": 300,
+        "keywords": 300, "ch_psc_summary": 300, "competitors": 200,
+        "also_known_as": 200,
+    }
+
+    def get_universe_slim(self) -> List[Dict]:
+        """All rows, list-view columns only: ~10x smaller than SELECT *."""
+        if not self.client:
+            return []
+        drop = ", ".join(self._SLIM_DROP + tuple(self._SLIM_TRUNC.keys()))
+        trunc = ", ".join(f"SUBSTR({c}, 1, {n}) AS {c}" for c, n in self._SLIM_TRUNC.items())
+        query = f"""
+            SELECT * EXCEPT({drop}), {trunc}
+            FROM `{self.table_id}`
+            ORDER BY ingested_at DESC
+        """
+        return self._run_query(query)
+
+    def get_company_full(self, name: str) -> Optional[Dict]:
+        """One company, every column (profile depth on demand)."""
+        if not self.client:
+            return None
+        query = f"SELECT * FROM `{self.table_id}` WHERE LOWER(name) = LOWER(@name) LIMIT 1"
+        rows = self._run_query(query, [bigquery.ScalarQueryParameter("name", "STRING", name)])
+        return rows[0] if rows else None
+
     def update_company_enrichment(self, company_name: str, enrichment_data: Dict) -> bool:
         if not self.client:
             return False
@@ -1028,9 +1066,10 @@ class BigQueryHandler:
         """
         return self._run_query(query)
 
-    def _run_query(self, query: str) -> List[Dict]:
+    def _run_query(self, query: str, params: Optional[List] = None) -> List[Dict]:
         try:
-            query_job = self.client.query(query)
+            job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
+            query_job = self.client.query(query, job_config=job_config)
             results = query_job.result()
             companies = []
             for row in results:

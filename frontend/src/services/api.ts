@@ -297,6 +297,52 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getCompanyFull(name: string): Promise<any> {
+    // Full record for one company (the universe list is slim at 13k rows;
+    // profiles fetch their depth on open).
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/full`);
+    if (!response.ok) throw new Error('Failed to load company record');
+    return await response.json();
+  },
+
+  // ── Document Q&A (vector RAG) ──
+  async docsUpload(file: globalThis.File, company: string = ''): Promise<any> {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await apiFetch(`${API_BASE_URL}/docs/upload?company=${encodeURIComponent(company)}`, { method: 'POST', body: form });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Upload failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Upload failed');
+    return data;
+  },
+
+  async docsList(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/docs`);
+    if (!response.ok) throw new Error('Failed to load documents');
+    return await response.json();
+  },
+
+  async docsAsk(question: string, docId: string = '', company: string = ''): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/docs/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, doc_id: docId, company }),
+    });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Ask failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Ask failed');
+    return data;
+  },
+
+  async docsDelete(docId: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/docs/${encodeURIComponent(docId)}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Delete failed');
+    return await response.json();
+  },
+
   async getAnalytics(refresh: boolean = false): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/analytics${refresh ? '?refresh=1' : ''}`);
     if (!response.ok) throw new Error('Failed to load analytics');
