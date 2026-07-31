@@ -681,3 +681,31 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .an-wbar-recv { background: #16a34a; }
 .an-week-label { font-size: 0.6rem; color: #94a3b8; margin-top: 4px; }
 .an-warn { margin-top: 0.7rem; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.74rem; }
+
+/* ── Documents (RAG Q&A) page ───────────────────────────────────────────── */
+.dq-upload-row, .dq-ask-row { display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap; }
+.dq-file { font-size: 0.8rem; color: #475569; }
+.dq-input { border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.82rem; min-width: 220px; }
+.dq-q { flex: 1; min-width: 320px; }
+.dq-select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.6rem; font-size: 0.8rem; color: #334155; background: #fff; max-width: 260px; }
+.dq-msg { margin: 0.7rem 0 0; font-size: 0.8rem; color: #166534; }
+.dq-answer { margin-top: 1rem; border-top: 1px solid #e2e8f0; padding-top: 1rem; }
+.dq-answer-text { font-size: 0.92rem; color: #0f172a; line-height: 1.65; white-space: pre-wrap; margin: 0; }
+.dq-cite { display: inline-block; background: #eff6ff; color: #2563eb; border-radius: 5px; font-size: 0.72rem; font-weight: 700; padding: 0 0.3rem; margin: 0 0.1rem; }
+.dq-sources { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.55rem; }
+.dq-sources-title { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
+.dq-source { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.55rem 0.8rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.dq-source-head { font-size: 0.76rem; font-weight: 700; color: #334155; }
+.dq-snippet { font-size: 0.76rem; color: #64748b; line-height: 1.5; }
+.dq-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.dq-table th { text-align: left; color: #64748b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.4rem 0.6rem; border-bottom: 1px solid #e2e8f0; }
+.dq-table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
+.dq-del { background: none; border: 1px solid #fecaca; color: #b91c1c; border-radius: 6px; padding: 0.2rem 0.6rem; font-size: 0.72rem; cursor: pointer; }
+.dq-del:hover { background: #fef2f2; }
+
+/* ── Universe table pagination ──────────────────────────────────────────── */
+.uni-pager { display: flex; align-items: center; justify-content: center; gap: 1rem; padding: 0.8rem 0 0.4rem; }
+.uni-pager-btn { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.4rem 0.9rem; font-size: 0.8rem; font-weight: 700; color: #2563eb; cursor: pointer; }
+.uni-pager-btn:disabled { color: #cbd5e1; cursor: default; }
+.uni-pager-btn:not(:disabled):hover { background: #eff6ff; }
+.uni-pager-info { font-size: 0.78rem; color: #64748b; }

@@ -152,6 +152,8 @@ function UniverseInner() {
 
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
+  const [tablePage, setTablePage] = useState(1);
+  useEffect(() => { setTablePage(1); }, [searchQuery, filters]);  // new filter = back to page 1
   const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
   const regions = ["All", "UK", "Ireland", "UK/Ireland", "Europe", "North America"];
   const statuses = ["All", "Qualified", "Under Review", "Uploaded", "In Pipeline", "Not a Fit"];
@@ -389,6 +391,18 @@ function UniverseInner() {
 
   // Saved views
   const activeFilterCount = [filters.vertical !== 'All', filters.region !== 'All', filters.status !== 'All', searchQuery !== ''].filter(Boolean).length;
+
+  // ── Table pagination ────────────────────────────────────────────────────
+  // The table used to render EVERY filtered row; at 13k companies that is
+  // ~300k table cells and the browser hangs (blank page). Render one page at
+  // a time; filters/search still operate on the full in-memory set.
+  const PAGE_SIZE = 200;
+  const pageCount = Math.max(1, Math.ceil(filteredUniverse.length / PAGE_SIZE));
+  const safePage = Math.min(tablePage, pageCount);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  // Keep ABSOLUTE indices: profileIdx indexes into filteredUniverse.
+  const pageRows: [number, typeof filteredUniverse[number]][] =
+    filteredUniverse.slice(pageStart, pageStart + PAGE_SIZE).map((c, j) => [pageStart + j, c]);
 
   const handleSaveView = () => {
     if (!newViewName.trim()) return;
@@ -1138,7 +1152,7 @@ function UniverseInner() {
                     <tr key={i} className="skeleton-row"><td colSpan={25}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
-                  filteredUniverse.map((company, i) => (
+                  pageRows.map(([i, company]) => (
                     <tr key={i} className={company.source === 'Internal Test' ? 'test-row' : ''}>
                       <td className="company-cell">
                         <button className="company-name-btn" onClick={() => setProfileIdx(i)}>{company.name}</button>
@@ -1256,6 +1270,15 @@ function UniverseInner() {
                 )}
               </tbody>
             </table>
+            {!loading && filteredUniverse.length > PAGE_SIZE && (
+              <div className="uni-pager">
+                <button className="uni-pager-btn" disabled={safePage <= 1} onClick={() => setTablePage(safePage - 1)}>‹ Prev</button>
+                <span className="uni-pager-info">
+                  Showing {(pageStart + 1).toLocaleString()}–{Math.min(pageStart + PAGE_SIZE, filteredUniverse.length).toLocaleString()} of {filteredUniverse.length.toLocaleString()} companies · page {safePage} of {pageCount}
+                </span>
+                <button className="uni-pager-btn" disabled={safePage >= pageCount} onClick={() => setTablePage(safePage + 1)}>Next ›</button>
+              </div>
+            )}
           </div>
         </section>
       </main>
