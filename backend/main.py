@@ -1810,6 +1810,70 @@ async def smartfill_batch(req: SmartFillBatchRequest):
     return StreamingResponse(_gen(), media_type="text/plain")
 
 
+@app.get("/smartfill/run-by-number")
+async def smartfill_run_by_number(request: Request,
+                                  numbers: str = Query(..., description="comma-separated CH registration numbers"),
+                                  force: int = Query(0, description="1 = re-run even if SmartFilled today")):
+    """Token-gated ops runner: find companies by Companies House registration
+    number (registration_number OR ch_company_number), SmartFill each
+    sequentially SERVER-SIDE, streamed with heartbeats. Idempotent: skips
+    companies already SmartFilled today unless force=1. Survives client
+    disconnects better than any UI loop (each fill commits as it finishes)."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    wanted = {n.strip().upper() for n in numbers.split(",") if n.strip()}
+
+    async def _work_async():
+        from datetime import datetime as _dt, timezone as _tz
+        today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+        uni = bq_handler.get_universe()
+        matched, done, skipped, failed = [], [], [], []
+        seen_nums = set()
+        for c in uni:
+            nums = {str(c.get("registration_number") or "").upper(), str(c.get("ch_company_number") or "").upper()}
+            hit = wanted & nums - {""}
+            if not hit or hit & seen_nums:
+                continue
+            seen_nums |= hit
+            matched.append({"name": c["name"], "number": sorted(hit)[0]})
+            if not force and str(c.get("last_smartfill_at") or "")[:10] == today:
+                skipped.append(c["name"])
+                continue
+            try:
+                await smartfill_company(c["name"])
+                done.append(c["name"])
+            except HTTPException as e:
+                if e.status_code == 429:
+                    failed.append(f"{c['name']}: BUDGET - {e.detail}")
+                    break
+                failed.append(f"{c['name']}: {e.detail}")
+            except Exception as e:
+                failed.append(f"{c['name']}: {str(e)[:80]}")
+        return {"status": "Success", "requested": len(wanted), "matched": len(matched),
+                "not_found": sorted(wanted - seen_nums),
+                "filled": done, "skipped_already_today": skipped, "failed": failed,
+                "matches": matched}
+
+    # Stream heartbeats around the async work (long run: ~1-3 min per company)
+    import asyncio as _asyncio
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    async def _gen():
+        task = _asyncio.create_task(_work_async())
+        while not task.done():
+            await _asyncio.sleep(10)
+            yield " "
+        try:
+            res = task.result()
+        except Exception as e:
+            res = {"status": "Error", "detail": str(e)}
+        yield "\n" + _json.dumps(res)
+    return StreamingResponse(_gen(), media_type="text/plain")
+
+
 @app.post("/smartfill/{company_name}")
 async def smartfill_company(company_name: str, bulk: bool = Query(False, description="Bulk mode: skips web-search scoring for Too Large companies (cost gate)")):
     """SmartFill: Qualify (UK/Ireland + Tech) + enrich founder/LinkedIn/website."""
