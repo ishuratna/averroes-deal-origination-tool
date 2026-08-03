@@ -10,6 +10,7 @@ import AuthGate from "../../components/AuthGate";
 import OutreachModal from "../../components/OutreachModal";
 import SyncEmailsButton from "../../components/SyncEmailsButton";
 import { outreachButtonState } from "../../lib/outreach";
+import SideNav from '../../components/SideNav';
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -989,50 +990,7 @@ function UniverseInner() {
       )}
 
       {/* Sidebar */}
-      <aside className="sidebar">
-        <div className="logo-section">
-          <div className="logo">AVERROES<span>INTEL</span></div>
-        </div>
-        <nav className="sidebar-nav">
-          <div className="nav-group">
-            <span className="group-label">Intelligence</span>
-            <Link href="/" className="nav-item">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z" fill="currentColor" opacity="0.7"/></svg>
-              Deal Pipeline
-            </Link>
-            <Link href="/universe" className="nav-item active">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" stroke="currentColor" strokeWidth="1" fill="none"/></svg>
-              Master Universe
-            </Link>
-            <Link href="/investors" className="nav-item">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>
-              Investors (LPs)
-            </Link>
-            <Link href="/chat" className="nav-item">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3.5C2 2.7 2.7 2 3.5 2h9c.8 0 1.5.7 1.5 1.5v6c0 .8-.7 1.5-1.5 1.5H8l-3.5 3v-3h-1C2.7 11 2 10.3 2 9.5v-6z" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>
-              Intelligence Chat
-            </Link>
-            <Link href="/analytics" className="nav-item">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 13.5h12M4 11V7m4 4V4m4 7V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-              Analytics
-            </Link>
-          </div>
-        </nav>
-        <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="avatar">IR</div>
-            <div className="user-info">
-              <span className="user-name">Ishu Ratna</span>
-              <span className="user-role">Associate</span>
-            </div>
-            <button className="sign-out-btn" title="Sign out" onClick={() => {
-              localStorage.removeItem('averroes_id_token');
-              sessionStorage.removeItem('averroes_auth_on');
-              window.location.reload();
-            }}>Sign out</button>
-          </div>
-        </div>
-      </aside>
+      <SideNav active="deal-universe" />
 
       <main className="main-content">
         <header className="page-header">

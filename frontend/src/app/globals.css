@@ -688,3 +688,42 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .uni-pager-btn:disabled { color: #cbd5e1; cursor: default; }
 .uni-pager-btn:not(:disabled):hover { background: #eff6ff; }
 .uni-pager-info { font-size: 0.78rem; color: #64748b; }
+
+/* ── Canonical sidebar (shared SideNav component) ───────────────────────── */
+.sidebar { width: 260px; background: #fff; border-right: 1px solid #e2e8f0; position: fixed; height: 100vh; z-index: 100; display: flex; flex-direction: column; }
+.logo-section { padding: 1.5rem 1.25rem; border-bottom: 1px solid #e2e8f0; }
+.logo { font-weight: 800; font-size: 1rem; letter-spacing: 0.05em; color: #0f172a; }
+.logo span { color: #2563eb; }
+.sidebar-nav { padding: 1.25rem 0.75rem; flex: 1; overflow-y: auto; }
+.nav-group { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1.1rem; }
+.group-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; padding-left: 0.75rem; margin-bottom: 0.4rem; font-weight: 700; }
+.nav-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 8px; color: #475569; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+.nav-item:hover { background: #f1f5f9; }
+.nav-item.active { color: #2563eb; background: #eff6ff; }
+.sidebar-footer { padding: 1.25rem; border-top: 1px solid #e2e8f0; }
+.user-profile { display: flex; align-items: center; gap: 0.65rem; }
+.avatar { width: 36px; height: 36px; background: #eff6ff; color: #2563eb; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.8rem; }
+.user-info { display: flex; flex-direction: column; }
+.user-name { font-size: 0.85rem; font-weight: 700; color: #0f172a; }
+.user-role { font-size: 0.68rem; color: #94a3b8; }
+
+/* ── Investor pipeline kanban ───────────────────────────────────────────── */
+.ikb-toolbar { display: flex; gap: 0.7rem; align-items: center; margin-bottom: 1.1rem; flex-wrap: wrap; }
+.ikb-search { border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.82rem; min-width: 260px; }
+.ikb-select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.6rem; font-size: 0.8rem; color: #334155; background: #fff; }
+.ikb-board { display: flex; gap: 0.9rem; overflow-x: auto; align-items: flex-start; padding-bottom: 1rem; }
+.ikb-col { background: #f1f5f9; border-radius: 12px; min-width: 265px; width: 265px; flex-shrink: 0; padding: 0.75rem; }
+.ikb-col-head { display: flex; align-items: center; justify-content: space-between; padding: 0 0.25rem 0.6rem; }
+.ikb-col-title { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+.ikb-col-count { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 0.7rem; font-weight: 700; color: #64748b; padding: 0.05rem 0.5rem; }
+.ikb-cards { display: flex; flex-direction: column; gap: 0.6rem; max-height: calc(100vh - 260px); overflow-y: auto; }
+.ikb-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.7rem 0.8rem; box-shadow: 0 1px 2px rgba(15,23,42,0.05); }
+.ikb-name { font-size: 0.88rem; font-weight: 700; color: #0f172a; background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
+.ikb-name:hover { color: #2563eb; }
+.ikb-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.4rem 0; }
+.ikb-chip { background: #f1f5f9; border-radius: 6px; font-size: 0.68rem; font-weight: 700; color: #475569; padding: 0.12rem 0.45rem; }
+.ikb-chip.fit-high { background: #ecfdf5; color: #166534; }
+.ikb-chip.fit-mid { background: #fffbeb; color: #92400e; }
+.ikb-row { font-size: 0.72rem; color: #64748b; margin-top: 0.2rem; }
+.ikb-move { width: 100%; margin-top: 0.5rem; border: 1px solid #e2e8f0; border-radius: 7px; padding: 0.32rem 0.4rem; font-size: 0.72rem; font-weight: 700; background: #fff; }
+.ikb-empty { font-size: 0.75rem; color: #94a3b8; padding: 0.8rem 0.4rem; }
