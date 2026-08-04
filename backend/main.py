@@ -1865,7 +1865,16 @@ class QuickResearchRequest(BaseModel):
     force: bool = False             # re-run SmartFill even if filled today
 
 
-async def _quick_research_core(ident: dict, source_note: str) -> dict:
+def _quick_research_seed(ident: dict, source_note: str) -> dict:
+    """Identify -> seed ONE ordinary universe row. NO SmartFill here.
+
+    Why split: identification is seconds, but a full SmartFill is minutes.
+    Holding one request for both exceeded the Cloud Run request timeout and
+    the stream was cut mid-flight ("Unexpected end of JSON input"). The
+    frontend now seeds first, then calls the SAME SmartFill batch endpoint the
+    Universe uses (proven, heartbeated, resumable). SmartFill itself is still
+    untouched and still the only thing doing the research.
+    """
     from services import quick_research as qr
     if ident.get("error"):
         return {"status": "Error", "detail": ident["error"]}
@@ -1876,64 +1885,43 @@ async def _quick_research_core(ident: dict, source_note: str) -> dict:
 
     existing = bq_handler.get_company_full(name)
     if existing:
-        # Already in the universe: do NOT reseed (merge-never-overwrite). Just
-        # run the standard SmartFill on it and return the row.
-        seeded = False
+        seeded = False          # merge-never-overwrite: never reseed a known row
     else:
         bq_handler.save_targets([qr.seed_row(ident, source_note)])
         seeded = True
-
-    smartfill_error = ""
-    try:
-        await smartfill_company(name)          # ← the untouched existing workflow
-    except HTTPException as e:
-        smartfill_error = str(e.detail)
-    except Exception as e:
-        smartfill_error = str(e)[:200]
-
-    row = bq_handler.get_company_full(name) or {}
-    return {"status": "Success", "company": row, "name": name, "seeded": seeded,
-            "identification": ident, "smartfill_error": smartfill_error}
+    return {"status": "Success", "name": name, "seeded": seeded, "identification": ident}
 
 
-@app.post("/quick-research")
-async def quick_research(req: QuickResearchRequest):
-    """Company name or pasted text -> identify -> seed row -> standard SmartFill."""
+@app.post("/quick-research/identify")
+async def quick_research_identify(req: QuickResearchRequest):
+    """Company name or pasted text -> identify + seed the row (fast)."""
     from services import quick_research as qr
     q = (req.query or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Provide a company name or some text about it.")
-
-    def _work():
-        # Short input = treat as the company name itself (no AI needed to read
-        # a name); longer input goes through identification.
-        if len(q) <= 80 and "\n" not in q:
-            ident = {"name": q, "confidence": "high", "notes": "name supplied directly"}
-        else:
-            ident = qr.identify_from_text(q)
-        import asyncio as _a
-        return _a.run(_quick_research_core(ident, f"Quick Research from typed input: {q[:120]}"))
-
-    return _stream_json(_work)
+    # A short single-line input IS the company name: no AI call needed.
+    if len(q) <= 80 and "\n" not in q:
+        ident = {"name": q, "confidence": "high", "notes": "name supplied directly"}
+    else:
+        ident = qr.identify_from_text(q)
+    return _quick_research_seed(ident, f"Quick Research from typed input: {q[:120]}")
 
 
 @app.post("/quick-research/document")
 async def quick_research_document(file: UploadFile = File(...)):
-    """Document -> identify the company -> seed row -> standard SmartFill."""
+    """Document -> identify the company + seed the row (one AI call)."""
     from services import quick_research as qr
     content = await file.read()
     filename = file.filename or "upload"
-
-    def _work():
-        try:
-            gcs_handler.save_raw_file(content, f"quick-research/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename.replace(' ', '_')}", file.content_type)
-        except Exception as e:
-            logger.warning(f"[QuickResearch] GCS archive failed (continuing): {e}")
-        ident = qr.identify_from_document(content, filename)
-        import asyncio as _a
-        return _a.run(_quick_research_core(ident, f"Quick Research from document: {filename}"))
-
-    return _stream_json(_work)
+    try:
+        gcs_handler.save_raw_file(
+            content,
+            f"quick-research/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename.replace(' ', '_')}",
+            file.content_type)
+    except Exception as e:
+        logger.warning(f"[QuickResearch] GCS archive failed (continuing): {e}")
+    ident = qr.identify_from_document(content, filename)
+    return _quick_research_seed(ident, f"Quick Research from document: {filename}")
 
 
 @app.get("/smartfill/run-by-number")

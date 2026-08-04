@@ -119,7 +119,11 @@ export const dealApi = {
       catch (e: any) { throw new Error(e?.message || 'File upload failed'); }
     }
     const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last || !last.startsWith('{')) {
+      throw new Error('The server was still working when the connection closed (request timeout). The work may have completed anyway — reload to check, or run it again.');
+    }
+    const data = JSON.parse(last);
     if (data.status === 'Error') throw new Error(data.detail || 'File upload failed');
     return data;
   },
@@ -235,7 +239,11 @@ export const dealApi = {
     const text = await response.text();
     if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Analysis failed'); } }
     const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last || !last.startsWith('{')) {
+      throw new Error('The server was still working when the connection closed (request timeout). The work may have completed anyway — reload to check, or run it again.');
+    }
+    const data = JSON.parse(last);
     if (data.status === 'Error') throw new Error(data.detail || 'Analysis failed');
     return data;
   },
@@ -258,7 +266,11 @@ export const dealApi = {
     const text = await response.text();
     if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Preview failed'); } }
     const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last || !last.startsWith('{')) {
+      throw new Error('The server was still working when the connection closed (request timeout). The work may have completed anyway — reload to check, or run it again.');
+    }
+    const data = JSON.parse(last);
     if (data.status === 'Error') throw new Error(data.detail || 'Preview failed');
     return data;
   },
@@ -286,7 +298,11 @@ export const dealApi = {
     const text = await response.text();
     if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Refresh failed'); } }
     const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last || !last.startsWith('{')) {
+      throw new Error('The server was still working when the connection closed (request timeout). The work may have completed anyway — reload to check, or run it again.');
+    }
+    const data = JSON.parse(last);
     if (data.status === 'Error') throw new Error(data.detail || 'Refresh failed');
     return data;
   },
@@ -298,30 +314,27 @@ export const dealApi = {
   },
 
   // ── Quick Tools: Company Deep Research ──
-  // Identifies the company, seeds a normal universe row, then runs the SAME
-  // SmartFill workflow as the Universe buttons. Streamed (heartbeats).
-  async quickResearch(query: string): Promise<any> {
-    const response = await apiFetch(`${API_BASE_URL}/quick-research`, {
+  // TWO steps on purpose: identify+seed is seconds, SmartFill is minutes.
+  // One combined request exceeded the Cloud Run timeout and the stream got
+  // cut mid-flight. Step 2 reuses the same smartFillBatch the Universe uses.
+  async quickResearchIdentify(query: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/quick-research/identify`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
     });
-    const text = await response.text();
-    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Research failed'); } }
-    const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
-    if (data.status === 'Error') throw new Error(data.detail || 'Research failed');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Identification failed');
+    if (data.status === 'Error') throw new Error(data.detail || 'Identification failed');
     return data;
   },
 
-  async quickResearchDocument(file: globalThis.File): Promise<any> {
+  async quickResearchIdentifyDocument(file: globalThis.File): Promise<any> {
     const form = new FormData();
     form.append('file', file);
     const response = await apiFetch(`${API_BASE_URL}/quick-research/document`, { method: 'POST', body: form });
-    const text = await response.text();
-    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Research failed'); } }
-    const lines = text.trim().split('\n');
-    const data = JSON.parse(lines[lines.length - 1]);
-    if (data.status === 'Error') throw new Error(data.detail || 'Research failed');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Identification failed');
+    if (data.status === 'Error') throw new Error(data.detail || 'Identification failed');
     return data;
   },
 

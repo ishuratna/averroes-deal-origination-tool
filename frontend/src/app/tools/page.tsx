@@ -23,26 +23,46 @@ function QuickToolsInner() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<any | null>(null);
   const [showCard, setShowCard] = useState(false);
+  const [step, setStep] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // TWO steps: (1) identify + seed the row (seconds), (2) the SAME SmartFill
+  // batch endpoint the Universe uses (minutes, heartbeated, resumable).
+  // Doing both in one request blew past the Cloud Run timeout.
   const run = async (mode: 'text' | 'file') => {
     setBusy(true); setError(''); setResult(null); setShowCard(false);
     try {
-      let r;
+      setStep('Identifying the company…');
+      let ident;
       if (mode === 'file') {
         const f = fileRef.current?.files?.[0];
-        if (!f) { setError('Choose a document first.'); setBusy(false); return; }
-        r = await dealApi.quickResearchDocument(f);
+        if (!f) { setError('Choose a document first.'); setBusy(false); setStep(''); return; }
+        ident = await dealApi.quickResearchIdentifyDocument(f);
       } else {
-        if (!query.trim()) { setError('Type a company name, or paste text about it.'); setBusy(false); return; }
-        r = await dealApi.quickResearch(query.trim());
+        if (!query.trim()) { setError('Type a company name, or paste text about it.'); setBusy(false); setStep(''); return; }
+        ident = await dealApi.quickResearchIdentify(query.trim());
       }
-      setResult(r);
-      setShowCard(true);
+      const name = ident.name;
+      setStep(`Running SmartFill on “${name}” — registry, filings, cap table, scoring…`);
+
+      let smartfillError = '';
+      try {
+        const res = await dealApi.smartFillBatch([name]);
+        const p = (res.processed || []).find((x: any) => x.name === name);
+        if (p && String(p.status).startsWith('FAILED')) smartfillError = String(p.status);
+        if (res.stopped) smartfillError = String(res.stopped);
+      } catch (e: any) {
+        smartfillError = e?.message || 'SmartFill did not complete';
+      }
+
+      setStep('Loading the company record…');
+      const company = await dealApi.getCompanyFull(name).catch(() => null);
+      setResult({ name, identification: ident.identification, seeded: ident.seeded, company, smartfill_error: smartfillError });
+      setShowCard(!!company?.name);
       if (fileRef.current) fileRef.current.value = '';
     } catch (e: any) {
       setError(e?.message || 'Research failed');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setStep(''); }
   };
 
   const co: CompanyTarget | null = result?.company?.name ? (result.company as CompanyTarget) : null;
@@ -86,8 +106,10 @@ function QuickToolsInner() {
 
           {busy && (
             <p className="qt-note">
-              Working… identification, then the full SmartFill pass (registry, filings, cap table,
-              scoring). This usually takes 1–3 minutes; the connection is kept alive with heartbeats.
+              <b>{step || 'Working…'}</b><br />
+              Two steps: identify the company, then the standard SmartFill pass. Allow 1–3 minutes.
+              If a step times out, the record is still seeded and you can re-run SmartFill from the
+              Master Universe.
             </p>
           )}
           {error && <div className="an-error">{error}</div>}
