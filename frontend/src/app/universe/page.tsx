@@ -154,6 +154,15 @@ function UniverseInner() {
   // Filters
   const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
   const [tablePage, setTablePage] = useState(1);
+  // ── Row selection -> SmartFill only what is ticked ──────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selRunning, setSelRunning] = useState(false);
+  const [selProgress, setSelProgress] = useState<{ done: number; total: number; ok: number; failed: number; current: string } | null>(null);
+  const [selErrors, setSelErrors] = useState<string[]>([]);
+  const selCancelRef = useRef(false);
+  const toggleRow = (name: string) => setSelected(prev => {
+    const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n;
+  });
   useEffect(() => { setTablePage(1); }, [searchQuery, filters]);  // new filter = back to page 1
   const verticals = ["All", "SaaS", "FinTech", "HealthTech", "AI", "Cybersecurity", "E-commerce", "Industrial", "Logistics", "Professional Services"];
   const regions = ["All", "UK", "Ireland", "UK/Ireland", "Europe", "North America"];
@@ -283,6 +292,52 @@ function UniverseInner() {
       await loadData();
     } catch (error) { alert(`Scraping failed for ${sourceName}`); }
     finally { setIngesting(null); }
+  };
+
+  // Select/clear every row on the CURRENT page (never the whole 13k set by
+  // accident: selection is explicit and visible).
+  const pageNames = () => pageRows.map(([, c]) => c.name);
+  const allPageSelected = () => { const p = pageNames(); return p.length > 0 && p.every(n => selected.has(n)); };
+  const togglePage = () => setSelected(prev => {
+    const n = new Set(prev); const p = pageNames();
+    if (p.every(x => n.has(x))) p.forEach(x => n.delete(x)); else p.forEach(x => n.add(x));
+    return n;
+  });
+
+  // Run SmartFill on EXACTLY the ticked companies, through the same
+  // server-side batch endpoint the bulk runner uses (survives dropped
+  // connections; reports per-company truth).
+  const runSelectedSmartFill = async () => {
+    const names = Array.from(selected);
+    if (!names.length || selRunning) return;
+    if (!confirm(`Run SmartFill on ${names.length} selected ${names.length === 1 ? 'company' : 'companies'}?\n\nEach uses AI credits against today's budget.`)) return;
+    selCancelRef.current = false;
+    setSelRunning(true); setSelErrors([]);
+    const total = names.length;
+    let remaining = [...names], ok = 0, failed = 0, retries = 0;
+    const errors: string[] = [];
+    while (remaining.length > 0 && !selCancelRef.current) {
+      setSelProgress({ done: ok + failed, total, ok, failed, current: remaining[0] });
+      try {
+        const res = await dealApi.smartFillBatch(remaining);
+        retries = 0;
+        for (const p of res.processed || []) {
+          if (String(p.status).startsWith('FAILED')) { failed++; if (errors.length < 8) errors.push(`${p.name}: ${p.status}`); }
+          else ok++;
+        }
+        remaining = res.remaining || [];
+        if (res.stopped) { errors.push(String(res.stopped)); break; }
+      } catch (e: any) {
+        retries++;
+        if (retries > 3) { errors.push(`Aborted after ${retries - 1} retries: ${e?.message || e}`); break; }
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+    setSelProgress({ done: ok + failed, total, ok, failed, current: '' });
+    setSelErrors(errors);
+    setSelRunning(false);
+    await loadData();
+    setSelected(new Set());
   };
 
   // ── Bulk SmartFill ────────────────────────────────────────────────────────
@@ -1007,6 +1062,17 @@ function UniverseInner() {
             <button className="bulk-smartfill-btn" onClick={openBulkSmartFill} disabled={bulkLoadingEligibility || bulkRunning}>
               {bulkLoadingEligibility ? 'Checking...' : bulkRunning ? 'Running...' : '⚡ Bulk SmartFill'}
             </button>
+            {selected.size > 0 && (
+              <button className="sel-run-btn" disabled={selRunning} onClick={runSelectedSmartFill}
+                title="Runs SmartFill on exactly the ticked companies">
+                {selRunning
+                  ? `Filling ${selProgress ? selProgress.done + 1 : 1}/${selProgress?.total ?? selected.size}…`
+                  : `⚡ SmartFill selected (${selected.size})`}
+              </button>
+            )}
+            {selected.size > 0 && !selRunning && (
+              <button className="sel-clear-btn" onClick={() => setSelected(new Set())}>Clear</button>
+            )}
             <SyncEmailsButton onSynced={loadData} />
             <div className="search-box">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#94a3b8" strokeWidth="1.5"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -1074,6 +1140,19 @@ function UniverseInner() {
             <button className="refresh-btn" onClick={loadData}>Sync &nbsp;&#8635;</button>
           </div>
           <div className="table-scroll-container">
+            {(selProgress || selErrors.length > 0) && (
+              <div className={`sel-banner ${selRunning ? 'running' : 'done'}`}>
+                {selProgress && (
+                  <span>
+                    Selected SmartFill: {selProgress.done}/{selProgress.total} processed · {selProgress.ok} filled · {selProgress.failed} failed
+                    {selRunning && selProgress.current ? ` · current: ${selProgress.current}` : ''}
+                  </span>
+                )}
+                {selRunning && <button className="sel-cancel" onClick={() => { selCancelRef.current = true; }}>Stop after this batch</button>}
+                {!selRunning && selErrors.length > 0 && <span className="sel-errs">{selErrors.slice(0, 4).join(' · ')}</span>}
+                {!selRunning && <button className="sel-cancel" onClick={() => { setSelProgress(null); setSelErrors([]); }}>Dismiss</button>}
+              </div>
+            )}
             <table className="crm-table">
               <thead>
                 <tr>
@@ -1101,13 +1180,16 @@ function UniverseInner() {
                   <th><InfoTip label="Source" tip={DEFS.source} /></th>
                   <th><InfoTip label="Date Added" tip={DEFS.dateAdded} /></th>
                   <th><InfoTip label="Description" tip={DEFS.description} /></th>
+                  <th className="sel-th">
+                    <input type="checkbox" title="Select all on this page" checked={allPageSelected()} onChange={togglePage} />
+                  </th>
                   <th><InfoTip label="Actions" tip={DEFS.actions} /></th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={25}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={26}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   pageRows.map(([i, company]) => (
@@ -1189,6 +1271,9 @@ function UniverseInner() {
                           <button className="desc-btn" onClick={() => setProfileIdx(i)}>View</button>
                         ) : '—'}
                       </td>
+                      <td className="sel-td">
+                        <input type="checkbox" checked={selected.has(company.name)} onChange={() => toggleRow(company.name)} />
+                      </td>
                       <td>
                         <div className="action-btns">
                           <button
@@ -1224,7 +1309,7 @@ function UniverseInner() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={25} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={26} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>
