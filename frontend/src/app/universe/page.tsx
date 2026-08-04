@@ -163,6 +163,8 @@ function UniverseInner() {
   const [selProgress, setSelProgress] = useState<{ done: number; total: number; ok: number; failed: number; current: string } | null>(null);
   const [selErrors, setSelErrors] = useState<string[]>([]);
   const selCancelRef = useRef(false);
+  const [selDeleting, setSelDeleting] = useState(false);
+  const [hiddenPanel, setHiddenPanel] = useState<any | null>(null);
   const toggleRow = (name: string) => setSelected(prev => {
     const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n;
   });
@@ -295,6 +297,39 @@ function UniverseInner() {
       await loadData();
     } catch (error) { alert(`Scraping failed for ${sourceName}`); }
     finally { setIngesting(null); }
+  };
+
+  // SOFT delete: removes rows from THIS VIEW only. Every field stays in the
+  // BigQuery table (hidden_at/hidden_by stamped), so it is auditable and
+  // restorable — we never destroy sourced data.
+  const removeSelected = async () => {
+    const names = Array.from(selected);
+    if (!names.length || selDeleting) return;
+    const preview = names.slice(0, 6).join(', ') + (names.length > 6 ? `, +${names.length - 6} more` : '');
+    if (!confirm(`Remove ${names.length} ${names.length === 1 ? 'company' : 'companies'} from the Master Universe view?\n\n${preview}\n\nThe records STAY in the BigQuery database (nothing is deleted) and can be restored from "Removed" at any time.`)) return;
+    setSelDeleting(true);
+    try {
+      const r = await dealApi.hideCompanies(names);
+      setUniverse(prev => prev.filter(c => !selected.has(c.name)));
+      setSelected(new Set());
+      alert(`${r.hidden} removed from the view. Records retained in BigQuery — restore any time from the Removed panel.`);
+    } catch (e: any) {
+      alert(e?.message || 'Remove failed');
+    } finally { setSelDeleting(false); }
+  };
+
+  const openHiddenPanel = async () => {
+    try { setHiddenPanel(await dealApi.getHiddenCompanies()); }
+    catch { alert('Could not load removed companies'); }
+  };
+
+  const restoreHidden = async (names: string[]) => {
+    if (!names.length) return;
+    try {
+      await dealApi.unhideCompanies(names);
+      await loadData();
+      setHiddenPanel(await dealApi.getHiddenCompanies());
+    } catch { alert('Restore failed'); }
   };
 
   // Select/clear every row on the CURRENT page (never the whole 13k set by
@@ -1080,8 +1115,15 @@ function UniverseInner() {
               </button>
             )}
             {selected.size > 0 && !selRunning && (
+              <button className="sel-del-btn" disabled={selDeleting} onClick={removeSelected}
+                title="Removes from this view only — records stay in BigQuery and can be restored">
+                {selDeleting ? 'Removing…' : `🗑 Remove (${selected.size})`}
+              </button>
+            )}
+            {selected.size > 0 && !selRunning && (
               <button className="sel-clear-btn" onClick={() => setSelected(new Set())}>Clear</button>
             )}
+            <button className="sel-clear-btn" onClick={openHiddenPanel} title="Companies removed from the view (still in BigQuery)">Removed</button>
             <SyncEmailsButton onSynced={loadData} />
             <div className="search-box">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#94a3b8" strokeWidth="1.5"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -1334,6 +1376,48 @@ function UniverseInner() {
           </div>
         </section>
       </main>
+
+      {/* Removed (soft-deleted) companies — data still in BigQuery */}
+      {hiddenPanel && (
+        <div className="sources-overlay" onClick={() => setHiddenPanel(null)}>
+          <div className="sources-panel" onClick={e => e.stopPropagation()}>
+            <div className="sources-header">
+              <div>
+                <h2>Removed from view ({hiddenPanel.count})</h2>
+                <p className="sources-subtitle">
+                  These rows are hidden from the Master Universe but remain in the BigQuery
+                  table with every field intact. Restore any of them at any time.
+                </p>
+              </div>
+              <button className="sources-close" onClick={() => setHiddenPanel(null)}>&times;</button>
+            </div>
+            {hiddenPanel.count === 0 ? (
+              <p className="an-empty">Nothing removed yet.</p>
+            ) : (
+              <>
+                <button className="sel-run-btn" style={{ marginBottom: '0.8rem' }}
+                  onClick={() => restoreHidden(hiddenPanel.companies.map((c: any) => c.name))}>
+                  Restore all {hiddenPanel.count}
+                </button>
+                <table className="dq-table">
+                  <thead><tr><th>Company</th><th>Source</th><th>Removed</th><th>By</th><th></th></tr></thead>
+                  <tbody>
+                    {hiddenPanel.companies.map((c: any) => (
+                      <tr key={c.name}>
+                        <td>{c.name}</td>
+                        <td>{c.source || '—'}</td>
+                        <td>{c.hidden_at || '—'}</td>
+                        <td>{c.hidden_by || '—'}</td>
+                        <td><button className="sel-clear-btn" onClick={() => restoreHidden([c.name])}>Restore</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Company Drawer */}
       {profileIdx != null && filteredUniverse[profileIdx] && (

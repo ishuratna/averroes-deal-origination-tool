@@ -757,3 +757,6 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .ms-opt:hover { background: #f1f5f9; }
 .ms-opt input { width: 14px; height: 14px; accent-color: #2563eb; cursor: pointer; }
 .ms-empty { font-size: 0.75rem; color: #94a3b8; padding: 0.4rem; }
+.sel-del-btn { background: #fff; border: 1px solid #fecaca; color: #b91c1c; border-radius: 8px; padding: 0.55rem 0.9rem; font-size: 0.8rem; font-weight: 800; cursor: pointer; }
+.sel-del-btn:hover:not(:disabled) { background: #fef2f2; border-color: #f87171; }
+.sel-del-btn:disabled { opacity: 0.6; cursor: default; }

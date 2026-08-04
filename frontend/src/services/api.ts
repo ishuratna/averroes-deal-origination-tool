@@ -297,6 +297,31 @@ export const dealApi = {
     return await response.json();
   },
 
+  async hideCompanies(names: string[]): Promise<any> {
+    // SOFT delete: drops them from the Master Universe view; rows stay in BigQuery.
+    const response = await apiFetch(`${API_BASE_URL}/companies/hide`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, created_by: 'Ishu Ratna' }),
+    });
+    if (!response.ok) throw new Error('Remove failed');
+    return await response.json();
+  },
+
+  async unhideCompanies(names: string[]): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/companies/unhide`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names, created_by: 'Ishu Ratna' }),
+    });
+    if (!response.ok) throw new Error('Restore failed');
+    return await response.json();
+  },
+
+  async getHiddenCompanies(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/companies/hidden`);
+    if (!response.ok) return { count: 0, companies: [] };
+    return await response.json();
+  },
+
   async getCompanyFull(name: string): Promise<any> {
     // Full record for one company (the universe list is slim at 13k rows;
     // profiles fetch their depth on open).

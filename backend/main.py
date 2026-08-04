@@ -241,16 +241,57 @@ async def get_pipeline():
 
 
 @app.get("/universe", response_model=List[dict])
-async def get_universe():
+async def get_universe(include_hidden: int = Query(0, description="1 = also return soft-deleted rows")):
     """
     Returns the complete Data Lake (Universe) from BigQuery — SLIM columns.
     List views never show the heavy blob fields; at 13k rows SELECT * OOM-
     killed the container. Profiles fetch full depth via /company/{name}/full.
     """
     try:
-        return bq_handler.get_universe_slim()
+        return bq_handler.get_universe_slim(include_hidden=bool(include_hidden))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load universe: {str(e)}")
+
+
+class HideRequest(BaseModel):
+    names: List[str]
+    created_by: str = "user"
+
+
+@app.post("/companies/hide")
+async def companies_hide(req: HideRequest):
+    """SOFT delete from the Master Universe VIEW. The rows stay in BigQuery
+    with hidden_at/hidden_by stamped, so nothing is ever lost and everything
+    is restorable via /companies/unhide."""
+    if not req.names:
+        raise HTTPException(status_code=400, detail="No companies given.")
+    n = bq_handler.hide_companies(req.names, by=req.created_by)
+    for name in req.names[:50]:
+        try:
+            bq_handler.add_activity_note(name, f"Removed from Master Universe view by {req.created_by} (soft delete: row retained in BigQuery)", req.created_by)
+        except Exception:
+            pass
+    return {"status": "Success", "hidden": n, "requested": len(req.names),
+            "note": "Rows remain in BigQuery; use /companies/unhide to restore."}
+
+
+@app.post("/companies/unhide")
+async def companies_unhide(req: HideRequest):
+    """Restore soft-deleted companies to the Master Universe view."""
+    if not req.names:
+        raise HTTPException(status_code=400, detail="No companies given.")
+    n = bq_handler.unhide_companies(req.names)
+    return {"status": "Success", "restored": n}
+
+
+@app.get("/companies/hidden")
+async def companies_hidden():
+    """Soft-deleted companies (for review/restore)."""
+    rows = [c for c in bq_handler.get_universe_slim(include_hidden=True) if c.get("hidden_at")]
+    return {"count": len(rows), "companies": [
+        {"name": c.get("name"), "source": c.get("source"), "status": c.get("status"),
+         "hidden_at": str(c.get("hidden_at") or "")[:19], "hidden_by": c.get("hidden_by")}
+        for c in rows]}
 
 
 @app.get("/company/{company_name}/full")
@@ -2365,6 +2406,8 @@ async def smartfill_eligible():
     eligible = []
 
     for c in universe:
+        if c.get("hidden_at"):
+            continue  # soft-deleted from the view: never spend AI on it
         if c.get("last_smartfill_at"):
             already_filled += 1
             continue

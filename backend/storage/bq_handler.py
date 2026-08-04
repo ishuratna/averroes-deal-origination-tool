@@ -131,6 +131,9 @@ class BigQueryHandler:
         # Smart Upload: source columns with no schema match, kept as JSON so
         # nothing a user uploads is ever lost
         ("extra_data", "STRING"),
+        # Soft delete: hidden from the Master Universe VIEW only. The row and
+        # every field stay in BigQuery forever (auditable, restorable).
+        ("hidden_at", "TIMESTAMP"), ("hidden_by", "STRING"),
         # CH v4: distress flags, filing intelligence, cap table, watch job
         ("ch_accounts_overdue", "BOOL"),
         ("ch_insolvency_summary", "STRING"),
@@ -1005,18 +1008,62 @@ class BigQueryHandler:
         "also_known_as": 200,
     }
 
-    def get_universe_slim(self) -> List[Dict]:
-        """All rows, list-view columns only: ~10x smaller than SELECT *."""
+    def get_universe_slim(self, include_hidden: bool = False) -> List[Dict]:
+        """All rows, list-view columns only: ~10x smaller than SELECT *.
+        Soft-deleted (hidden) rows are excluded from the view by default but
+        REMAIN in BigQuery; include_hidden=True returns them for review."""
         if not self.client:
             return []
         drop = ", ".join(self._SLIM_DROP + tuple(self._SLIM_TRUNC.keys()))
         trunc = ", ".join(f"SUBSTR({c}, 1, {n}) AS {c}" for c, n in self._SLIM_TRUNC.items())
+        where = "" if include_hidden else "WHERE hidden_at IS NULL"
         query = f"""
             SELECT * EXCEPT({drop}), {trunc}
             FROM `{self.table_id}`
+            {where}
             ORDER BY ingested_at DESC
         """
         return self._run_query(query)
+
+    def hide_companies(self, names: List[str], by: str = "") -> int:
+        """SOFT delete: stamp hidden_at so the row drops out of the Master
+        Universe view. Nothing is deleted from BigQuery."""
+        if not self.client or not names:
+            return 0
+        job = self.client.query(
+            f"""UPDATE `{self.table_id}`
+                SET hidden_at = CURRENT_TIMESTAMP(), hidden_by = @by
+                WHERE name IN UNNEST(@names) AND hidden_at IS NULL""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("names", "STRING", names),
+                bigquery.ScalarQueryParameter("by", "STRING", by or "user"),
+            ]))
+        job.result()
+        return int(job.num_dml_affected_rows or 0)
+
+    def unhide_companies(self, names: List[str]) -> int:
+        """Restore soft-deleted rows to the view."""
+        if not self.client or not names:
+            return 0
+        job = self.client.query(
+            f"""UPDATE `{self.table_id}`
+                SET hidden_at = NULL, hidden_by = NULL
+                WHERE name IN UNNEST(@names)""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("names", "STRING", names),
+            ]))
+        job.result()
+        return int(job.num_dml_affected_rows or 0)
+
+    def hidden_count(self) -> int:
+        if not self.client:
+            return 0
+        try:
+            rows = list(self.client.query(
+                f"SELECT COUNT(*) AS n FROM `{self.table_id}` WHERE hidden_at IS NOT NULL").result())
+            return int(rows[0].n) if rows else 0
+        except Exception:
+            return 0
 
     def get_company_full(self, name: str) -> Optional[Dict]:
         """One company, every column (profile depth on demand)."""
