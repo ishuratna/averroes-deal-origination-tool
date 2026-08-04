@@ -11,7 +11,7 @@ import Link from 'next/link';
 export type NavKey =
   | 'deal-pipeline' | 'deal-universe'
   | 'investor-pipeline' | 'investor-universe'
-  | 'chat' | 'analytics';
+  | 'chat' | 'analytics' | 'quick-tools';
 
 const GROUPS: { label: string; items: { key: NavKey; href: string; label: string; icon: React.ReactNode }[] }[] = [
   {
@@ -37,6 +37,15 @@ const GROUPS: { label: string; items: { key: NavKey; href: string; label: string
       {
         key: 'investor-universe', href: '/investors', label: 'Master Universe',
         icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>,
+      },
+    ],
+  },
+  {
+    label: 'Quick Tools',
+    items: [
+      {
+        key: 'quick-tools', href: '/tools', label: 'Company Deep Research',
+        icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M7 4.5v5M4.5 7h5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>,
       },
     ],
   },

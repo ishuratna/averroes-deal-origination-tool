@@ -297,6 +297,34 @@ export const dealApi = {
     return await response.json();
   },
 
+  // ── Quick Tools: Company Deep Research ──
+  // Identifies the company, seeds a normal universe row, then runs the SAME
+  // SmartFill workflow as the Universe buttons. Streamed (heartbeats).
+  async quickResearch(query: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/quick-research`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Research failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Research failed');
+    return data;
+  },
+
+  async quickResearchDocument(file: globalThis.File): Promise<any> {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await apiFetch(`${API_BASE_URL}/quick-research/document`, { method: 'POST', body: form });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Research failed'); } }
+    const lines = text.trim().split('\n');
+    const data = JSON.parse(lines[lines.length - 1]);
+    if (data.status === 'Error') throw new Error(data.detail || 'Research failed');
+    return data;
+  },
+
   async hideCompanies(names: string[]): Promise<any> {
     // SOFT delete: drops them from the Master Universe view; rows stay in BigQuery.
     const response = await apiFetch(`${API_BASE_URL}/companies/hide`, {

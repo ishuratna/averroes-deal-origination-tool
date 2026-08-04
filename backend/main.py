@@ -1851,6 +1851,91 @@ async def smartfill_batch(req: SmartFillBatchRequest):
     return StreamingResponse(_gen(), media_type="text/plain")
 
 
+# ── Quick Tools: Company Deep Research ──────────────────────────────────────
+# Front door to the EXISTING SmartFill workflow for a company that is not in
+# the universe yet. It identifies the company (typed name / pasted text /
+# uploaded document), seeds ONE ordinary `targets` row (source = 'Quick
+# Research', status 'Uploaded'), then calls smartfill_company() — the same
+# function the Universe buttons call, untouched. Any future SmartFill change
+# therefore applies here automatically, and this cannot alter SmartFill for
+# existing flows.
+
+class QuickResearchRequest(BaseModel):
+    query: str                      # company name, or pasted text about it
+    force: bool = False             # re-run SmartFill even if filled today
+
+
+async def _quick_research_core(ident: dict, source_note: str) -> dict:
+    from services import quick_research as qr
+    if ident.get("error"):
+        return {"status": "Error", "detail": ident["error"]}
+    name = (ident.get("name") or "").strip()
+    if not name:
+        return {"status": "Error",
+                "detail": "Could not identify a single company. " + (ident.get("notes") or "")}
+
+    existing = bq_handler.get_company_full(name)
+    if existing:
+        # Already in the universe: do NOT reseed (merge-never-overwrite). Just
+        # run the standard SmartFill on it and return the row.
+        seeded = False
+    else:
+        bq_handler.save_targets([qr.seed_row(ident, source_note)])
+        seeded = True
+
+    smartfill_error = ""
+    try:
+        await smartfill_company(name)          # ← the untouched existing workflow
+    except HTTPException as e:
+        smartfill_error = str(e.detail)
+    except Exception as e:
+        smartfill_error = str(e)[:200]
+
+    row = bq_handler.get_company_full(name) or {}
+    return {"status": "Success", "company": row, "name": name, "seeded": seeded,
+            "identification": ident, "smartfill_error": smartfill_error}
+
+
+@app.post("/quick-research")
+async def quick_research(req: QuickResearchRequest):
+    """Company name or pasted text -> identify -> seed row -> standard SmartFill."""
+    from services import quick_research as qr
+    q = (req.query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Provide a company name or some text about it.")
+
+    def _work():
+        # Short input = treat as the company name itself (no AI needed to read
+        # a name); longer input goes through identification.
+        if len(q) <= 80 and "\n" not in q:
+            ident = {"name": q, "confidence": "high", "notes": "name supplied directly"}
+        else:
+            ident = qr.identify_from_text(q)
+        import asyncio as _a
+        return _a.run(_quick_research_core(ident, f"Quick Research from typed input: {q[:120]}"))
+
+    return _stream_json(_work)
+
+
+@app.post("/quick-research/document")
+async def quick_research_document(file: UploadFile = File(...)):
+    """Document -> identify the company -> seed row -> standard SmartFill."""
+    from services import quick_research as qr
+    content = await file.read()
+    filename = file.filename or "upload"
+
+    def _work():
+        try:
+            gcs_handler.save_raw_file(content, f"quick-research/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename.replace(' ', '_')}", file.content_type)
+        except Exception as e:
+            logger.warning(f"[QuickResearch] GCS archive failed (continuing): {e}")
+        ident = qr.identify_from_document(content, filename)
+        import asyncio as _a
+        return _a.run(_quick_research_core(ident, f"Quick Research from document: {filename}"))
+
+    return _stream_json(_work)
+
+
 @app.get("/smartfill/run-by-number")
 async def smartfill_run_by_number(request: Request,
                                   numbers: str = Query(..., description="comma-separated CH registration numbers"),

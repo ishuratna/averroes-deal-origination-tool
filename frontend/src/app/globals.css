@@ -760,3 +760,11 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .sel-del-btn { background: #fff; border: 1px solid #fecaca; color: #b91c1c; border-radius: 8px; padding: 0.55rem 0.9rem; font-size: 0.8rem; font-weight: 800; cursor: pointer; }
 .sel-del-btn:hover:not(:disabled) { background: #fef2f2; border-color: #f87171; }
 .sel-del-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Quick Tools: Company Deep Research ─────────────────────────────────── */
+.qt-row { display: flex; gap: 0.7rem; align-items: flex-start; flex-wrap: wrap; }
+.qt-input { flex: 1; min-width: 320px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.85rem; font-family: inherit; resize: vertical; }
+.qt-note { font-size: 0.78rem; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.55rem 0.8rem; margin: 0.8rem 0 0; }
+.qt-ident { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.82rem; color: #334155; margin-bottom: 0.9rem; }
+.qt-muted { color: #94a3b8; font-size: 0.76rem; }
+.qt-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
