@@ -7,6 +7,7 @@ import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
 import SideNav from '../../components/SideNav';
+import MultiSelect from '../../components/MultiSelect';
 
 const INVESTOR_DEFS: Record<string, string> = {
   name: "Investor / LP name. Mined from portfolio companies' cap tables, uploaded from PitchBook LP exports, or found via AI search. Hover a name to see the description.",
@@ -38,9 +39,10 @@ function InvestorsInner() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [stageFilter, setStageFilter] = useState<string>("All");
-  const [typeFilter, setTypeFilter] = useState<string>("All");
-  const [regionFilter, setRegionFilter] = useState<string>("All");
+  // Multi-select filters: EMPTY array = "All" (no filtering on that field).
+  const [stageFilter, setStageFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [mining, setMining] = useState(false);
   const [filling, setFilling] = useState<string | null>(null);
   const [fillResult, setFillResult] = useState<any | null>(null);
@@ -289,9 +291,9 @@ function InvestorsInner() {
   const filtered = investors.filter(i => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = i.name.toLowerCase().includes(q) || (i.description || '').toLowerCase().includes(q) || (i.source_companies || '').toLowerCase().includes(q);
-    const matchesStage = stageFilter === "All" || i.status === stageFilter;
-    const matchesType = typeFilter === "All" || i.investor_type === typeFilter;
-    const matchesRegion = regionFilter === "All" || regionOf(i) === regionFilter;
+    const matchesStage = stageFilter.length === 0 || stageFilter.includes(i.status || '');
+    const matchesType = typeFilter.length === 0 || typeFilter.includes(i.investor_type || '');
+    const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     return matchesSearch && matchesStage && matchesType && matchesRegion;
   });
 
@@ -361,18 +363,9 @@ function InvestorsInner() {
         {/* Filters */}
         <section className="filter-row">
           <input className="search-input" placeholder="Search investors, portfolio companies…" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-          <select value={stageFilter} onChange={e => setStageFilter(e.target.value)} className="filter-select">
-            <option value="All">All stages</option>
-            {INVESTOR_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="filter-select">
-            <option value="All">All types</option>
-            {types.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select value={regionFilter} onChange={e => setRegionFilter(e.target.value)} className="filter-select">
-            <option value="All">All regions</option>
-            {regions.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <MultiSelect label="All stages" options={[...INVESTOR_STAGES]} selected={stageFilter} onChange={setStageFilter} />
+          <MultiSelect label="All types" options={types} selected={typeFilter} onChange={setTypeFilter} />
+          <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
         </section>
 
         {/* Table */}

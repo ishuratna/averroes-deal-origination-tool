@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { dealApi } from '../../../services/api';
 import AuthGate from '../../../components/AuthGate';
 import SideNav from '../../../components/SideNav';
+import MultiSelect from '../../../components/MultiSelect';
 
 interface Investor {
   name: string; investor_type?: string; status?: string;
@@ -36,7 +37,8 @@ function InvestorPipelineInner() {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [regionFilter, setRegionFilter] = useState('All');
+  // EMPTY array = all regions.
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [moving, setMoving] = useState('');
 
   const load = useCallback(async () => {
@@ -49,13 +51,13 @@ function InvestorPipelineInner() {
   const regions = useMemo(() => {
     const set = new Set<string>();
     investors.forEach(i => { const r = regionOf(i); if (r) set.add(r); });
-    return ['All', ...Array.from(set).sort()];
+    return Array.from(set).sort();
   }, [investors]);
 
   const visible = investors.filter(i => {
     const q = search.toLowerCase();
     const matchesSearch = !q || i.name.toLowerCase().includes(q) || (i.investor_type || '').toLowerCase().includes(q);
-    const matchesRegion = regionFilter === 'All' || regionOf(i) === regionFilter;
+    const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     return matchesSearch && matchesRegion;
   });
 
@@ -86,9 +88,7 @@ function InvestorPipelineInner() {
 
         <div className="ikb-toolbar">
           <input className="ikb-search" placeholder="Search investors..." value={search} onChange={e => setSearch(e.target.value)} />
-          <select className="ikb-select" value={regionFilter} onChange={e => setRegionFilter(e.target.value)}>
-            {regions.map(r => <option key={r} value={r}>{r === 'All' ? 'All regions' : r}</option>)}
-          </select>
+          <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
         </div>
 
         {loading ? <p className="an-empty">Loading investors…</p> : (

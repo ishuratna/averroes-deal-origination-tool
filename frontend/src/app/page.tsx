@@ -85,10 +85,10 @@ interface SavedView {
   id: string;
   name: string;
   filters: {
-    filterSaaS: 'all' | 'high' | 'medium';
-    filterOwnership: 'all' | 'bootstrapped' | 'angel' | 'vc';
-    filterGrowth: 'all' | 'fast' | 'steady';
-    filterStage: 'all' | string;
+    filterSaaS: string[] | string;
+    filterOwnership: string[] | string;
+    filterGrowth: string[] | string;
+    filterStage: string[] | string;
     searchQuery: string;
   };
 }
@@ -109,10 +109,13 @@ function HomeInner() {
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('kanban');
 
   // Filter states
-  const [filterSaaS, setFilterSaaS] = useState<'all' | 'high' | 'medium'>('all');
-  const [filterOwnership, setFilterOwnership] = useState<'all' | 'bootstrapped' | 'angel' | 'vc'>('all');
-  const [filterGrowth, setFilterGrowth] = useState<'all' | 'fast' | 'steady'>('all');
-  const [filterStage, setFilterStage] = useState<'all' | string>('all');
+  // Multi-select filters: EMPTY array = "All" (no filtering on that field).
+  // Options are additive (union), so e.g. Angel + VC shows both.
+  const [filterSaaS, setFilterSaaS] = useState<string[]>([]);
+  const [filterOwnership, setFilterOwnership] = useState<string[]>([]);
+  const [filterGrowth, setFilterGrowth] = useState<string[]>([]);
+  const [filterStage, setFilterStage] = useState<string[]>([]);
+  const toggleIn = (arr: string[], v: string) => arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
 
   // Deal lifecycle states
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
@@ -230,10 +233,11 @@ function HomeInner() {
   };
 
   const handleLoadView = (view: SavedView) => {
-    setFilterSaaS(view.filters.filterSaaS);
-    setFilterOwnership(view.filters.filterOwnership);
-    setFilterGrowth(view.filters.filterGrowth);
-    setFilterStage(view.filters.filterStage);
+    const asArr = (v: any) => Array.isArray(v) ? v : (!v || v === 'all' || v === 'All' ? [] : [v]);
+    setFilterSaaS(asArr(view.filters.filterSaaS));
+    setFilterOwnership(asArr(view.filters.filterOwnership));
+    setFilterGrowth(asArr(view.filters.filterGrowth));
+    setFilterStage(asArr(view.filters.filterStage));
     setSearchQuery(view.filters.searchQuery);
     setActiveViewId(view.id);
   };
@@ -291,25 +295,23 @@ function HomeInner() {
       (c.sector && c.sector.toLowerCase().includes(q)) ||
       (c.description && c.description.toLowerCase().includes(q));
     let matchesSaaS = true;
-    if (filterSaaS !== 'all') {
+    if (filterSaaS.length > 0) {
       const level = isSaaSOrB2B(c);
-      if (filterSaaS === 'high') matchesSaaS = level === 'high';
-      else if (filterSaaS === 'medium') matchesSaaS = level === 'high' || level === 'medium';
+      matchesSaaS = filterSaaS.some(f => f === 'high' ? level === 'high' : level === 'high' || level === 'medium');
     }
     let matchesOwnership = true;
-    if (filterOwnership !== 'all') matchesOwnership = ownershipCategory(c) === filterOwnership;
+    if (filterOwnership.length > 0) matchesOwnership = filterOwnership.includes(ownershipCategory(c));
     let matchesGrowth = true;
-    if (filterGrowth !== 'all') {
+    if (filterGrowth.length > 0) {
       const level = growthCategory(c);
-      if (filterGrowth === 'fast') matchesGrowth = level === 'fast';
-      else if (filterGrowth === 'steady') matchesGrowth = level === 'fast' || level === 'steady';
+      matchesGrowth = filterGrowth.some(f => f === 'fast' ? level === 'fast' : level === 'fast' || level === 'steady');
     }
     let matchesStage = true;
-    if (filterStage !== 'all') matchesStage = c.status === filterStage;
+    if (filterStage.length > 0) matchesStage = filterStage.includes(c.status);
     return matchesSearch && matchesSaaS && matchesOwnership && matchesGrowth && matchesStage;
   });
 
-  const activeFilterCount = [filterSaaS !== 'all', filterOwnership !== 'all', filterGrowth !== 'all', filterStage !== 'all'].filter(Boolean).length;
+  const activeFilterCount = [filterSaaS.length > 0, filterOwnership.length > 0, filterGrowth.length > 0, filterStage.length > 0].filter(Boolean).length;
 
   return (
     <div className="layout-wrapper">
@@ -359,9 +361,9 @@ function HomeInner() {
           {PIPELINE_STAGES.map((stage, i) => (
             <button
               key={stage}
-              className={`stage-pill ${filterStage === stage ? 'active' : ''}`}
+              className={`stage-pill ${filterStage.includes(stage) ? 'active' : ''}`}
               style={{ '--stage-color': stageColor(stage) } as React.CSSProperties}
-              onClick={() => { setFilterStage(filterStage === stage ? 'all' : stage); setActiveViewId(null); }}
+              onClick={() => { setFilterStage(toggleIn(filterStage, stage)); setActiveViewId(null); }}
             >
               <span className="stage-count">{stageCounts[stage] || 0}</span>
               <span className="stage-name">{STAGE_LABELS[stage]}</span>
@@ -399,7 +401,8 @@ function HomeInner() {
               <label className="filter-label"><InfoTip label="B2B SaaS Fit" tip={DEFS.filterSaaS} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'high', l: 'B2B SaaS' }, { v: 'medium', l: 'B2B + Tech' }].map(o => (
-                  <button key={o.v} className={`filter-btn ${filterSaaS === o.v ? 'active' : ''}`} onClick={() => { setFilterSaaS(o.v as any); setActiveViewId(null); }}>{o.l}</button>
+                  <button key={o.v} className={`filter-btn ${o.v === 'all' ? (filterSaaS.length === 0 ? 'active' : '') : (filterSaaS.includes(o.v) ? 'active' : '')}`}
+                    onClick={() => { setFilterSaaS(o.v === 'all' ? [] : toggleIn(filterSaaS, o.v)); setActiveViewId(null); }}>{o.l}</button>
                 ))}
               </div>
             </div>
@@ -407,7 +410,8 @@ function HomeInner() {
               <label className="filter-label"><InfoTip label="Ownership" tip={DEFS.filterOwnership} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'bootstrapped', l: 'Bootstrapped' }, { v: 'angel', l: 'Angel' }, { v: 'vc', l: 'VC-backed' }].map(o => (
-                  <button key={o.v} className={`filter-btn ${filterOwnership === o.v ? 'active' : ''}`} onClick={() => { setFilterOwnership(o.v as any); setActiveViewId(null); }}>{o.l}</button>
+                  <button key={o.v} className={`filter-btn ${o.v === 'all' ? (filterOwnership.length === 0 ? 'active' : '') : (filterOwnership.includes(o.v) ? 'active' : '')}`}
+                    onClick={() => { setFilterOwnership(o.v === 'all' ? [] : toggleIn(filterOwnership, o.v)); setActiveViewId(null); }}>{o.l}</button>
                 ))}
               </div>
             </div>
@@ -415,7 +419,8 @@ function HomeInner() {
               <label className="filter-label"><InfoTip label="Growth" tip={DEFS.filterGrowth} /></label>
               <div className="filter-options">
                 {[{ v: 'all', l: 'All' }, { v: 'fast', l: 'Fast Growth' }, { v: 'steady', l: 'Growing' }].map(o => (
-                  <button key={o.v} className={`filter-btn ${filterGrowth === o.v ? 'active' : ''}`} onClick={() => { setFilterGrowth(o.v as any); setActiveViewId(null); }}>{o.l}</button>
+                  <button key={o.v} className={`filter-btn ${o.v === 'all' ? (filterGrowth.length === 0 ? 'active' : '') : (filterGrowth.includes(o.v) ? 'active' : '')}`}
+                    onClick={() => { setFilterGrowth(o.v === 'all' ? [] : toggleIn(filterGrowth, o.v)); setActiveViewId(null); }}>{o.l}</button>
                 ))}
               </div>
             </div>
@@ -435,7 +440,7 @@ function HomeInner() {
                   <button className="save-view-btn" onClick={() => setShowSaveView(!showSaveView)}>
                     Save View
                   </button>
-                  <button className="clear-btn" onClick={() => { setFilterSaaS('all'); setFilterOwnership('all'); setFilterGrowth('all'); setFilterStage('all'); setSearchQuery(''); setActiveViewId(null); }}>
+                  <button className="clear-btn" onClick={() => { setFilterSaaS([]); setFilterOwnership([]); setFilterGrowth([]); setFilterStage([]); setSearchQuery(''); setActiveViewId(null); }}>
                     Clear
                   </button>
                 </>

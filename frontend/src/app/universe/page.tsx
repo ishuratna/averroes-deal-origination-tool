@@ -11,6 +11,7 @@ import OutreachModal from "../../components/OutreachModal";
 import SyncEmailsButton from "../../components/SyncEmailsButton";
 import { outreachButtonState } from "../../lib/outreach";
 import SideNav from '../../components/SideNav';
+import MultiSelect from '../../components/MultiSelect';
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -50,7 +51,8 @@ const ALL_SOURCES: SourceDef[] = [
 interface SavedView {
   id: string;
   name: string;
-  filters: { vertical: string; region: string; status: string; searchQuery: string; };
+  // Legacy views may hold strings; loader normalises to arrays.
+  filters: { vertical: string[] | string; region: string[] | string; status: string[] | string; searchQuery: string; };
 }
 
 // ── Source stats type ───────────────────────────────────────────────────────
@@ -152,7 +154,8 @@ function UniverseInner() {
   const bulkCancelRef = useRef(false);
 
   // Filters
-  const [filters, setFilters] = useState({ vertical: "All", region: "All", status: "All" });
+  // Multi-select filters: EMPTY array = "All" (no filtering on that field).
+  const [filters, setFilters] = useState<{ vertical: string[]; region: string[]; status: string[] }>({ vertical: [], region: [], status: [] });
   const [tablePage, setTablePage] = useState(1);
   // ── Row selection -> SmartFill only what is ticked ──────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -426,10 +429,15 @@ function UniverseInner() {
   const filteredUniverse = universe.filter(c => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = c.name.toLowerCase().includes(q) || (c.sector && c.sector.toLowerCase().includes(q)) || (c.description && c.description.toLowerCase().includes(q));
-    const matchesVertical = filters.vertical === "All" || (c.sector && c.sector.toLowerCase().includes(filters.vertical.toLowerCase()));
-    const matchesRegion = filters.region === "All" || (c.region && c.region.toLowerCase().includes(filters.region.toLowerCase()));
-    const matchesUKIE = filters.region === "UK/Ireland" && (c.region?.toLowerCase().includes("uk") || c.region?.toLowerCase().includes("ireland") || c.region?.toLowerCase().includes("united kingdom"));
-    const matchesStatus = filters.status === "All" || c.status === filters.status;
+    const sect = (c.sector || '').toLowerCase();
+    const reg = (c.region || '').toLowerCase();
+    const matchesVertical = filters.vertical.length === 0 || filters.vertical.some(v => v === 'All' || sect.includes(v.toLowerCase()));
+    const matchesRegion = filters.region.length === 0 || filters.region.some(r =>
+      r === 'All' ? true
+      : r === 'UK/Ireland' ? (reg.includes('uk') || reg.includes('ireland') || reg.includes('united kingdom'))
+      : reg.includes(r.toLowerCase()));
+    const matchesUKIE = false;
+    const matchesStatus = filters.status.length === 0 || filters.status.some(st => st === 'All' || c.status === st);
     return matchesSearch && (matchesRegion || matchesUKIE) && matchesVertical && matchesStatus;
   });
 
@@ -446,7 +454,7 @@ function UniverseInner() {
   const openOutreach = (company: any) => setOutreachTarget(company);
 
   // Saved views
-  const activeFilterCount = [filters.vertical !== 'All', filters.region !== 'All', filters.status !== 'All', searchQuery !== ''].filter(Boolean).length;
+  const activeFilterCount = [filters.vertical.length > 0, filters.region.length > 0, filters.status.length > 0, searchQuery !== ''].filter(Boolean).length;
 
   // ── Table pagination ────────────────────────────────────────────────────
   // The table used to render EVERY filtered row; at 13k companies that is
@@ -476,7 +484,8 @@ function UniverseInner() {
   };
 
   const handleLoadView = (view: SavedView) => {
-    setFilters({ vertical: view.filters.vertical, region: view.filters.region, status: view.filters.status });
+    const asArr = (v: any) => Array.isArray(v) ? v : (!v || v === 'All' ? [] : [v]);
+    setFilters({ vertical: asArr(view.filters.vertical), region: asArr(view.filters.region), status: asArr(view.filters.status) });
     setSearchQuery(view.filters.searchQuery);
     setActiveViewId(view.id);
   };
@@ -1086,27 +1095,27 @@ function UniverseInner() {
           <div className="filter-row">
             <div className="filter-group">
               <label>Vertical</label>
-              <select value={filters.vertical} onChange={(e) => { setFilters({...filters, vertical: e.target.value}); setActiveViewId(null); }}>
-                {verticals.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
+              <MultiSelect label="All verticals" options={verticals.filter(v => v !== 'All')}
+                selected={filters.vertical}
+                onChange={next => { setFilters({ ...filters, vertical: next }); setActiveViewId(null); }} />
             </div>
             <div className="filter-group">
               <label>Geography</label>
-              <select value={filters.region} onChange={(e) => { setFilters({...filters, region: e.target.value}); setActiveViewId(null); }}>
-                {regions.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+              <MultiSelect label="All geographies" options={regions.filter(r => r !== 'All')}
+                selected={filters.region}
+                onChange={next => { setFilters({ ...filters, region: next }); setActiveViewId(null); }} />
             </div>
             <div className="filter-group">
               <label>Status</label>
-              <select value={filters.status} onChange={(e) => { setFilters({...filters, status: e.target.value}); setActiveViewId(null); }}>
-                {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <MultiSelect label="All statuses" options={statuses.filter(x => x !== 'All')}
+                selected={filters.status} optionLabel={displayStatus}
+                onChange={next => { setFilters({ ...filters, status: next }); setActiveViewId(null); }} />
             </div>
             <div className="filter-actions">
               {activeFilterCount > 0 && (
                 <>
                   <button className="save-view-btn" onClick={() => setShowSaveView(!showSaveView)}>Save View</button>
-                  <button className="reset-btn" onClick={() => { setFilters({vertical: "All", region: "All", status: "All"}); setSearchQuery(''); setActiveViewId(null); }}>Reset</button>
+                  <button className="reset-btn" onClick={() => { setFilters({ vertical: [], region: [], status: [] }); setSearchQuery(''); setActiveViewId(null); }}>Reset</button>
                 </>
               )}
             </div>
