@@ -107,6 +107,16 @@ export default function OutreachModal({
                 <label>To</label>
                 <input type="email" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
               </div>
+              {/* The waterfall does not always land on the founder. Say so here,
+                  at the moment of sending, not only on the company card. */}
+              {company.contact_email_kind && company.contact_email_kind !== 'founder' && (
+                <p className="om-recip-warn">
+                  {company.contact_email_kind === 'colleague'
+                    ? `This is ${company.contact_email_name || 'someone'} who works at ${company.name}, not the founder. The email is addressed to them.`
+                    : `This is the company's shared enquiries inbox. The email is addressed to ${company.contact_name || 'the founder'} so whoever reads it can pass it on.`}
+                  {company.contact_email_source ? ` (${company.contact_email_source})` : ''}
+                </p>
+              )}
               <div className="form-row">
                 <label>Subject</label>
                 <input type="text" value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} />

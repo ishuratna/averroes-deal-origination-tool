@@ -526,6 +526,21 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-contact-card { display: flex; align-items: center; gap: 0.9rem; }
 .cp-avatar-lg { width: 44px; height: 44px; border-radius: 50%; background: #eff6ff; color: #2563eb; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.85rem; flex-shrink: 0; }
 
+/* Sending to someone other than the founder: flagged in the outreach modal. */
+.om-recip-warn { margin: -0.3rem 0 0.6rem; padding: 0.5rem 0.7rem; border-radius: 8px;
+  background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 0.75rem; line-height: 1.5; }
+
+/* Contact waterfall v4: who the stored address belongs to. Colour carries the
+   warning — a colleague or a shared inbox is not the founder. */
+.cp-recipient { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.cp-recip-chip { font-size: 0.62rem; font-weight: 800; padding: 0.12rem 0.5rem; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.03em; background: #f1f5f9; color: #475569; }
+.cp-recip-chip.founder { background: #dcfce7; color: #15803d; }
+.cp-recip-chip.colleague { background: #fef3c7; color: #b45309; }
+.cp-recip-chip.generic { background: #e0e7ff; color: #4338ca; }
+.cp-recip-prov { font-size: 0.68rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 460px; }
+
 .cp-email-item { padding: 0.7rem 0; border-bottom: 1px solid #f1f5f9; }
 .cp-email-item:last-child { border-bottom: none; }
 .cp-email-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }

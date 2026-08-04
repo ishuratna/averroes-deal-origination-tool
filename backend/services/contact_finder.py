@@ -54,13 +54,16 @@ def _extract_emails(html: str) -> List[str]:
 def find_site_emails(website: str, contact_name: str = "") -> Dict:
     """
     Scrape the company's own site for published emails.
-    Returns {"email": best_pick or "", "source": page_url, "all": [...]} —
-    personal addresses at the company domain beat generic ones; the contact's
-    first/last name (when known) beats other personal addresses.
+    Returns {"email": best_pick or "", "source": page_url, "all": [...],
+             "pages": {email: page_url}} — personal addresses at the company
+    domain beat generic ones; the contact's first/last name (when known) beats
+    other personal addresses. `pages` lets the caller cite the exact page for
+    ANY address, not just the top pick (the waterfall needs that for the
+    colleague and outreach fallbacks).
     """
     domain = _clean_domain(website)
     if not domain:
-        return {"email": "", "source": "", "all": []}
+        return {"email": "", "source": "", "all": [], "pages": {}}
 
     base = f"https://{domain}"
     found: Dict[str, str] = {}  # email -> page found on
@@ -76,7 +79,7 @@ def find_site_emails(website: str, contact_name: str = "") -> Dict:
             continue
 
     if not found:
-        return {"email": "", "source": "", "all": []}
+        return {"email": "", "source": "", "all": [], "pages": {}}
 
     # Rank: same-domain first; then name-matching personal > personal > generic
     name_bits = [w for w in re.sub(r"[^a-z ]", "", (contact_name or "").lower()).split() if len(w) > 2]
@@ -90,20 +93,123 @@ def find_site_emails(website: str, contact_name: str = "") -> Dict:
 
     best = sorted(found.keys(), key=score, reverse=True)[0]
     logger.info(f"[ContactFinder] {domain}: {len(found)} email(s) on site; picked {best}")
-    return {"email": best, "source": found[best], "all": sorted(found.keys())}
+    return {"email": best, "source": found[best], "all": sorted(found.keys()), "pages": dict(found)}
 
 
-# ── Step 3: mailbox verification (Hunter.io email-verifier) ─────────────────
-# GCP blocks outbound SMTP, so server-level mailbox checks go through a
-# verifier API. Configure with HUNTER_API_KEY (hunter.io, free tier available).
-# Without a key, verification reports "unavailable" and the waterfall falls
-# back to found-in-source behaviour (patterns are NEVER stored unverified).
+# ── Who does an address belong to? ─────────────────────────────────────────
+# The waterfall is FOUNDER-FIRST, and the reason this classification exists is
+# that a PERSONAL address is not automatically the FOUNDER'S address. The old
+# v3 waterfall returned on the first personal address it saw, so a sales
+# manager's email ended the search and the founder was never pursued. Now
+# every address is labelled, non-founder addresses are only ever HELD as
+# fallbacks, and the ladder keeps climbing towards the founder.
 
 import os as _os
 
+_FOUNDER_ROLE_PREFIXES = ("ceo", "founder", "founders", "cofounder", "co-founder",
+                          "md", "managingdirector", "managing.director", "chairman")
+# Which shared inbox to prefer if we end up writing to one: the addresses a
+# company actually watches for inbound enquiries, before internal functions.
+_OUTREACH_PREFERENCE = ("hello", "hi", "info", "contact", "enquiries", "inquiries",
+                        "office", "team", "admin", "sales", "support", "press")
+
+
+def is_generic_address(email: str) -> bool:
+    local = (email or "").split("@")[0].lower()
+    return any(local == g or local.startswith(g) for g in _GENERIC_PREFIXES)
+
+
+def _name_bits(name: str) -> List[str]:
+    return [w for w in re.sub(r"[^a-z ]", " ", (name or "").lower()).split() if len(w) > 1]
+
+
+def _local_tokens(email: str) -> List[str]:
+    local = (email or "").split("@")[0].lower()
+    return [t for t in re.split(r"[._\-+0-9]+", local) if t]
+
+
+def is_founder_role_address(email: str) -> bool:
+    """ceo@, founder@, md@ — a ROLE mailbox that reaches the person we want.
+    Published by the company, so it is evidence, not a guess; it ranks below a
+    named founder address but above any guesswork."""
+    local = (email or "").split("@")[0].lower().replace(" ", "")
+    return any(local == p or local.startswith(p) for p in _FOUNDER_ROLE_PREFIXES)
+
+
+def founder_match_strength(email: str, person_name: str) -> int:
+    """How strongly an address carries this person's name. 2 = first AND last
+    (e.g. john.smith / jsmith for John Smith), 1 = one of the two, 0 = neither.
+    Reported honestly downstream: a first-name-only match could be a namesake."""
+    local = (email or "").split("@")[0].lower()
+    bits = _name_bits(person_name)
+    if not local or not bits:
+        return 0
+    first = bits[0]
+    last = bits[-1] if len(bits) > 1 else ""
+    tokens = _local_tokens(email)
+    squashed = re.sub(r"[^a-z]", "", local)
+    if last:
+        both_forms = (f"{first}{last}", f"{first}.{last}", f"{first[0]}{last}",
+                      f"{first}{last[0]}", f"{last}{first[0]}", f"{last}{first}")
+        if squashed in [re.sub(r"[^a-z]", "", f) for f in both_forms]:
+            return 2
+        if first in tokens and last in tokens:
+            return 2
+        if first in tokens or last in tokens:
+            return 1
+    if first in tokens or squashed == first:
+        return 1
+    return 0
+
+
+def classify_address(email: str, founder_name: str = "") -> str:
+    """founder | founder_role | colleague | generic | personal_unknown.
+    'personal_unknown' is the honest label for a personal address when we have
+    no founder name to compare against — we cannot claim it is the founder's,
+    and we cannot guess an alternative either."""
+    if not email:
+        return ""
+    if is_generic_address(email):
+        return "generic"
+    if is_founder_role_address(email):
+        return "founder_role"
+    if not (founder_name or "").strip():
+        return "personal_unknown"
+    return "founder" if founder_match_strength(email, founder_name) > 0 else "colleague"
+
+
+def display_name_from_address(email: str) -> str:
+    """Best-effort human name from a personal address, used ONLY to greet a
+    colleague by their own name. Returns '' when the local part does not
+    decompose into something plainly name-like — we would rather write
+    'Hello,' than invent a name."""
+    tokens = [t for t in _local_tokens(email) if t.isalpha()]
+    tokens = [t for t in tokens if len(t) > 2]
+    if len(tokens) >= 2:
+        return " ".join(t.capitalize() for t in tokens[:2])
+    if len(tokens) == 1 and not is_generic_address(email) and not is_founder_role_address(email):
+        return tokens[0].capitalize()
+    return ""
+
+
+# ── Hunter.io: verifier + email-finder ─────────────────────────────────────
+# GCP blocks outbound SMTP, so mailbox checks go through Hunter. Configure with
+# HUNTER_API_KEY. Two different endpoints, two different jobs:
+#   email-verifier — "does THIS address exist?" (used to test our guesses)
+#   email-finder   — "what is THIS PERSON's address at this domain?" (returns
+#                    what Hunter has crawled from public sources, with a
+#                    confidence score and the source URLs). That is EVIDENCE,
+#                    so it sits above blind pattern guessing in the ladder.
+# Without a key, both report unavailable and the ladder falls back to what it
+# found in sources.
 
 def verify_email(email: str) -> str:
-    """Returns: deliverable | undeliverable | catch_all | unknown | unavailable"""
+    """Returns: deliverable | undeliverable | catch_all | unknown | unavailable
+
+    catch_all means the domain answers "yes" to EVERY address, so the check
+    proves nothing about this specific mailbox. Policy (Ishu, agreed): we still
+    send to the guess on those domains, but we record it as unconfirmed.
+    """
     api_key = _os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", "")
     if not api_key or not email:
         return "unavailable"
@@ -124,119 +230,298 @@ def verify_email(email: str) -> str:
         return "unknown"
 
 
-def _pattern_candidates(contact_name: str, domain: str, observed: List[str]) -> List[str]:
+def find_email_by_name(domain: str, person_name: str) -> Dict:
+    """Hunter email-finder: domain + person -> the address Hunter has on record.
+
+    Returns {"email", "score", "sources": n, "url": first source url}.
+    `sources` > 0 means Hunter has actually seen this address published
+    somewhere, which we treat as found-in-source. With a score but no sources
+    it is Hunter's own prediction, so we push it into the verify queue
+    instead of trusting it outright. Costs one Hunter request.
     """
-    Step 4: infer candidates from the contact's name. If other addresses at
-    the domain are observed, mirror their pattern first; then common formats.
-    These are GUESSES — the caller must verify before storing any of them.
+    api_key = _os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", "")
+    bits = _name_bits(person_name)
+    if not api_key or not domain or not bits:
+        return {"email": "", "score": 0, "sources": 0, "url": ""}
+    params = {"domain": domain, "api_key": api_key, "first_name": bits[0]}
+    if len(bits) > 1:
+        params["last_name"] = bits[-1]
+    try:
+        resp = requests.get("https://api.hunter.io/v2/email-finder", params=params, timeout=15)
+        data = (resp.json() or {}).get("data", {}) or {}
+        srcs = data.get("sources") or []
+        return {"email": (data.get("email") or "").strip().lower(),
+                "score": int(data.get("score") or 0),
+                "sources": len(srcs),
+                "url": (srcs[0].get("uri") if srcs and isinstance(srcs[0], dict) else "") or ""}
+    except Exception as e:
+        logger.warning(f"[ContactFinder] email-finder failed for {person_name}@{domain}: {e}")
+        return {"email": "", "score": 0, "sources": 0, "url": ""}
+
+
+# ── Pattern learning ──────────────────────────────────────────────────────
+# We learn the company's address SHAPE from an address we already found, then
+# render the FOUNDER's name into that shape. This is the part that was dead
+# code in v3: the branch meant to mirror a colleague's pattern fell through to
+# `pass`, so guessing was really just a fixed list in a blind order.
+
+_DEFAULT_SHAPES = ["first.last", "first", "flast", "firstlast", "f.last"]
+_MAX_VERIFY = 5
+
+
+def observed_shape(email: str) -> Optional[str]:
+    """Infer the shape of a company's addresses from ONE observed address,
+    without knowing whose name it is. 'john.smith' -> first.last,
+    'j.smith' -> f.last. A single unseparated token stays ambiguous (None):
+    'jsmith', 'johns' and 'john' cannot be told apart without the name."""
+    local = (email or "").split("@")[0].lower()
+    for sep, shape in ((".", "first.last"), ("_", "first_last"), ("-", "first-last")):
+        if sep in local:
+            a, _, b = local.partition(sep)
+            if not (a and b) or not (a.isalpha() and b.isalpha()):
+                return None
+            if sep == ".":
+                if len(a) == 1:
+                    return "f.last"
+                if len(b) == 1:
+                    return "first.l"
+            return shape
+    return None
+
+
+def render_shape(shape: str, first: str, last: str) -> str:
+    if not first:
+        return ""
+    if not last:
+        return first if shape == "first" else ""
+    return {
+        "first.last": f"{first}.{last}",
+        "first_last": f"{first}_{last}",
+        "first-last": f"{first}-{last}",
+        "f.last": f"{first[0]}.{last}",
+        "first.l": f"{first}.{last[0]}",
+        "first": first,
+        "flast": f"{first[0]}{last}",
+        "firstlast": f"{first}{last}",
+        "firstl": f"{first}{last[0]}",
+    }.get(shape, "")
+
+
+def _guess_candidates(founder_name: str, domain: str, observed: List[str]) -> List[tuple]:
+    """Founder-address candidates as (email, why), best first.
+
+    Shapes learned from colleagues at THIS domain come first (most frequently
+    observed shape wins), then the common formats. Guesses only — the caller
+    must test them.
     """
-    bits = [w for w in re.sub(r"[^a-z ]", "", (contact_name or "").lower()).split() if w]
-    if len(bits) < 1 or not domain:
+    bits = _name_bits(founder_name)
+    if not bits or not domain:
         return []
     first, last = bits[0], (bits[-1] if len(bits) > 1 else "")
-    cands: List[str] = []
 
-    def add(local):
-        if local:
-            e = f"{local}@{domain}"
-            if e not in cands:
-                cands.append(e)
-
-    # Mirror the observed pattern at this domain (from a colleague's address)
+    counts: Dict[str, int] = {}
     for obs in observed or []:
-        local, _, dom = obs.partition("@")
-        if dom != domain or is_generic_address(obs):
+        if obs.split("@")[-1].lower() != domain or is_generic_address(obs) or is_founder_role_address(obs):
             continue
-        if "." in local and last:
-            add(f"{first}.{last}")
-        elif last and local.startswith(local[:1]) and len(local) > 1 and not local.isalpha() is False:
-            pass  # ambiguous; common formats below cover it
-    if last:
-        add(f"{first}.{last}")
-        add(first)
-        add(f"{first[0]}{last}")
-        add(f"{first}{last}")
-        add(f"{first[0]}.{last}")
-    else:
-        add(first)
-    return cands[:4]
+        shape = observed_shape(obs)
+        if shape:
+            counts[shape] = counts.get(shape, 0) + 1
+    learned = sorted(counts, key=lambda s: -counts[s])
 
+    out: List[tuple] = []
+    seen = set()
+
+    def add(shape: str, why: str):
+        local = render_shape(shape, first, last)
+        if not local:
+            return
+        email = f"{local}@{domain}"
+        if email in seen:
+            return
+        seen.add(email)
+        out.append((email, why))
+
+    for s in learned:
+        add(s, f"matches the {s} pattern used by other people at this company")
+    for s in _DEFAULT_SHAPES:
+        add(s, f"common {s} format")
+    return out[:_MAX_VERIFY]
+
+
+# ── The waterfall ─────────────────────────────────────────────────────────
 
 def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_source: str,
                           retry_fn=None) -> Dict:
     """
-    The contact waterfall, in strict priority order:
-      1. personal email found on the WEB (the AI first-pass result)
-      2. the company's OWN website (personal, then generic)
-      3. retry ladder — one sharper grounded search (only if 1-2 yield nothing usable)
-      4. name-pattern inference (only ever stored if verified)
-    VERIFICATION POLICY: found-in-source candidates (steps 1-3) are accepted
-    as-is — they exist in evidence, and verifier credits are saved for where
-    they add real information. Mailbox verification runs ONLY at step 4:
-    a pattern guess must PROVE a mailbox exists (strict deliverable) or it is
-    discarded. Without a verifier key, step 4 is skipped entirely.
+    FOUNDER-FIRST contact waterfall (v4). Rungs, in order:
+
+      1. A NAMED FOUNDER address already found in a source (grounded web search
+         result, or the company's own site).
+      2. RETRY LADDER — one sharper grounded search for the founder.
+      3. HUNTER EMAIL-FINDER — the address Hunter has crawled for this person.
+         With public sources behind it, that is evidence, so it is accepted.
+      4. FOUNDER ROLE MAILBOX published by the company (ceo@, founder@).
+      5. PATTERN GUESS, tested with Hunter: shapes learned from colleagues at
+         the same domain first, then common formats. A strict `deliverable`
+         accepts it. On a catch-all domain (every address "passes") we accept
+         the best-ranked guess but record it as unconfirmed — Ishu's call.
+      6. A COLLEAGUE: a real person who works there, found in a source.
+      7. The company's OUTREACH inbox (hello@ / info@ / contact@).
+
+    THE POINT OF v4: rungs 6 and 7 are only ever HELD as fallbacks. Finding a
+    colleague's address no longer ends the search — we keep working on the
+    founder, and we use the colleague's address to LEARN the company's email
+    pattern (rung 5), which is exactly what makes the guess worth testing.
+
     retry_fn: zero-arg callable returning {"contact_email","email_source"}.
-    Returns {"email", "source", "verification"}.
+
+    Returns {"email", "source", "verification", "kind", "recipient_name",
+             "step", "founder_guess", "founder_guess_status"} where kind is
+    founder | colleague | generic and recipient_name is who the To: belongs to
+    ('' for a shared inbox). Both drive the greeting in outreach_service.
     """
-    site = find_site_emails(website, contact_name)
-    domain = _clean_domain(website) or (ai_email.split("@")[-1] if "@" in (ai_email or "") else "")
     ai_email = (ai_email or "").strip().lower()
-
+    site = find_site_emails(website, contact_name)
+    pages = site.get("pages", {}) or {}
+    domain = _clean_domain(website) or (ai_email.split("@")[-1] if "@" in ai_email else "")
     verifier_on = bool(_os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", ""))
+    founder_named = bool((contact_name or "").strip())
 
-    def _found(email: str, source: str):
-        return {"email": email, "source": source, "verification": "found in source"}
+    def _out(email, source, verification, kind, step, recipient_name="",
+             guess="", guess_status=""):
+        return {"email": email or "", "source": source or "", "verification": verification,
+                "kind": kind, "recipient_name": recipient_name, "step": step,
+                "founder_guess": guess, "founder_guess_status": guess_status}
 
-    # Step 1: personal email found on the web (AI first pass)
-    if ai_email and not is_generic_address(ai_email):
-        return _found(ai_email, ai_source or "AI web search")
+    # Everything seen so far, each with a citation for where it came from.
+    seen: List[tuple] = []
+    if ai_email:
+        seen.append((ai_email, ai_source or "AI web search"))
+    for e in site.get("all", []):
+        seen.append((e, f"company website ({pages.get(e) or website})"))
 
-    # Step 2: the company's own website — personal first, then one generic
-    if site.get("email") and not is_generic_address(site["email"]):
-        return _found(site["email"], f"company website ({site['source']})")
-    site_generic = next((e for e in site.get("all", []) if is_generic_address(e)), "")
-    ai_generic = ai_email if (ai_email and is_generic_address(ai_email)) else ""
+    def _best(kind_wanted: str) -> tuple:
+        """Highest-quality address of a given kind, with its citation."""
+        cands = [(e, s) for e, s in seen if classify_address(e, contact_name) == kind_wanted]
+        if not cands:
+            return ("", "")
+        if kind_wanted in ("founder", "personal_unknown"):
+            cands.sort(key=lambda p: -founder_match_strength(p[0], contact_name))
+        elif kind_wanted == "colleague":
+            # A local part we can turn into a name lets us greet them properly.
+            cands.sort(key=lambda p: (bool(display_name_from_address(p[0])),
+                                      p[0].split("@")[-1] == domain), reverse=True)
+        elif kind_wanted == "generic":
+            def rank(e):
+                local = e.split("@")[0].lower()
+                for i, p in enumerate(_OUTREACH_PREFERENCE):
+                    if local.startswith(p):
+                        return (0 if e.split("@")[-1] == domain else 1, i)
+                return (2, 99)
+            cands.sort(key=lambda p: rank(p[0]))
+        return cands[0]
 
-    # Step 3: retry ladder — one sharper grounded search (before settling for a generic)
+    # ── Rung 1: a named founder address that already exists in a source ────
+    f_email, f_src = _best("founder")
+    if f_email:
+        strength = founder_match_strength(f_email, contact_name)
+        note = ("found in source, matches the founder's name" if strength == 2
+                else "found in source, matches the founder's first name only")
+        return _out(f_email, f_src, note, "founder", "1. founder found in source", contact_name)
+
+    # No founder name on record: we cannot tell a founder's address from a
+    # colleague's, and we cannot guess one either. Take the personal address
+    # and say plainly what we do and do not know.
+    if not founder_named:
+        p_email, p_src = _best("personal_unknown")
+        if p_email:
+            return _out(p_email, p_src, "found in source; no founder name on record, so we cannot confirm whose address this is",
+                        "colleague", "1. personal address found (founder unknown)",
+                        display_name_from_address(p_email))
+
+    # ── Rung 2: retry ladder — one sharper grounded search ────────────────
     retry_email = ""
-    if retry_fn:
+    if retry_fn and founder_named:
         try:
             retry = retry_fn() or {}
             retry_email = (retry.get("contact_email") or "").strip().lower()
-            if retry_email and not is_generic_address(retry_email):
-                return _found(retry_email, retry.get("email_source") or "retry web search")
+            if retry_email:
+                r_src = retry.get("email_source") or "retry web search"
+                seen.append((retry_email, r_src))
+                if classify_address(retry_email, contact_name) == "founder":
+                    return _out(retry_email, r_src, "found in source on a second, sharper search",
+                                "founder", "2. retry search", contact_name)
         except Exception as e:
             logger.warning(f"[ContactFinder] retry ladder failed: {e}")
 
-    # Step 4: pattern inference — the ONLY step where verification runs.
-    # A guess exists in no source, so it must prove a mailbox exists.
-    if verifier_on:
-        observed = site.get("all", []) + [e for e in (ai_email, retry_email) if e]
-        checked = 0
-        for p in _pattern_candidates(contact_name, domain, observed):
-            if p in observed or checked >= 4:
-                continue
-            v = verify_email(p)
-            checked += 1
-            logger.info(f"[ContactFinder] verify pattern {p} -> {v}")
-            if v == "deliverable":
-                return {"email": p, "source": "inferred from name pattern",
-                        "verification": "mailbox verified (deliverable)"}
+    # ── Rung 3: Hunter email-finder — what Hunter has crawled for this person
+    finder = {"email": "", "score": 0, "sources": 0, "url": ""}
+    if verifier_on and founder_named and domain:
+        finder = find_email_by_name(domain, contact_name)
+        if finder["email"] and finder["sources"] > 0:
+            return _out(finder["email"], finder["url"] or "Hunter email-finder",
+                        f"published in {finder['sources']} public source(s) Hunter has crawled (confidence {finder['score']}%)",
+                        "founder", "3. Hunter email-finder", contact_name)
 
-    # Fall back to a generic found-in-source address rather than nothing
-    if ai_generic or site_generic:
-        email = ai_generic or site_generic
-        src = (ai_source or "AI web search") if ai_generic else f"company website ({site.get('source') or 'site'})"
-        return _found(email, src)
+    # ── Rung 4: a founder ROLE mailbox the company publishes itself ────────
+    role_email, role_src = _best("founder_role")
+
+    # ── Rung 5: pattern guess, tested ─────────────────────────────────────
+    guess, guess_status = "", ""
+    if verifier_on and founder_named and domain:
+        observed = [e for e, _ in seen]
+        candidates = _guess_candidates(contact_name, domain, observed)
+        # Hunter's own unsourced prediction is worth testing first.
+        if finder["email"] and finder["email"] not in [c for c, _ in candidates]:
+            candidates.insert(0, (finder["email"],
+                                  f"Hunter's predicted address (confidence {finder['score']}%, no public source)"))
+        for cand, why in candidates[:_MAX_VERIFY]:
+            if cand in observed:
+                continue
+            v = verify_email(cand)
+            logger.info(f"[ContactFinder] guess {cand} ({why}) -> {v}")
+            if v == "deliverable":
+                return _out(cand, f"inferred: {why}", "mailbox confirmed by Hunter (deliverable)",
+                            "founder", "5. pattern guess, confirmed", contact_name)
+            if v == "catch_all":
+                # Every address on this domain "passes", so this proves nothing.
+                # Agreed policy: send to it anyway, flagged as unconfirmed, and
+                # stop burning credits on further candidates here.
+                return _out(cand, f"inferred: {why}",
+                            "NOT confirmed: this domain accepts mail at any address, so the guess could not be checked",
+                            "founder", "5. pattern guess, unconfirmed (catch-all domain)", contact_name,
+                            guess=cand, guess_status="catch_all")
+            if not guess:
+                guess, guess_status = cand, v  # remember the top guess we rejected
+
+    if role_email:
+        return _out(role_email, role_src,
+                    "found in source: a role mailbox the company publishes for its founder/CEO",
+                    "founder", "4. founder role mailbox", contact_name,
+                    guess=guess, guess_status=guess_status)
+
+    # ── Rung 6: a colleague — a real person who works there ───────────────
+    c_email, c_src = _best("colleague")
+    if c_email:
+        return _out(c_email, c_src, "found in source: a person who works there, not the founder",
+                    "colleague", "6. colleague at the company",
+                    display_name_from_address(c_email), guess=guess, guess_status=guess_status)
+
+    # ── Rung 7: the company's outreach inbox ──────────────────────────────
+    g_email, g_src = _best("generic")
+    if g_email:
+        return _out(g_email, g_src, "found in source: the company's shared enquiries inbox",
+                    "generic", "7. company outreach inbox", "",
+                    guess=guess, guess_status=guess_status)
 
     if not verifier_on:
-        return {"email": "", "source": "", "verification": "no published email found (verifier not configured, patterns skipped)"}
-    return {"email": "", "source": "", "verification": "no published email found; no pattern guess verified"}
-
-
-def is_generic_address(email: str) -> bool:
-    local = (email or "").split("@")[0].lower()
-    return any(local == g or local.startswith(g) for g in _GENERIC_PREFIXES)
+        return _out("", "", "no published email found (no Hunter key configured, so no guess could be tested)",
+                    "", "exhausted")
+    if not founder_named:
+        return _out("", "", "no published email found, and no founder name on record to guess from",
+                    "", "exhausted")
+    return _out("", "", "no published email found; no pattern guess passed",
+                "", "exhausted", guess=guess, guess_status=guess_status)
 
 
 def choose_best_email(site: Dict, ai_email: str, ai_source: str) -> tuple:

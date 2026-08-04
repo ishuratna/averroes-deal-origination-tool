@@ -134,6 +134,14 @@ class BigQueryHandler:
         # Soft delete: hidden from the Master Universe VIEW only. The row and
         # every field stay in BigQuery forever (auditable, restorable).
         ("hidden_at", "TIMESTAMP"), ("hidden_by", "STRING"),
+        # Contact waterfall v4: WHO the stored contact_email actually belongs to
+        # and which rung produced it. Not a duplicate of contact_email — these
+        # are separate facts about it, and the outreach greeting depends on
+        # them (write to a colleague by their own name; write to a shared
+        # inbox using the founder's name).
+        ("contact_email_kind", "STRING"),    # founder | colleague | generic
+        ("contact_email_name", "STRING"),    # who the To: belongs to, '' if shared
+        ("contact_email_source", "STRING"),  # provenance + confidence, shown on the card
         # CH v4: distress flags, filing intelligence, cap table, watch job
         ("ch_accounts_overdue", "BOOL"),
         ("ch_insolvency_summary", "STRING"),

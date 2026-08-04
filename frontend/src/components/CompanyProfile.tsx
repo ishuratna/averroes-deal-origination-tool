@@ -627,6 +627,27 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       : <span style={{ color: '#94a3b8' }}>No verified email — see activity trail for the waterfall verdict</span>}
                     {company.linkedin_url && <a href={company.linkedin_url} target="_blank" rel="noreferrer" style={{ marginLeft: 12, color: '#2563eb', fontWeight: 600 }}>LinkedIn ↗</a>}
                   </div>
+                  {/* Contact waterfall v4: WHO this address belongs to, and how
+                      we got it. Visible before anyone hits send, because the
+                      To: is not always the founder. */}
+                  {company.contact_email && (
+                    <div className="cp-recipient">
+                      <span className={`cp-recip-chip ${company.contact_email_kind || ''}`}>
+                        {company.contact_email_kind === 'colleague'
+                          ? `Colleague${company.contact_email_name ? `: ${company.contact_email_name}` : ''}, not the founder`
+                          : company.contact_email_kind === 'generic'
+                            ? 'Company enquiries inbox'
+                            : company.contact_email_kind === 'founder'
+                              ? 'Founder / CEO'
+                              : 'Recipient not classified'}
+                      </span>
+                      {company.contact_email_source && (
+                        <span className="cp-recip-prov" title={company.contact_email_source}>
+                          {company.contact_email_source}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

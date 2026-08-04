@@ -592,8 +592,26 @@ def _migrate_band_rules():
 def _contacts_marker() -> str:
     # v3: new waterfall order (web → site → retry → patterns) with verification
     # only for guesswork. Bumping this version re-runs the retro pass.
+    #
+    # DELIBERATELY NOT bumped to v4. The v4 waterfall spends Hunter credits per
+    # company (email-finder + up to 5 verifier calls), so re-running it across
+    # every stored company must be a decision, not a side effect of a deploy.
+    # New SmartFill runs use v4 immediately; re-run history on demand with
+    # POST /contacts/reverify.
     verified = bool(os.getenv("HUNTER_API_KEY", "") or os.getenv("EMAIL_VERIFIER_API_KEY", ""))
     return f"contacts-v3-{'verified' if verified else 'scrape-only'}"
+
+
+def _waterfall_provenance(res: dict) -> str:
+    """One human-readable line recording how we arrived at this address, stored
+    on the row so the company card can show it before anyone hits send."""
+    if not res.get("email"):
+        return res.get("verification", "")
+    bits = [f"{res.get('step', '')}", res.get("source", ""), res.get("verification", "")]
+    line = " | ".join([b for b in bits if b])
+    if res.get("founder_guess") and res["founder_guess"] != res["email"]:
+        line += f" | founder guess not used: {res['founder_guess']} ({res.get('founder_guess_status')})"
+    return line[:900]
 
 
 def _retro_resolve_contacts(force: bool = False) -> dict:
@@ -2095,8 +2113,10 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     website = founder_info.get("website", "")
     description = founder_info.get("description", "")
 
-    # Contact waterfall: site scrape → AI result → pattern inference, with
-    # mailbox verification gating every candidate. Blank if nothing passes.
+    # Contact waterfall v4 (FOUNDER-FIRST): founder found in source → retry
+    # search → Hunter email-finder → published ceo@ → verified pattern guess →
+    # a colleague → the shared enquiries inbox. Finding a colleague never ends
+    # the search; their address is what teaches us the company's email pattern.
     try:
         from services.contact_finder import resolve_contact_email
         _site = website or company_data.get("website", "")
@@ -2107,6 +2127,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                                     retry_fn=lambda: enrichment_agent.retry_email_search(company_name, _site, _cname))
         founder_info["contact_email"] = res["email"]
         founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
+        founder_info["contact_email_kind"] = res.get("kind", "")
+        founder_info["contact_email_name"] = res.get("recipient_name", "")
+        founder_info["contact_email_source"] = _waterfall_provenance(res)
     except Exception as e:
         logger.warning(f"[SmartFill] contact waterfall failed for {company_name} (non-fatal): {e}")
 
@@ -2115,6 +2138,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     if company_data.get("source") == "Internal Test":
         founder_info["contact_email"] = TEST_RECIPIENT
         founder_info["contact_name"] = "Averroes Admin (Test)"
+        founder_info["contact_email_kind"] = "founder"
+        founder_info["contact_email_name"] = "Averroes Admin (Test)"
+        founder_info["contact_email_source"] = "test row: recipient pinned to the admin inbox"
 
     # Step 3: Companies House financials (UK/Ireland only)
     ch_data = {}
@@ -2214,6 +2240,12 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             investors_raw = IFNULL(NULLIF(@investors_raw, ''), investors_raw),
             contact_name = IFNULL(NULLIF(@contact_name, ''), contact_name),
             contact_email = IFNULL(NULLIF(@contact_email, ''), contact_email),
+            -- Who the address belongs to travels WITH the address: only write
+            -- these when this run actually produced an email, so a failed
+            -- waterfall never mislabels the email already stored.
+            contact_email_kind = CASE WHEN @contact_email != '' THEN @contact_email_kind ELSE contact_email_kind END,
+            contact_email_name = CASE WHEN @contact_email != '' THEN @contact_email_name ELSE contact_email_name END,
+            contact_email_source = CASE WHEN @contact_email_source != '' THEN @contact_email_source ELSE contact_email_source END,
             linkedin_url = IFNULL(NULLIF(@linkedin_url, ''), linkedin_url),
             size_bucket = IFNULL(NULLIF(@size_bucket, ''), size_bucket),
             ch_company_number = IFNULL(NULLIF(@ch_company_number, ''), ch_company_number),
@@ -2274,6 +2306,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             bq_lib.ScalarQueryParameter("investors_raw", "STRING", merged_investors),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
             bq_lib.ScalarQueryParameter("contact_email", "STRING", founder_info.get("contact_email", "")),
+            bq_lib.ScalarQueryParameter("contact_email_kind", "STRING", founder_info.get("contact_email_kind", "")),
+            bq_lib.ScalarQueryParameter("contact_email_name", "STRING", founder_info.get("contact_email_name", "")),
+            bq_lib.ScalarQueryParameter("contact_email_source", "STRING", founder_info.get("contact_email_source", "")),
             bq_lib.ScalarQueryParameter("linkedin_url", "STRING", founder_info.get("linkedin_url", "")),
             bq_lib.ScalarQueryParameter("size_bucket", "STRING", size_bucket or ""),
             bq_lib.ScalarQueryParameter("ch_company_number", "STRING", ch_data.get("ch_company_number") or ""),
@@ -2347,7 +2382,10 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             draft_input = {**company_data, **ch_data}
             draft_input["description"] = description or company_data.get("description", "")
             draft_input["website"] = website or company_data.get("website", "")
-            for k in ("contact_name", "contact_email", "linkedin_url"):
+            # The greeting depends on WHO the To: belongs to, so the recipient
+            # kind/name must travel into the draft input alongside the address.
+            for k in ("contact_name", "contact_email", "linkedin_url",
+                      "contact_email_kind", "contact_email_name"):
                 if founder_info.get(k):
                     draft_input[k] = founder_info[k]
             if scoring_result.get("score_details"):
@@ -2573,7 +2611,8 @@ async def smartenrich_company(company_name: str):
         actions.append("test row: contact pinned, verification skipped")
     else:
         founder_info = enrichment_agent.enrich_founder_details(company_name)
-        # Full contact waterfall (web personal → site → retry → verified patterns)
+        # The SAME founder-first waterfall v4 as SmartFill (doctrine: one
+        # intent, one implementation — never fork the ladder per entry point).
         try:
             from services.contact_finder import resolve_contact_email
             _cname = founder_info.get("contact_name") or company.get("contact_name", "")
@@ -2584,6 +2623,9 @@ async def smartenrich_company(company_name: str):
                                             company_name, company.get("website", ""), _cname))
             founder_info["contact_email"] = res["email"]
             founder_info["email_source"] = f"{res['source']} — {res['verification']}" if res["email"] else res["verification"]
+            founder_info["contact_email_kind"] = res.get("kind", "")
+            founder_info["contact_email_name"] = res.get("recipient_name", "")
+            founder_info["contact_email_source"] = _waterfall_provenance(res)
         except Exception as e:
             logger.warning(f"[SmartEnrich] contact waterfall failed for {company_name} (non-fatal): {e}")
         found_email = (founder_info.get("contact_email") or "").strip()
@@ -2597,6 +2639,15 @@ async def smartenrich_company(company_name: str):
                 set_clauses.append(f"{col} = CASE WHEN IFNULL({col}, '') = '' THEN @{col} ELSE {col} END")
                 params.append(bq_lib.ScalarQueryParameter(col, "STRING", val))
 
+        # Recipient kind/name follow the address whenever we have one, so the
+        # greeting can never go stale against a newly resolved recipient.
+        if found_email:
+            for col, key in [("contact_email_kind", "contact_email_kind"),
+                             ("contact_email_name", "contact_email_name"),
+                             ("contact_email_source", "contact_email_source")]:
+                set_clauses.append(f"{col} = @{col}")
+                params.append(bq_lib.ScalarQueryParameter(col, "STRING", founder_info.get(key) or ""))
+
         note = ""
         if found_email and found_email.lower() != stored_email.lower():
             set_clauses.append("contact_email = @contact_email")
@@ -2608,6 +2659,13 @@ async def smartenrich_company(company_name: str):
             note = f"SmartEnrich confirmed email '{found_email}' (found at: {email_src})"
         elif stored_email:
             set_clauses.append("contact_email = ''")
+            # Clearing the address must clear its labels too, or the card would
+            # keep describing a recipient that no longer exists.
+            set_clauses.append("contact_email_kind = ''")
+            set_clauses.append("contact_email_name = ''")
+            set_clauses.append("contact_email_source = @cleared_src")
+            params.append(bq_lib.ScalarQueryParameter("cleared_src", "STRING",
+                                                      founder_info.get("contact_email_source") or "cleared: no published source found"))
             actions.append("stored email has no source anywhere: cleared as a likely AI guess")
             note = f"SmartEnrich cleared email '{stored_email}': no published source found anywhere, likely a generated guess"
         else:
@@ -2729,7 +2787,10 @@ async def smartenrich_company(company_name: str):
     if not company.get("outreach_sent_at"):
         try:
             draft_input = dict(company)
-            for k in ("contact_name", "contact_email", "linkedin_url"):
+            # The greeting depends on WHO the To: belongs to, so the recipient
+            # kind/name must travel into the draft input alongside the address.
+            for k in ("contact_name", "contact_email", "linkedin_url",
+                      "contact_email_kind", "contact_email_name"):
                 if founder_info.get(k):
                     draft_input[k] = founder_info[k]
             hook = _stored_news_signal(draft_input)

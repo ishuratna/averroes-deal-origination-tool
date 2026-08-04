@@ -75,6 +75,49 @@ specific and recent, return found=false. Never guess."""
         return ""
 
 
+def _greeting_for(company_data: Dict) -> tuple:
+    """Who this email opens by name, given who the To: actually belongs to.
+
+    The contact waterfall does not always land on the founder, so the greeting
+    follows the recipient, not the record:
+      colleague     greet the colleague by their OWN name (writing "Hi Sarah"
+                    to Tom is the fastest way to get deleted)
+      shared inbox  greet the FOUNDER by name (info@ is read by someone whose
+                    job is to pass it on, and the email is for the founder)
+      founder       greet the founder, as before
+      nobody named  no name at all, "Hello,"
+    Returns (first_name_or_blank, instruction_for_the_model).
+    """
+    contact_name = (company_data.get("contact_name") or "").strip()
+    kind = (company_data.get("contact_email_kind") or "").strip()
+    recipient = (company_data.get("contact_email_name") or "").strip()
+
+    if kind == "colleague":
+        first = recipient.split()[0] if recipient else ""
+    else:
+        first = contact_name.split()[0] if contact_name else ""
+
+    if not first:
+        return "", '"Hello," on its own line. No name is known, so do NOT invent one.'
+    return first, f'"Hi {first}," on its own line.'
+
+
+def _recipient_note(company_data: Dict) -> str:
+    """One line telling the model who is on the other end of the To: field."""
+    kind = (company_data.get("contact_email_kind") or "").strip()
+    recipient = (company_data.get("contact_email_name") or "").strip()
+    founder = (company_data.get("contact_name") or "").strip()
+    if kind == "colleague":
+        who = recipient or "a person who works there"
+        return (f"{who}, who works at the company but is NOT the founder. "
+                f"Write to them directly and warmly. Do not ask them to forward "
+                f"anything and do not mention the founder by name.")
+    if kind == "generic":
+        return ("the company's shared enquiries inbox, so whoever reads it will "
+                f"pass it on. Address it to {founder or 'the founder'}.")
+    return f"{founder or 'the founder'} directly."
+
+
 def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, str]:
     """
     Use Gemini to draft a personalised outreach email from stored BQ data,
@@ -124,7 +167,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
 
     company_context = "\n".join(context_parts) if context_parts else f"Company: {name}"
 
-    first_name = contact_name.split()[0] if contact_name and contact_name.strip() else "there"
+    first_name, greeting_instruction = _greeting_for(company_data)
 
     # Data richness decides the mode: with substance we personalise;
     # with a thin record we write a shorter, plainer note and fake nothing.
@@ -149,6 +192,10 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     Write an outreach email to {contact_name or 'the founder'} at {name}. You are writing as
     yourself, an experienced investor a founder would want to hear from, not as a marketer.
 
+    WHO IS RECEIVING IT: {_recipient_note(company_data)}
+    Whoever opens it, the email itself never changes: same structure, same
+    substance, no ask. Only the greeting follows the recipient.
+
     COMPANY NAME: the record name above may be a legal or registry name. Everywhere the
     company appears in the email, including the subject line, use the natural name a person
     would say out loud. Strip legal suffixes and registry noise (Ltd, Limited, PLC, LLP,
@@ -164,7 +211,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     EMAIL STRUCTURE (follow this exact order and paragraphing; vary the
     wording naturally where noted, never the order):
 
-    1. GREETING: "Hi {first_name}," (if no name is known, use "Hello,").
+    1. GREETING, use exactly this: {greeting_instruction}
     2. PLEASANTRY, own line: "Hope you are having a great day." (light
        variations fine: "Hope your week is going well.")
     3. WHO I AM, own paragraph, comes BEFORE anything about their company:
@@ -458,9 +505,8 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
     name = company_data.get("name", "your company")
     contact_name = company_data.get("contact_name", "")
     contact_email = company_data.get("contact_email", "")
-    first_name = contact_name.split()[0] if contact_name else "Hi"
-
-    greeting = f"Hi {first_name}," if contact_name else "Hello,"
+    first_name, _ = _greeting_for(company_data)
+    greeting = f"Hi {first_name}," if first_name else "Hello,"
     body = (
         f"{greeting}\n\n"
         f"Hope you are having a great day.\n\n"

@@ -10,6 +10,10 @@ export interface CompanyTarget {
   match_score: number; // 0 to 1
   contact_name?: string;
   contact_email?: string;
+  // Contact waterfall v4: who contact_email belongs to and how we got it.
+  contact_email_kind?: 'founder' | 'colleague' | 'generic' | '';
+  contact_email_name?: string;
+  contact_email_source?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
   status: 'Qualified' | 'Contacted' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped' | 'Uploaded';
