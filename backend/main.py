@@ -1483,12 +1483,28 @@ async def diag_verify_email(request: Request, emails: str = Query(..., descripti
     expected = os.getenv("WATCH_TOKEN", "")
     if not expected or token != expected:
         raise HTTPException(status_code=403, detail="Invalid token.")
-    from services.contact_finder import verify_email
-    out = {}
+    # Reports the FAILURE MODE, not just the verdict. A rejected or exhausted
+    # key used to look identical to a genuinely unclear mailbox ('unknown'),
+    # which hid a dead verifier and silently disabled the guessing rungs.
+    from services.contact_finder import verify_email_detail
+    out = {"results": {}, "verifier_working": None}
+    statuses = []
     for e in [x.strip() for x in emails.split(",") if x.strip()][:10]:
-        out[e] = verify_email(e)
-    if all(v == "unavailable" for v in out.values()):
-        out["note"] = "HUNTER_API_KEY not configured on the service"
+        d = verify_email_detail(e)
+        statuses.append(d["status"])
+        out["results"][e] = d
+    if statuses and all(s == "unavailable" for s in statuses):
+        out["verifier_working"] = False
+        out["note"] = "No verifier key configured on this service (set HUNTER_API_KEY with --update-env-vars)."
+    elif any(s == "error" for s in statuses):
+        out["verifier_working"] = False
+        first = next(d for d in out["results"].values() if d["status"] == "error")
+        out["note"] = (f"Hunter rejected the call (HTTP {first['http']}): {first['detail']}. "
+                       "Until this is fixed, the pattern-guess rungs of the contact waterfall "
+                       "cannot confirm anything and the ladder falls back to published addresses.")
+    elif statuses:
+        out["verifier_working"] = True
+        out["note"] = "Verifier answered normally."
     return out
 
 

@@ -203,31 +203,58 @@ def display_name_from_address(email: str) -> str:
 # Without a key, both report unavailable and the ladder falls back to what it
 # found in sources.
 
-def verify_email(email: str) -> str:
-    """Returns: deliverable | undeliverable | catch_all | unknown | unavailable
+def verify_email_detail(email: str) -> Dict:
+    """The verifier call with its failure mode intact.
+
+    Returns {"status", "http", "detail"} where status is one of:
+      deliverable | undeliverable | catch_all | unknown | unavailable | error
+
+    WHY THIS EXISTS: the old version collapsed "Hunter says it is unclear" and
+    "the Hunter call did not work at all" into the same 'unknown'. A rejected or
+    exhausted key therefore looked exactly like a genuinely ambiguous mailbox,
+    and the guessing rungs went silently inert. 'error' now means OUR call
+    failed (auth, quota, network) and must be reported, never treated as a
+    verdict about the address.
 
     catch_all means the domain answers "yes" to EVERY address, so the check
     proves nothing about this specific mailbox. Policy (Ishu, agreed): we still
     send to the guess on those domains, but we record it as unconfirmed.
     """
     api_key = _os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", "")
-    if not api_key or not email:
-        return "unavailable"
+    if not api_key:
+        return {"status": "unavailable", "http": 0, "detail": "no verifier key configured on this service"}
+    if not email:
+        return {"status": "unavailable", "http": 0, "detail": "no email given"}
     try:
         resp = requests.get("https://api.hunter.io/v2/email-verifier",
                             params={"email": email, "api_key": api_key}, timeout=15)
-        data = (resp.json() or {}).get("data", {})
+        try:
+            payload = resp.json() or {}
+        except Exception:
+            payload = {}
+        # Hunter reports auth/quota problems as HTTP 4xx with an errors[] body.
+        if resp.status_code >= 400:
+            errs = payload.get("errors") or []
+            msg = "; ".join(str((e or {}).get("details") or e) for e in errs) or resp.text[:200]
+            logger.warning(f"[ContactFinder] verifier HTTP {resp.status_code} for {email}: {msg}")
+            return {"status": "error", "http": resp.status_code, "detail": msg}
+        data = payload.get("data", {}) or {}
         status, result = data.get("status", ""), data.get("result", "")
         if status == "accept_all":
-            return "catch_all"
+            return {"status": "catch_all", "http": resp.status_code, "detail": "domain accepts mail at any address"}
         if result == "deliverable" or status == "valid":
-            return "deliverable"
+            return {"status": "deliverable", "http": resp.status_code, "detail": status or result}
         if result == "undeliverable" or status == "invalid":
-            return "undeliverable"
-        return "unknown"
+            return {"status": "undeliverable", "http": resp.status_code, "detail": status or result}
+        return {"status": "unknown", "http": resp.status_code, "detail": status or result or "no verdict returned"}
     except Exception as e:
         logger.warning(f"[ContactFinder] verifier call failed for {email}: {e}")
-        return "unknown"
+        return {"status": "error", "http": 0, "detail": f"{type(e).__name__}: {e}"}
+
+
+def verify_email(email: str) -> str:
+    """Back-compatible wrapper: just the status string."""
+    return verify_email_detail(email)["status"]
 
 
 def find_email_by_name(domain: str, person_name: str) -> Dict:
@@ -239,24 +266,35 @@ def find_email_by_name(domain: str, person_name: str) -> Dict:
     it is Hunter's own prediction, so we push it into the verify queue
     instead of trusting it outright. Costs one Hunter request.
     """
+    blank = {"email": "", "score": 0, "sources": 0, "url": "", "error": ""}
     api_key = _os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", "")
     bits = _name_bits(person_name)
     if not api_key or not domain or not bits:
-        return {"email": "", "score": 0, "sources": 0, "url": ""}
+        return blank
     params = {"domain": domain, "api_key": api_key, "first_name": bits[0]}
     if len(bits) > 1:
         params["last_name"] = bits[-1]
     try:
         resp = requests.get("https://api.hunter.io/v2/email-finder", params=params, timeout=15)
-        data = (resp.json() or {}).get("data", {}) or {}
+        try:
+            payload = resp.json() or {}
+        except Exception:
+            payload = {}
+        if resp.status_code >= 400:
+            errs = payload.get("errors") or []
+            msg = "; ".join(str((e or {}).get("details") or e) for e in errs) or resp.text[:200]
+            logger.warning(f"[ContactFinder] email-finder HTTP {resp.status_code}: {msg}")
+            return {**blank, "error": f"HTTP {resp.status_code}: {msg}"}
+        data = payload.get("data", {}) or {}
         srcs = data.get("sources") or []
         return {"email": (data.get("email") or "").strip().lower(),
                 "score": int(data.get("score") or 0),
                 "sources": len(srcs),
-                "url": (srcs[0].get("uri") if srcs and isinstance(srcs[0], dict) else "") or ""}
+                "url": (srcs[0].get("uri") if srcs and isinstance(srcs[0], dict) else "") or "",
+                "error": ""}
     except Exception as e:
         logger.warning(f"[ContactFinder] email-finder failed for {person_name}@{domain}: {e}")
-        return {"email": "", "score": 0, "sources": 0, "url": ""}
+        return {**blank, "error": f"{type(e).__name__}: {e}"}
 
 
 # ── Pattern learning ──────────────────────────────────────────────────────
@@ -455,7 +493,7 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
             logger.warning(f"[ContactFinder] retry ladder failed: {e}")
 
     # ── Rung 3: Hunter email-finder — what Hunter has crawled for this person
-    finder = {"email": "", "score": 0, "sources": 0, "url": ""}
+    finder = {"email": "", "score": 0, "sources": 0, "url": "", "error": ""}
     if verifier_on and founder_named and domain:
         finder = find_email_by_name(domain, contact_name)
         if finder["email"] and finder["sources"] > 0:
@@ -467,7 +505,7 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
     role_email, role_src = _best("founder_role")
 
     # ── Rung 5: pattern guess, tested ─────────────────────────────────────
-    guess, guess_status = "", ""
+    guess, guess_status, verifier_broken = "", "", False
     if verifier_on and founder_named and domain:
         observed = [e for e, _ in seen]
         candidates = _guess_candidates(contact_name, domain, observed)
@@ -478,8 +516,17 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
         for cand, why in candidates[:_MAX_VERIFY]:
             if cand in observed:
                 continue
-            v = verify_email(cand)
+            detail = verify_email_detail(cand)
+            v = detail["status"]
             logger.info(f"[ContactFinder] guess {cand} ({why}) -> {v}")
+            if v == "error":
+                # OUR call failed (auth, quota, network). That is not a verdict
+                # about the address, so testing more candidates would just
+                # repeat the same failure. Stop, and say so out loud rather than
+                # reporting "no guess passed" as if we had actually checked.
+                guess, guess_status = cand, f"not checked, verifier error: {detail['detail']}"[:200]
+                verifier_broken = True
+                break
             if v == "deliverable":
                 return _out(cand, f"inferred: {why}", "mailbox confirmed by Hunter (deliverable)",
                             "founder", "5. pattern guess, confirmed", contact_name)
@@ -520,6 +567,10 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
     if not founder_named:
         return _out("", "", "no published email found, and no founder name on record to guess from",
                     "", "exhausted")
+    if verifier_broken:
+        # Never report this as "the guess failed": we never got to check it.
+        return _out("", "", f"no published email found, and the guess could NOT be tested ({guess_status})",
+                    "", "exhausted: verifier not working", guess=guess, guess_status=guess_status)
     return _out("", "", "no published email found; no pattern guess passed",
                 "", "exhausted", guess=guess, guess_status=guess_status)
 
