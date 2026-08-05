@@ -64,7 +64,7 @@ const ALL_SOURCES: SourceDef[] = [
   // results for a single SIC code, so a handful of the busiest codes here
   // (IT consultancy, general professional/technical services) will not be
   // exhaustive — the refresh result says so explicitly when it happens.
-  { name: 'Companies House SIC Search', type: 'registry', label: 'Companies House (SIC Search)', description: '16 SIC codes covering software publishing, IT consultancy/services, data & web hosting, and adjacent professional services (design, market research, advertising, consultancy). Active UK companies only, free CH API, zero AI cost.', icon: '🏛', canRefresh: true, refreshType: 'registry' },
+  { name: 'Companies House SIC Search', type: 'registry', label: 'Companies House (SIC Search)', description: '16 SIC codes covering software publishing, IT consultancy/services, data & web hosting, and adjacent professional services (design, market research, advertising, consultancy). Active UK companies only, free CH API, zero AI cost. Auto-refreshes Fridays in a bounded 4-code slice (full 16-code cycle over ~4 weeks); click Refresh for an immediate full pull across all 16.', icon: '🏛', canRefresh: true, refreshType: 'registry' },
 ];
 
 // Exact match, or "<root> " + anything (a year, a cohort label — whatever a

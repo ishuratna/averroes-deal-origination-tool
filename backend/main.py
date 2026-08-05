@@ -437,13 +437,13 @@ async def ingest_directory(source_name: str = Query("TheSaaSDirectory", descript
     }
 
 def _ingest_ch_sic() -> dict:
-    """Companies House SIC-code registry search → raw ingest, no AI. Streamed
-    (unlike its siblings) because 16 SIC codes each pageable to CH's own
-    ~10,000-result ceiling is meaningfully slower than a single-page scrape —
-    long enough that holding it inside the already-tight /ch-watch/run daily
-    chain risked tipping THAT endpoint over its own timeout budget, so this
-    runs as its own on-demand pull rather than folding into the Friday
-    auto-refresh loop. See scrapers/ch_sic_scraper.py for why."""
+    """Companies House SIC-code registry search → raw ingest, no AI. This is
+    the MANUAL full pull — all 16 codes, right now — triggered by the
+    Refresh button. Streamed (unlike its siblings) because that is
+    meaningfully slower than a single-page scrape. The Friday auto-refresh
+    (_weekly_source_refresh) covers the same 16 codes too, but only a
+    bounded slice per week via ch_sic_scraper.scrape_weekly_batch() — see
+    scrapers/ch_sic_scraper.py for why the two paths deliberately differ."""
     rows, capped_codes = ch_sic_scraper.scrape_all_sic_codes_detailed()
     if not rows:
         return {"status": "Complete", "count": 0,
@@ -1298,9 +1298,18 @@ async def source_refresh(req: SourcePreviewRequest):
 
 def _weekly_source_refresh() -> dict:
     """Friday job: re-run every built-in scraper AND every saved AI source.
-    New companies auto-ingest (merge-only); everything else untouched."""
+    New companies auto-ingest (merge-only); everything else untouched.
+
+    ch_sic_scraper is in this loop, but unlike its siblings its get_supported_
+    sources()/scrape_source() runs a BOUNDED weekly batch (a few SIC codes,
+    not all 16) — see ch_sic_scraper.py's _WEEKLY_BATCH_SIZE. This whole job
+    runs synchronously inside /ch-watch/run, which is explicitly budgeted
+    against Cloud Run's request timeout elsewhere in this file; a full
+    16-code pull risked tipping that shared budget. The full pull is still
+    one click away via the streamed /ingest/ch-sic endpoint, which has no
+    such constraint."""
     summary = {"builtin": {}, "ai_sources": {}}
-    for scraper in (market_scraper, conf_scraper, rank_scraper, directory_scraper, network_scraper):
+    for scraper in (market_scraper, conf_scraper, rank_scraper, directory_scraper, network_scraper, ch_sic_scraper):
         try:
             for src_name in scraper.get_supported_sources():
                 try:

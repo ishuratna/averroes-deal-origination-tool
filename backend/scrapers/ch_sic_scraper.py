@@ -22,9 +22,22 @@ true active-company count is very likely above that ceiling, so a pull for
 those codes will NOT be exhaustive — this is a Companies House limitation,
 not a choice made here. `hit_ceiling` on the returned summary says so per
 code, honestly, rather than silently returning a partial set that looks complete.
+
+TWO WAYS THIS RUNS, on purpose:
+  * Friday auto-refresh (main.py's weekly-refresh loop, inside /ch-watch/run)
+    calls scrape_source() -> scrape_weekly_batch(): a BOUNDED slice of
+    _WEEKLY_BATCH_SIZE codes, chosen deterministically by ISO week number, so
+    it never risks blowing that endpoint's own timeout budget. Cycles through
+    all 16 codes over several weeks.
+  * The manual "Refresh" button (POST /ingest/ch-sic, streamed/heartbeated)
+    calls scrape_all_sic_codes_detailed(): every code, right now, no batching
+    — safe because that endpoint holds the connection open with heartbeats
+    instead of racing a shared timeout.
 """
 import os
+import math
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
 import requests
@@ -56,6 +69,15 @@ SIC_CODES: List[Tuple[str, str]] = [
 
 _PAGE_SIZE = 5000          # CH's documented maximum for `size`
 _CEILING = 10000           # CH 500s past this regardless of `size`/`start_index`
+
+# Weekly auto-refresh runs a BOUNDED slice, not all 16 codes — it rides inside
+# /ch-watch/run, which already budgets itself against Cloud Run's request
+# timeout ("~80 companies ≈ 1-2 min worst case" per that endpoint's own
+# comment). 4 codes x up to 2 pages each = at most 8 sequential CH calls,
+# roughly 8-25s added — safe alongside that existing budget. A full pull
+# (all 16 codes, no ceiling on time since it's held open some other way) is
+# still available on demand via the streamed /ingest/ch-sic Refresh button.
+_WEEKLY_BATCH_SIZE = 4
 
 
 def _ch_auth():
@@ -127,15 +149,52 @@ class CHSicScraper:
         return self.SOURCES
 
     def scrape_source(self, source_name: str, **kwargs) -> List[Dict]:
+        """Called by main.py's generic weekly-refresh loop (the same interface
+        every sibling scraper exposes) — deliberately runs the BOUNDED weekly
+        batch, not the full 16-code pull. See _WEEKLY_BATCH_SIZE for why: the
+        automated path shares a timeout budget with other daily jobs that a
+        full pull would risk blowing. On-demand full pulls go through
+        scrape_all_sic_codes_detailed() via the separately streamed
+        /ingest/ch-sic endpoint, which has no such constraint."""
         if source_name != "Companies House SIC Search":
             logger.error(f"Unknown CH SIC scraper source: {source_name}")
             return []
-        return self.scrape_all_sic_codes()
+        return self.scrape_weekly_batch()
+
+    def scrape_weekly_batch(self, batch_size: int = _WEEKLY_BATCH_SIZE) -> List[Dict]:
+        """This week's slice of SIC codes, chosen deterministically by ISO
+        week number — no cursor/state to persist or lose. Cycles through all
+        16 codes over ceil(16/batch_size) weeks, then repeats. A failed or
+        skipped week just tries the next slice next Friday; ingestion is
+        merge-safe, so re-covering a code later never duplicates anything.
+        """
+        if not os.getenv("COMPANIES_HOUSE_API_KEY", ""):
+            logger.error("[CH SIC] COMPANIES_HOUSE_API_KEY not configured")
+            return []
+
+        num_batches = math.ceil(len(SIC_CODES) / batch_size)
+        week_num = datetime.now(timezone.utc).isocalendar()[1]
+        batch_idx = week_num % num_batches
+        this_week = SIC_CODES[batch_idx * batch_size: batch_idx * batch_size + batch_size]
+
+        by_name: Dict[str, Dict] = {}
+        capped: List[str] = []
+        for sic, label in this_week:
+            rows, hit_ceiling = _pull_one_sic(sic, label)
+            for r in rows:
+                by_name.setdefault(r["name"].lower(), r)
+            if hit_ceiling:
+                capped.append(sic)
+
+        logger.info(f"[CH SIC] weekly batch {batch_idx + 1}/{num_batches} "
+                   f"({', '.join(f'{s}' for s, _ in this_week)}): {len(by_name)} companies"
+                   + (f" — ceiling hit for {', '.join(capped)}" if capped else ""))
+        return list(by_name.values())
 
     def scrape_all_sic_codes(self) -> List[Dict]:
-        """Plain List[Dict] — the shape every sibling scraper returns, used by
-        the weekly auto-refresh loop. Use scrape_all_sic_codes_detailed() when
-        the caller can surface which codes hit CH's paging ceiling."""
+        """Plain List[Dict] — the full pull across all 16 codes, used by the
+        on-demand /ingest/ch-sic endpoint. Use scrape_all_sic_codes_detailed()
+        when the caller can surface which codes hit CH's paging ceiling."""
         rows, _ = self.scrape_all_sic_codes_detailed()
         return rows
 
