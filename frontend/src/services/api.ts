@@ -101,6 +101,23 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Companies House SIC-code registry search — streamed like /sources/refresh
+  // (16 SIC codes each paged to CH's own ceiling takes longer than the other
+  // single-page scrapers, so this holds the connection open with heartbeats).
+  async ingestChSic(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/ingest/ch-sic`, { method: 'POST' });
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Companies House SIC search failed'); } }
+    const lines = text.trim().split('\n');
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last || !last.startsWith('{')) {
+      throw new Error('The server was still working when the connection closed (request timeout). The work may have completed anyway — reload to check, or run it again.');
+    }
+    const data = JSON.parse(last);
+    if (data.status === 'Error') throw new Error(data.message || 'Companies House SIC search failed');
+    return data;
+  },
+
   async enrichCompany(companyName: string): Promise<CompanyTarget> {
     const response = await apiFetch(`${API_BASE_URL}/enrich/${encodeURIComponent(companyName)}`, { method: 'POST' });
     if (!response.ok) throw new Error('Enrichment failed');

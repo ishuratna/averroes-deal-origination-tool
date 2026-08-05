@@ -17,12 +17,12 @@ import MultiSelect from '../../components/MultiSelect';
 
 interface SourceDef {
   name: string;
-  type: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network' | 'upload';
+  type: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network' | 'registry' | 'upload';
   label: string;
   description: string;
   icon: string;          // emoji
   canRefresh: boolean;
-  refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network';
+  refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network' | 'registry';
   // Scrapers stamp `source` with an edition/cohort suffix ("London Tech Week
   // 2026", "Tech Nation Future Fifty 2026") that a plain `source === name`
   // check never matches — the card silently shows 0 despite real rows sitting
@@ -56,6 +56,15 @@ const ALL_SOURCES: SourceDef[] = [
   // does not reach it; the extra family prefix does.
   { name: 'EF Alumni', type: 'network', label: 'EF Alumni', description: 'Entrepreneur First portfolio directory — London B2B companies, 2014+ vintages. Founder-led secondaries angle.', icon: '🎓', canRefresh: true, refreshType: 'network' },
   { name: 'Tech Nation', type: 'network', label: 'Tech Nation Future Fifty', description: 'Future Fifty cohort lists (2025, 2026) — UK scaleups at £5M+ revenue or 50% YoY growth.', icon: '🇬🇧', canRefresh: true, refreshType: 'network', familyPrefixes: ['Tech Nation Future Fifty'] },
+  // Official registries — direct from the UK government register, not a
+  // third-party site. A blunt instrument: SIC codes cover whether a company
+  // is FILED under a category, not its revenue or size, so this is a wide net
+  // by design — existing hard filters + SmartFill sort fit afterwards, same
+  // as every other source. Companies House itself will not page past ~10,000
+  // results for a single SIC code, so a handful of the busiest codes here
+  // (IT consultancy, general professional/technical services) will not be
+  // exhaustive — the refresh result says so explicitly when it happens.
+  { name: 'Companies House SIC Search', type: 'registry', label: 'Companies House (SIC Search)', description: '16 SIC codes covering software publishing, IT consultancy/services, data & web hosting, and adjacent professional services (design, market research, advertising, consultancy). Active UK companies only, free CH API, zero AI cost.', icon: '🏛', canRefresh: true, refreshType: 'registry' },
 ];
 
 // Exact match, or "<root> " + anything (a year, a cohort label — whatever a
@@ -321,7 +330,7 @@ function UniverseInner() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking' | 'network', name: string) => {
+  const handleIngest = async (type: 'marketplace' | 'conference' | 'ranking' | 'network' | 'registry', name: string) => {
     setIngesting(name);
     try {
       if (type === 'marketplace') await dealApi.ingestMarketplace(name);
@@ -330,9 +339,12 @@ function UniverseInner() {
       else if (type === 'network') {
         const res = await dealApi.ingestNetwork(name);
         alert(`Found ${res.count} companies from ${name}.`);
+      } else if (type === 'registry') {
+        const res = await dealApi.ingestChSic();
+        alert(res.message || `Found ${res.count} companies from ${name}.`);
       }
       await loadData();
-    } catch (error) { alert(`Ingestion failed for ${name}`); }
+    } catch (error: any) { alert(error?.message || `Ingestion failed for ${name}`); }
     finally { setIngesting(null); }
   };
 
@@ -586,6 +598,7 @@ function UniverseInner() {
       conference: { bg: '#ede9fe', fg: '#5b21b6' },
       ranking: { bg: '#dbeafe', fg: '#1e40af' },
       directory: { bg: '#d1fae5', fg: '#065f46' },
+      registry: { bg: '#fee2e2', fg: '#991b1b' },
       upload: { bg: '#f1f5f9', fg: '#475569' },
     };
     return colors[type] || colors.upload;
@@ -968,7 +981,7 @@ function UniverseInner() {
             </div>
 
             {/* Source type sections */}
-            {(['marketplace', 'conference', 'ranking', 'directory', 'network'] as const).map(type => {
+            {(['marketplace', 'conference', 'ranking', 'directory', 'network', 'registry'] as const).map(type => {
               const sources = ALL_SOURCES.filter(s => s.type === type);
               const typeLabels: Record<string, string> = {
                 marketplace: 'Marketplaces',
@@ -976,6 +989,7 @@ function UniverseInner() {
                 ranking: 'Rankings & Lists',
                 directory: 'Directories',
                 network: 'Founder Networks & Alumni',
+                registry: 'Official Registries',
               };
               return (
                 <div key={type} className="source-type-section">

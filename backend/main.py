@@ -16,6 +16,7 @@ from scrapers.ranking_scraper import RankingListScraper
 from scrapers.directory_scraper import DirectoryScraper
 from scrapers.network_scraper import NetworkScraper
 from scrapers.investor_scraper import InvestorScraper
+from scrapers.ch_sic_scraper import CHSicScraper
 from storage.investor_handler import InvestorBQHandler, INVESTOR_STAGES
 from ai.investor_fill import investor_fill, mine_investors_from_companies
 from services.investor_upload_service import parse_investor_file
@@ -105,6 +106,7 @@ market_scraper = MarketplaceScraper()
 rank_scraper = RankingListScraper()
 directory_scraper = DirectoryScraper()
 network_scraper = NetworkScraper()
+ch_sic_scraper = CHSicScraper()
 enrichment_agent = EnrichmentAgent()
 gcs_handler = GCSHandler(bucket_name=GCS_BUCKET)
 bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
@@ -433,6 +435,36 @@ async def ingest_directory(source_name: str = Query("TheSaaSDirectory", descript
         "message": f"Scraped {len(raw_companies)} companies from {source_name}. Use SmartFill to score and enrich.",
         "gcs_path": gcs_filename
     }
+
+def _ingest_ch_sic() -> dict:
+    """Companies House SIC-code registry search → raw ingest, no AI. Streamed
+    (unlike its siblings) because 16 SIC codes each pageable to CH's own
+    ~10,000-result ceiling is meaningfully slower than a single-page scrape —
+    long enough that holding it inside the already-tight /ch-watch/run daily
+    chain risked tipping THAT endpoint over its own timeout budget, so this
+    runs as its own on-demand pull rather than folding into the Friday
+    auto-refresh loop. See scrapers/ch_sic_scraper.py for why."""
+    rows, capped_codes = ch_sic_scraper.scrape_all_sic_codes_detailed()
+    if not rows:
+        return {"status": "Complete", "count": 0,
+                "message": "No companies found — check COMPANIES_HOUSE_API_KEY is configured."}
+    success = bq_handler.save_targets(rows)
+    if not success:
+        return {"status": "Error", "count": 0, "message": "Database save failed."}
+    gcs_filename = gcs_handler.save_companies(rows, "companies_house_sic_search")
+    msg = f"Pulled {len(rows)} active companies from Companies House across 16 SIC codes. Use SmartFill to score and enrich."
+    if capped_codes:
+        msg += (f" NOT exhaustive for {len(capped_codes)} code(s) — Companies House does not allow "
+               f"paging past ~10,000 results per code: {'; '.join(capped_codes)}.")
+    return {"status": "Success", "count": len(rows), "source": "Companies House SIC Search",
+            "message": msg, "capped_codes": capped_codes, "gcs_path": gcs_filename}
+
+
+@app.post("/ingest/ch-sic")
+async def ingest_ch_sic():
+    """Companies House SIC-code registry search — see _ingest_ch_sic()."""
+    return _stream_json(_ingest_ch_sic)
+
 
 @app.post("/ingest/upload")
 async def upload_custom_file(file: UploadFile = File(...)):
