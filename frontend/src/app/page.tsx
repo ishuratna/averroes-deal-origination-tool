@@ -145,6 +145,16 @@ function HomeInner() {
   const [dragItem, setDragItem] = useState<string | null>(null);
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
 
+  // Kanban pagination — same reasoning as Master Universe's table pager:
+  // Qualified alone can hold hundreds of cards once companies pile up before
+  // triage, and rendering all of them at once is what made this page heavy.
+  // Each STAGE gets its own page (a busy Qualified column and a quiet Meeting
+  // column shouldn't share one page index), 100 cards at a time.
+  const PIPELINE_PAGE_SIZE = 100;
+  const [stagePage, setStagePage] = useState<Record<string, number>>({});
+  const [listPage, setListPage] = useState(1);
+  useEffect(() => { setStagePage({}); setListPage(1); }, [searchQuery, filterSaaS, filterOwnership, filterGrowth, filterStage]);
+
   useEffect(() => {
     loadData();
     // Load saved views from localStorage
@@ -312,6 +322,13 @@ function HomeInner() {
   });
 
   const activeFilterCount = [filterSaaS.length > 0, filterOwnership.length > 0, filterGrowth.length > 0, filterStage.length > 0].filter(Boolean).length;
+
+  // List view pagination — same PIPELINE_PAGE_SIZE cap as the kanban columns,
+  // one flat page instead of per-stage (List has no columns to split across).
+  const listPageCount = Math.max(1, Math.ceil(filteredPipeline.length / PIPELINE_PAGE_SIZE));
+  const safeListPage = Math.min(listPage, listPageCount);
+  const listPageStart = (safeListPage - 1) * PIPELINE_PAGE_SIZE;
+  const listPageRows = filteredPipeline.slice(listPageStart, listPageStart + PIPELINE_PAGE_SIZE);
 
   return (
     <div className="layout-wrapper">
@@ -523,6 +540,15 @@ function HomeInner() {
                 const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
                 stageDeals.sort((a, b) => entered(b) - entered(a));
               }
+
+              // Per-stage paging (same reasoning as Master Universe's table
+              // pager): Qualified alone can hold hundreds of cards, so only
+              // its own column pages while quieter stages show everything.
+              const pageCount = Math.max(1, Math.ceil(stageDeals.length / PIPELINE_PAGE_SIZE));
+              const safeStagePage = Math.min(stagePage[stage] || 1, pageCount);
+              const stagePageStart = (safeStagePage - 1) * PIPELINE_PAGE_SIZE;
+              const pageDeals = stageDeals.slice(stagePageStart, stagePageStart + PIPELINE_PAGE_SIZE);
+
               return (
                 <div
                   key={stage}
@@ -538,8 +564,8 @@ function HomeInner() {
                   <div className="kanban-cards">
                     {loading ? (
                       [1, 2].map(i => <div key={i} className="kanban-card skeleton-kanban" />)
-                    ) : stageDeals.length > 0 ? (
-                      stageDeals.map(company => {
+                    ) : pageDeals.length > 0 ? (
+                      pageDeals.map(company => {
                         const nextStage = getNextStage(company.status);
                         const isUpdating = updatingStatus === company.name;
                         const stageSince = company.stage_entered_at || company.ingested_at;
@@ -714,6 +740,17 @@ function HomeInner() {
                       <div className="kanban-empty">No deals</div>
                     )}
                   </div>
+                  {!loading && stageDeals.length > PIPELINE_PAGE_SIZE && (
+                    <div className="uni-pager kanban-pager">
+                      <button className="uni-pager-btn" disabled={safeStagePage <= 1}
+                        onClick={() => setStagePage(p => ({ ...p, [stage]: safeStagePage - 1 }))}>‹ Prev</button>
+                      <span className="uni-pager-info">
+                        {(stagePageStart + 1).toLocaleString()}–{Math.min(stagePageStart + PIPELINE_PAGE_SIZE, stageDeals.length).toLocaleString()} of {stageDeals.length.toLocaleString()} · page {safeStagePage} of {pageCount}
+                      </span>
+                      <button className="uni-pager-btn" disabled={safeStagePage >= pageCount}
+                        onClick={() => setStagePage(p => ({ ...p, [stage]: safeStagePage + 1 }))}>Next ›</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -729,8 +766,8 @@ function HomeInner() {
             <div className="cards-grid">
               {loading ? (
                 [1, 2, 3, 4].map(i => <div key={i} className="card skeleton-card" />)
-              ) : filteredPipeline.length > 0 ? (
-                filteredPipeline.map((company, i) => {
+              ) : listPageRows.length > 0 ? (
+                listPageRows.map((company, i) => {
                   const saasLevel = isSaaSOrB2B(company);
                   const ownLevel = ownershipCategory(company);
                   const growLevel = growthCategory(company);
@@ -815,6 +852,15 @@ function HomeInner() {
                 </div>
               )}
             </div>
+            {!loading && filteredPipeline.length > PIPELINE_PAGE_SIZE && (
+              <div className="uni-pager">
+                <button className="uni-pager-btn" disabled={safeListPage <= 1} onClick={() => setListPage(safeListPage - 1)}>‹ Prev</button>
+                <span className="uni-pager-info">
+                  Showing {(listPageStart + 1).toLocaleString()}–{Math.min(listPageStart + PIPELINE_PAGE_SIZE, filteredPipeline.length).toLocaleString()} of {filteredPipeline.length.toLocaleString()} deals · page {safeListPage} of {listPageCount}
+                </span>
+                <button className="uni-pager-btn" disabled={safeListPage >= listPageCount} onClick={() => setListPage(safeListPage + 1)}>Next ›</button>
+              </div>
+            )}
           </section>
         )}
       </main>
@@ -1330,6 +1376,17 @@ function HomeInner() {
           color: #cbd5e1;
           font-size: 0.78rem;
         }
+
+        /* .uni-pager (globals.css) assumes a full-width table footer; a
+           kanban column is much narrower, so stack it instead of one row. */
+        .kanban-pager {
+          flex-direction: column;
+          gap: 0.35rem;
+          padding: 0.6rem 0.5rem;
+          border-top: 1px solid #e2e8f0;
+        }
+        .kanban-pager .uni-pager-info { text-align: center; font-size: 0.68rem; }
+        .kanban-pager .uni-pager-btn { padding: 0.3rem 0.7rem; font-size: 0.72rem; }
 
         /* ── List View ─────────────────────────────────────────── */
         .list-section { }
