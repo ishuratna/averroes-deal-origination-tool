@@ -23,6 +23,15 @@ interface SourceDef {
   icon: string;          // emoji
   canRefresh: boolean;
   refreshType?: 'marketplace' | 'conference' | 'ranking' | 'directory' | 'network';
+  // Scrapers stamp `source` with an edition/cohort suffix ("London Tech Week
+  // 2026", "Tech Nation Future Fifty 2026") that a plain `source === name`
+  // check never matches — the card silently shows 0 despite real rows sitting
+  // in BigQuery under that string. `familyPrefixes` lists every additional
+  // literal root a scraper is known to stamp; `matchesSource` below accepts
+  // an exact hit OR "<prefix> " followed by anything (typically a year), so
+  // future cohort years match without a code change. Verified against a live
+  // GROUP BY source query (/diag/source-counts) on 2026-08-05 — not guessed.
+  familyPrefixes?: string[];
 }
 
 const ALL_SOURCES: SourceDef[] = [
@@ -31,20 +40,37 @@ const ALL_SOURCES: SourceDef[] = [
   { name: 'Flippa', type: 'marketplace', label: 'Flippa', description: 'Online business marketplace. Integration pending — JS-rendered site / rate-limited API.', icon: '🛒', canRefresh: false },
   { name: 'Microns', type: 'marketplace', label: 'Microns', description: 'Micro-SaaS marketplace. Integration pending — client-rendered listings.', icon: '🛒', canRefresh: false },
   { name: 'SideProjectors', type: 'marketplace', label: 'SideProjectors', description: 'Side-project marketplace. Integration pending — client-rendered search.', icon: '🛒', canRefresh: false },
-  // Conferences
+  // Conferences — scraper stamps "<name> <year>"; the generic year-suffix
+  // match in matchesSource() covers every past and future edition.
   { name: 'SaaStock Europe', type: 'conference', label: 'SaaStock Europe', description: 'Sponsors + founder speakers from the official machine-readable archives, editions 2022–2025 (Dublin).', icon: '🎤', canRefresh: true, refreshType: 'conference' },
   { name: 'London Tech Week', type: 'conference', label: 'London Tech Week 2026', description: 'Full 2026 exhibitor list (~250 companies) + speaker companies, scraped from the official site.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
   { name: 'SaaSiest', type: 'conference', label: 'SaaSiest', description: 'Nordic/European B2B SaaS conference. Generic partner-page scrape — may return few results.', icon: '🎤', canRefresh: true, refreshType: 'conference' },
-  // Rankings
+  // Rankings — the scraper drops the "UK" the card label uses for display.
   { name: 'FT 1000', type: 'ranking', label: 'FT 1000', description: 'FT ranking of Europe\'s fastest-growing companies. Not scrapeable — paywalled interactive table.', icon: '📊', canRefresh: false },
-  { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'The UK\'s top 100 new businesses, scraped live from startups.co.uk (latest year).', icon: '📊', canRefresh: true, refreshType: 'ranking' },
-  { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'UK\'s 50 fastest-growing tech companies. Not scrapeable — JS-rendered page.', icon: '📊', canRefresh: false },
+  { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'The UK\'s top 100 new businesses, scraped live from startups.co.uk (latest year).', icon: '📊', canRefresh: true, refreshType: 'ranking', familyPrefixes: ['Startups 100'] },
+  { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'UK\'s 50 fastest-growing tech companies. Not scrapeable — JS-rendered page.', icon: '📊', canRefresh: false, familyPrefixes: ['Deloitte Fast 50'] },
   // Directories
   { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
-  // Founder networks / alumni
+  // Founder networks / alumni — Tech Nation's stamped source has "Future
+  // Fifty" between the name and the year, so the generic suffix rule alone
+  // does not reach it; the extra family prefix does.
   { name: 'EF Alumni', type: 'network', label: 'EF Alumni', description: 'Entrepreneur First portfolio directory — London B2B companies, 2014+ vintages. Founder-led secondaries angle.', icon: '🎓', canRefresh: true, refreshType: 'network' },
-  { name: 'Tech Nation', type: 'network', label: 'Tech Nation Future Fifty', description: 'Future Fifty cohort lists (2025, 2026) — UK scaleups at £5M+ revenue or 50% YoY growth.', icon: '🇬🇧', canRefresh: true, refreshType: 'network' },
+  { name: 'Tech Nation', type: 'network', label: 'Tech Nation Future Fifty', description: 'Future Fifty cohort lists (2025, 2026) — UK scaleups at £5M+ revenue or 50% YoY growth.', icon: '🇬🇧', canRefresh: true, refreshType: 'network', familyPrefixes: ['Tech Nation Future Fifty'] },
 ];
+
+// Exact match, or "<root> " + anything (a year, a cohort label — whatever a
+// scraper appends). One root per source is usually enough; familyPrefixes
+// adds the ones a scraper phrases differently from the card's own name.
+function matchesSource(source: SourceDef, raw: string): boolean {
+  const roots = [source.name, ...(source.familyPrefixes || [])];
+  return roots.some(root => raw === root || raw.startsWith(root + ' '));
+}
+
+// Which catalogued source (if any) a raw `source` string belongs to. Exposed
+// so upload/"other" bucketing can skip anything already claimed here.
+function findSourceDef(raw: string): SourceDef | undefined {
+  return ALL_SOURCES.find(s => matchesSource(s, raw));
+}
 
 // ── Saved view type ─────────────────────────────────────────────────────────
 
@@ -236,40 +262,61 @@ function UniverseInner() {
       stats[name] = { companyCount: 0, qualifiedCount: 0, lastIngested: null, firstIngested: null, topSectors: [], topRegions: [] };
     });
 
-    // Tally
+    // Anything not caught above (a one-off ingest label like "Maven Capital
+    // Partners portfolio company list" or the "Internal Test" sentinel) used
+    // to vanish from every total with no card to show it on. Bucket it under
+    // its own literal source string instead, so it is always visible somewhere.
+    const otherSourceNames = new Set<string>();
+    universe.forEach(c => {
+      if (c.source && !c.source.startsWith('Upload:') && !findSourceDef(c.source)) {
+        otherSourceNames.add(c.source);
+      }
+    });
+    otherSourceNames.forEach(name => {
+      stats[name] = { companyCount: 0, qualifiedCount: 0, lastIngested: null, firstIngested: null, topSectors: [], topRegions: [] };
+    });
+
+    // Tally. Catalogued sources are matched by FAMILY (matchesSource), not
+    // exact string equality — scrapers stamp an edition/cohort suffix
+    // ("London Tech Week 2026") that the card's bare name never equals, and
+    // an exact-only match silently zeroed the card despite real rows sitting
+    // in BigQuery under that string. Verified against /diag/source-counts.
     const sectorCounts: Record<string, Record<string, number>> = {};
     const regionCounts: Record<string, Record<string, number>> = {};
 
     universe.forEach(c => {
       const src = c.source;
-      if (!src || !stats[src]) return;
-      const s = stats[src];
+      if (!src) return;
+      const key = src.startsWith('Upload:') || otherSourceNames.has(src) ? src : (findSourceDef(src)?.name);
+      if (!key || !stats[key]) return;
+      const s = stats[key];
       s.companyCount++;
       if (c.status === 'Qualified') s.qualifiedCount++;
       if (c.ingested_at) {
         if (!s.lastIngested || c.ingested_at > s.lastIngested) s.lastIngested = c.ingested_at;
         if (!s.firstIngested || c.ingested_at < s.firstIngested) s.firstIngested = c.ingested_at;
       }
-      // Sector counts
+      // Sector counts — keyed by the same bucket `key`, so e.g. SaaStock
+      // Europe 2022–2025 roll up into one card's top sectors, not four.
       if (c.sector) {
-        if (!sectorCounts[src]) sectorCounts[src] = {};
-        sectorCounts[src][c.sector] = (sectorCounts[src][c.sector] || 0) + 1;
+        if (!sectorCounts[key]) sectorCounts[key] = {};
+        sectorCounts[key][c.sector] = (sectorCounts[key][c.sector] || 0) + 1;
       }
       if (c.region) {
-        if (!regionCounts[src]) regionCounts[src] = {};
-        regionCounts[src][c.region] = (regionCounts[src][c.region] || 0) + 1;
+        if (!regionCounts[key]) regionCounts[key] = {};
+        regionCounts[key][c.region] = (regionCounts[key][c.region] || 0) + 1;
       }
     });
 
     // Top sectors/regions
-    Object.entries(sectorCounts).forEach(([src, counts]) => {
-      stats[src].topSectors = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+    Object.entries(sectorCounts).forEach(([key, counts]) => {
+      stats[key].topSectors = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
     });
-    Object.entries(regionCounts).forEach(([src, counts]) => {
-      stats[src].topRegions = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+    Object.entries(regionCounts).forEach(([key, counts]) => {
+      stats[key].topRegions = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
     });
 
-    return { stats, uploadSources: Array.from(uploadSourceNames) };
+    return { stats, uploadSources: Array.from(uploadSourceNames), otherSources: Array.from(otherSourceNames) };
   }, [universe]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -544,9 +591,15 @@ function UniverseInner() {
     return colors[type] || colors.upload;
   };
 
-  // Total source-level counts
-  const totalSourceCompanies = Object.values(sourceStats.stats).reduce((sum, s) => sum + s.companyCount, 0);
-  const activeSources = ALL_SOURCES.filter(s => (sourceStats.stats[s.name]?.companyCount || 0) > 0).length + sourceStats.uploadSources.length;
+  // Total source-level counts. Ground truth is universe.length itself — the
+  // same pattern the Investors page already uses correctly — NOT a sum over
+  // the per-card buckets. A bucket sum can only ever be as complete as the
+  // matching logic that built it; the raw row count can never silently drift
+  // out of sync with what is actually in BigQuery, no matter what a future
+  // scraper decides to name its source string.
+  const totalSourceCompanies = universe.length;
+  const activeSources = ALL_SOURCES.filter(s => (sourceStats.stats[s.name]?.companyCount || 0) > 0).length
+    + sourceStats.uploadSources.length + sourceStats.otherSources.length;
 
   return (
     <div className="layout-wrapper">
@@ -1042,6 +1095,67 @@ function UniverseInner() {
                               </div>
                               <div className="source-stat">
                                 <span className="source-stat-label">Uploaded On</span>
+                                <span className="source-stat-value">{formatDateTime(stats?.lastIngested)}</span>
+                              </div>
+                              {stats?.topSectors && stats.topSectors.length > 0 && (
+                                <div className="source-stat full-width">
+                                  <span className="source-stat-label">Top Sectors</span>
+                                  <span className="source-stat-value">{stats.topSectors.join(', ')}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Other sources — anything ingested under a source string that
+                does not belong to a catalogued card and is not an "Upload:"
+                file (a one-off label like a bespoke portfolio upload, or the
+                Internal Test sentinel). Shown so nothing is ever silently
+                dropped from the totals with no card to explain where it went. */}
+            {sourceStats.otherSources.length > 0 && (
+              <div className="source-type-section">
+                <h3 className="source-type-label">Other</h3>
+                <div className="source-cards-grid">
+                  {sourceStats.otherSources.map(name => {
+                    const stats = sourceStats.stats[name];
+                    const isExpanded = expandedSource === name;
+                    return (
+                      <div key={name} className={`source-card ${isExpanded ? 'expanded' : ''}`}>
+                        <button className="source-card-header" onClick={() => setExpandedSource(isExpanded ? null : name)}>
+                          <div className="source-card-left">
+                            <span className="source-icon">🏷</span>
+                            <div>
+                              <span className="source-name">{name}</span>
+                              <span className="source-type-badge" style={{ background: typeColor('upload').bg, color: typeColor('upload').fg }}>other</span>
+                            </div>
+                          </div>
+                          <div className="source-card-right">
+                            <span className="source-count">{stats?.companyCount || 0}</span>
+                            <svg className={`chevron ${isExpanded ? 'open' : ''}`} width="16" height="16" viewBox="0 0 16 16" fill="none">
+                              <path d="M4 6l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="source-expanded">
+                            <div className="source-stats-grid">
+                              <div className="source-stat">
+                                <span className="source-stat-label">Total Companies</span>
+                                <span className="source-stat-value">{stats?.companyCount || 0}</span>
+                              </div>
+                              <div className="source-stat">
+                                <span className="source-stat-label">Qualified</span>
+                                <span className="source-stat-value source-stat-qualified">{stats?.qualifiedCount || 0}</span>
+                              </div>
+                              <div className="source-stat">
+                                <span className="source-stat-label">Last Ingested</span>
                                 <span className="source-stat-value">{formatDateTime(stats?.lastIngested)}</span>
                               </div>
                               {stats?.topSectors && stats.topSectors.length > 0 && (
