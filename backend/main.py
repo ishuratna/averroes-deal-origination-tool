@@ -1508,6 +1508,22 @@ async def diag_verify_email(request: Request, emails: str = Query(..., descripti
     return out
 
 
+@app.get("/diag/source-counts")
+async def diag_source_counts(request: Request, table: str = Query("targets", description="targets | investors")):
+    """Token-gated: real GROUP BY source counts straight from BigQuery, for
+    diagnosing the Sources overlay (which tallies client-side against a static
+    registry — this is the ground truth to check it against)."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    tbl = investor_handler.table_id if table == "investors" else bq_handler.table_id
+    rows = list(bq_handler.client.query(
+        f"SELECT IFNULL(source, '(blank)') AS source, COUNT(*) AS n FROM `{tbl}` "
+        f"GROUP BY source ORDER BY n DESC").result())
+    return {"table": tbl, "counts": {r.source: r.n for r in rows}}
+
+
 @app.get("/diag/deep/{company_name}")
 async def diag_deep(company_name: str, request: Request,
                     step: str = Query("stored", description="stored|search|profile|psc|officers|network|charges|filings|captable|sh01|links")):
