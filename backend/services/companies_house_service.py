@@ -57,20 +57,32 @@ def _search_company(company_name: str) -> List[dict]:
         return []
 
 
-# Words that carry NO identity information — legal suffixes and generic
-# industry terms. Overlap on these must never count as a name match.
+# Legal/structural suffixes — carry NO identity information at all, in any
+# context. Overlap on these alone must never count as a name match.
+_LEGAL_SUFFIX_TOKENS = {
+    "ltd", "limited", "plc", "llp", "llc", "inc", "incorporated", "co", "corp",
+    "corporation", "company", "uk", "gb", "the", "and", "of", "a", "an", "&",
+}
+
+# Descriptor words — generic enough to strip when checking if two names share
+# a distinctive core, BUT two names that reduce to the same core ONLY because
+# each carries a DIFFERENT one of these can still be two real, different
+# companies ("Kaizen Software Ltd" vs "Kaizen Consulting Ltd" both reduce to
+# "kaizen" — that is not the same evidence as an actual exact match). See
+# _name_gate's core-ambiguous check, which treats a disagreement here as a
+# reason to downgrade confidence rather than trust it.
+_DESCRIPTOR_TOKENS = {
+    "group", "holdings", "holding", "technologies", "technology", "tech",
+    "software", "solutions", "solution", "services", "service", "systems",
+    "system", "digital", "global", "international", "app", "apps", "network",
+    "networks", "labs", "lab", "studio", "studios", "consulting", "consultancy",
+    "ventures", "partners", "media", "online", "platform", "platforms",
+    "cloud", "it", "europe", "london",
+}
+
 # (Fix for false positives like "Vrinsoft Technology Inc" matching
 #  "ALL EAT APP NETWORK TECHNOLOGY INCORPORATED LTD" via the word "technology".)
-_GENERIC_NAME_TOKENS = {
-    "ltd", "limited", "plc", "llp", "llc", "inc", "incorporated", "co", "corp",
-    "corporation", "company", "group", "holdings", "holding", "uk", "gb",
-    "the", "and", "of", "a", "an", "&",
-    "technologies", "technology", "tech", "software", "solutions", "solution",
-    "services", "service", "systems", "system", "digital", "global",
-    "international", "app", "apps", "network", "networks", "labs", "lab",
-    "studio", "studios", "consulting", "consultancy", "ventures", "partners",
-    "media", "online", "platform", "platforms", "cloud", "it", "europe", "london",
-}
+_GENERIC_NAME_TOKENS = _LEGAL_SUFFIX_TOKENS | _DESCRIPTOR_TOKENS
 
 
 def _normalize_name(name: str) -> str:
@@ -98,8 +110,17 @@ def _name_gate(company_name: str, title: str) -> Optional[Tuple[str, int]]:
 
     c1, c2 = _core_name(company_name), _core_name(title)
 
-    # Same distinctive words (e.g. "vrinsoft" == "vrinsoft") ignoring suffixes
+    # Same distinctive words (e.g. "vrinsoft" == "vrinsoft") ignoring suffixes.
+    # BUT: if the two names only collapsed to the same core because each one
+    # carries a DIFFERENT descriptor word (e.g. "Kaizen Software Ltd" vs
+    # "Kaizen Consulting Ltd" both reduce to "kaizen"), that disagreement is
+    # itself evidence these may be two different companies, not the same one
+    # spelled differently — downgrade instead of trusting it as exact.
     if c1 and c1 == c2:
+        d1 = set(n1.split()) & _DESCRIPTOR_TOKENS
+        d2 = set(n2.split()) & _DESCRIPTOR_TOKENS
+        if d1 and d2 and d1 != d2:
+            return ("core-ambiguous", 55)
         return ("exact-core", 90)
 
     # One distinctive name contains the other (e.g. "monzo" in "monzo bank")
@@ -124,18 +145,29 @@ def _pick_best_match(
     company_name: str,
     sector: str = "",
     description: str = "",
+    hq_city: str = "",
 ) -> Optional[dict]:
     """
     Pick the best matching company from CH search results.
 
     STRINGENT: name similarity is a hard gate — candidates whose names don't
-    plausibly refer to the same company are discarded outright. Status/SIC/
-    address only rank candidates that already passed the gate.
+    plausibly refer to the same company are discarded outright. Everything
+    below is there to DISAMBIGUATE between candidates that already passed the
+    gate — it can never rescue one that failed it, and (via _AMBIGUOUS_GAP)
+    it can flag a match as too close-run to trust even when something passed.
+
+    hq_city: known HQ city/town for the target, when we have it (from the
+    original source or a prior enrichment). A candidate whose registered
+    office sits in the same city is meaningfully more likely to be the real
+    company than a same-named one on the other side of the country — this is
+    real, independent evidence, not a name-similarity heuristic.
     """
     if not results:
         return None
 
     context_lower = f"{sector} {description}".lower()
+    city_lower = (hq_city or "").strip().lower()
+    context_kw = ["software", "tech", "data", "digital", "saas", "platform", "cloud"]
 
     scored = []
     for item in results:
@@ -155,14 +187,24 @@ def _pick_best_match(
 
         sic_codes = item.get("sic_codes") or []
         snippet = (item.get("snippet") or "").lower()
-        if any(kw in snippet or kw in " ".join(sic_codes) for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
-            if any(kw in context_lower for kw in ["software", "tech", "data", "digital", "saas", "platform", "cloud"]):
-                score += 5
+        sector_hint = any(kw in snippet or kw in " ".join(sic_codes) for kw in context_kw)
+        if sector_hint and any(kw in context_lower for kw in context_kw):
+            score += 8  # was 5 — a real sector match is decisive between two same-tier candidates
 
         address = item.get("address", {})
         country = (address.get("country") or "").lower()
         if "united kingdom" in country or "england" in country or "wales" in country or "scotland" in country:
             score += 5
+
+        # Locality match against a KNOWN hq_city is the strongest of these
+        # signals — it comes from an independent source (where we found the
+        # company), not from the name string CH is also being matched on.
+        locality = (address.get("locality") or "").strip().lower()
+        if city_lower and locality:
+            if locality == city_lower or city_lower in locality or locality in city_lower:
+                score += 15
+            else:
+                score -= 5  # known city, registered office somewhere else entirely
 
         item["_match_gate"] = gate_level
         scored.append((score, item))
@@ -173,7 +215,22 @@ def _pick_best_match(
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best = scored[0]
-    logger.info(f"[CH] Best match for '{company_name}': '{best.get('title')}' (gate={best.get('_match_gate')}, score={best_score})")
+
+    # If a DIFFERENT company came within a hair of the top score, this was a
+    # coin-flip, not a confident pick — the caller (extract_ch_financials)
+    # downgrades confidence when it sees this rather than reporting the top
+    # pick as settled fact.
+    runner_up_gap = None
+    if len(scored) > 1:
+        second_score, second = scored[1]
+        if second.get("company_number") != best.get("company_number"):
+            runner_up_gap = best_score - second_score
+    best["_runner_up_gap"] = runner_up_gap
+
+    logger.info(f"[CH] Best match for '{company_name}': '{best.get('title')}' "
+                f"(gate={best.get('_match_gate')}, score={best_score}"
+                + (f", runner-up within {runner_up_gap}" if runner_up_gap is not None and runner_up_gap <= 8 else "")
+                + ")")
     return best
 
 
@@ -564,9 +621,26 @@ def extract_ch_financials(
     region: str = "",
     description: str = "",
     gcs_handler=None,
+    known_company_number: str = "",
+    trust_known_number: bool = True,
+    hq_city: str = "",
 ) -> Dict:
     """
-    Full pipeline: Search CH → Find company → Download accounts PDF → Parse with Gemini.
+    Full pipeline: Find company → Download accounts PDF → Parse with Gemini.
+
+    known_company_number: skip the name search entirely when we already know
+    who this is — e.g. it came from a source that IS the CH register (the SIC
+    scraper, the CH registry scraper), from a previous successful match
+    (ch_company_number already stored), or from a number the company's own
+    website states about itself. Re-deriving the number by name every run
+    reintroduces exactly the ambiguity a prior, more reliable step already
+    resolved for free.
+
+    trust_known_number: True for numbers that came from a structured, already-
+    authoritative source (stored ch_company_number/registration_number) — used
+    with no further check. False for a number recovered by regex from a
+    company's own website text — real signal, but scraped from free text, so
+    it is still cross-checked against the name before being trusted outright.
 
     Returns structured dict with CH company info + extracted financial data.
     """
@@ -578,33 +652,72 @@ def extract_ch_financials(
     if not gemini_key:
         return {"error": "GEMINI_API_KEY not set"}
 
-    # ── Step 1: Search Companies House ──
-    logger.info(f"[CH] Step 1: Searching Companies House for '{company_name}'...")
-    results = _search_company(company_name)
-    if not results:
-        return {"error": f"No results found on Companies House for '{company_name}'"}
+    company_number = ""
+    official_name = ""
+    match_confidence = ""
+    profile = None  # reused below if the known-number path already fetched it
+    known_company_number = (known_company_number or "").strip()
 
-    # Pick best match
-    best = _pick_best_match(results, company_name, sector, description)
-    if not best:
-        return {"error": f"No confident match found on Companies House for '{company_name}'"}
+    # ── Step 1a: a number we already know, no search needed ──
+    if known_company_number:
+        profile_probe = _get_company_profile(known_company_number)
+        if profile_probe:
+            probe_name = profile_probe.get("company_name", "")
+            if trust_known_number or _name_gate(company_name, probe_name) is not None:
+                company_number = known_company_number
+                official_name = probe_name
+                match_confidence = "verified" if trust_known_number else "verified-website"
+                profile = profile_probe  # already fetched — no need to fetch it again below
+                logger.info(f"[CH] Step 1: known number #{company_number} for '{company_name}' "
+                            f"-> '{official_name}' (confidence={match_confidence}) — name search skipped.")
+            else:
+                logger.warning(f"[CH] Known number #{known_company_number} for '{company_name}' resolves to "
+                               f"'{probe_name}' — names don't plausibly match, discarding and falling back to search.")
+        else:
+            logger.warning(f"[CH] Known number #{known_company_number} for '{company_name}' does not resolve "
+                           f"on Companies House (dissolved/mistyped/renumbered?) — falling back to search.")
 
-    company_number = best.get("company_number", "")
-    official_name = best.get("title", "")
-    logger.info(f"[CH] Step 1 result: '{official_name}' (#{company_number})")
+    # ── Step 1b: no usable known number — search Companies House by name ──
+    if not company_number:
+        logger.info(f"[CH] Step 1: Searching Companies House for '{company_name}'...")
+        results = _search_company(company_name)
+        if not results:
+            return {"error": f"No results found on Companies House for '{company_name}'"}
 
-    # Match confidence derives from the name gate the candidate passed
-    gate_level = best.get("_match_gate", "")
-    if gate_level in ("exact", "exact-core"):
-        match_confidence = "high"
-    elif gate_level in ("contains", "fuzzy"):
-        match_confidence = "medium"
-    else:  # "partial"
-        match_confidence = "low"
+        best = _pick_best_match(results, company_name, sector, description, hq_city=hq_city)
+        if not best:
+            return {"error": f"No confident match found on Companies House for '{company_name}'"}
 
-    # ── Step 2: Get company profile ──
-    logger.info(f"[CH] Step 2: Fetching profile for #{company_number}...")
-    profile = _get_company_profile(company_number)
+        gate_level = best.get("_match_gate", "")
+        # Financials feed straight into scoring and the IC memo — hold this to
+        # the same bar the investor-side matcher already uses: a "this sounds
+        # similar" match (fuzzy/partial) or a core name that collapsed only
+        # via mismatched descriptor words (core-ambiguous) is refused outright
+        # rather than reported as fact. No confident match beats a wrong one.
+        if gate_level not in ("exact", "exact-core", "contains"):
+            return {"error": f"Match for '{company_name}' too uncertain to trust with financials "
+                             f"(best candidate: '{best.get('title')}', gate={gate_level}) — refusing to guess."}
+
+        company_number = best.get("company_number", "")
+        official_name = best.get("title", "")
+        runner_up_gap = best.get("_runner_up_gap")
+        close_call = runner_up_gap is not None and runner_up_gap <= 8
+
+        if gate_level == "exact":
+            match_confidence = "medium" if close_call else "high"
+        elif gate_level == "exact-core":
+            match_confidence = "medium" if close_call else "high"
+        else:  # "contains"
+            match_confidence = "low" if close_call else "medium"
+
+        logger.info(f"[CH] Step 1 result: '{official_name}' (#{company_number}), "
+                    f"gate={gate_level}, confidence={match_confidence}"
+                    + (f" (close call vs. a different company, gap={runner_up_gap})" if close_call else ""))
+
+    # ── Step 2: Get company profile (skip if the known-number path already has it) ──
+    if profile is None:
+        logger.info(f"[CH] Step 2: Fetching profile for #{company_number}...")
+        profile = _get_company_profile(company_number)
 
     ch_status = "Unknown"
     ch_incorporated = None

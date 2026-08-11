@@ -1565,6 +1565,65 @@ async def diag_source_counts(request: Request, table: str = Query("targets", des
     return {"table": tbl, "counts": {r.source: r.n for r in rows}}
 
 
+@app.get("/diag/ch-match-audit")
+async def diag_ch_match_audit(request: Request):
+    """Token-gated: re-run the (now-fixed) name gate against every already-
+    matched company's stored (name, ch_official_name) pair — no CH/Gemini
+    calls, just recomputing the same comparison with the tightened logic.
+    Flags anything the new gate would refuse outright or accept only on a
+    weaker tier than what's currently recorded, i.e. rows that may be
+    carrying another company's financials/PSC/cap table. Read-only — nothing
+    is changed here; use it to decide which rows are worth re-running
+    SmartEnrich on."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+
+    from services.companies_house_service import _name_gate
+
+    rows = list(bq_handler.client.query(
+        f"""SELECT name, ch_official_name, ch_company_number, ch_match_confidence
+            FROM `{bq_handler.table_id}`
+            WHERE ch_company_number IS NOT NULL AND ch_company_number != ''""").result())
+
+    flagged = []
+    checked = 0
+    for r in rows:
+        if not r.ch_official_name:
+            continue  # matched before ch_official_name was persisted — nothing to re-check
+        checked += 1
+        gate = _name_gate(r.name, r.ch_official_name)
+        new_level = gate[0] if gate else "REJECTED"
+        # Old confidence -> the loosest gate tier that could have produced it,
+        # under the OLD scheme (fuzzy/partial were both accepted then).
+        old_conf = r.ch_match_confidence or ""
+        risky_new = new_level in ("REJECTED", "fuzzy", "partial", "core-ambiguous")
+        risky_old = old_conf in ("low",) or (old_conf == "medium" and new_level in ("REJECTED", "fuzzy", "partial", "core-ambiguous"))
+        if risky_new or risky_old:
+            flagged.append({
+                "name": r.name,
+                "ch_official_name": r.ch_official_name,
+                "ch_company_number": r.ch_company_number,
+                "stored_confidence": old_conf,
+                "gate_under_new_rules": new_level,
+                "suggested_action": (
+                    "REJECTED — new rules would not have matched this at all; "
+                    "manually verify on Companies House before trusting this row's financials"
+                    if new_level == "REJECTED" else
+                    "would now be refused for financials (sounds similar, not confirmed) — "
+                    "manually verify, or clear ch_company_number to force a fresh match next SmartEnrich"
+                ),
+            })
+
+    return {
+        "checked": checked,
+        "total_with_ch_number": len(rows),
+        "flagged_count": len(flagged),
+        "flagged": flagged,
+    }
+
+
 @app.get("/diag/deep/{company_name}")
 async def diag_deep(company_name: str, request: Request,
                     step: str = Query("stored", description="stored|search|profile|psc|officers|network|charges|filings|captable|sh01|links")):
@@ -2190,6 +2249,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # search → Hunter email-finder → published ceo@ → verified pattern guess →
     # a colleague → the shared enquiries inbox. Finding a colleague never ends
     # the search; their address is what teaches us the company's email pattern.
+    res = {}
     try:
         from services.contact_finder import resolve_contact_email
         _site = website or company_data.get("website", "")
@@ -2219,6 +2279,18 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     ch_data = {}
     if qual.get("is_uk_ireland"):
         logger.info(f"UK/Ireland company — extracting Companies House financials for '{company_name}'")
+        # Prefer a number we already KNOW over a fresh name search, in order:
+        # 1. already stored on the row (CH SIC ingest, CH registry scraper,
+        #    or a previous successful match) — fully trusted, no re-check.
+        # 2. found moments ago on the company's own website by the contact
+        #    waterfall above (Step 2) — real signal, cross-checked against
+        #    the name before use.
+        # Only when neither exists do we fall back to matching by name.
+        _known_number = company_data.get("ch_company_number") or company_data.get("registration_number") or ""
+        _trust_known = True
+        if not _known_number:
+            _known_number = res.get("site_company_number") or ""
+            _trust_known = False
         try:
             ch_data = extract_ch_financials(
                 company_name,
@@ -2226,6 +2298,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 region=company_data.get("region", ""),
                 description=description or company_data.get("description", ""),
                 gcs_handler=gcs_handler,
+                known_company_number=_known_number,
+                trust_known_number=_trust_known,
+                hq_city=company_data.get("hq_city", ""),
             )
             if ch_data.get("error"):
                 logger.warning(f"CH extraction returned error for {company_name}: {ch_data['error']}")
@@ -2809,10 +2884,16 @@ async def smartenrich_company(company_name: str):
         known_date = company.get("revenue_y1_date") or ""
         needs_history = not company.get("ch_history")
         if latest_filing_date and (latest_filing_date > known_date or needs_history):
+            # `number` (above) is already the CH-verified identity for this
+            # row — never re-derive it by name here. Re-searching on every
+            # periodic re-parse is exactly how a re-enrichment run could
+            # silently drift onto a different, similarly-named company.
             ch_data = extract_ch_financials(company_name, sector=company.get("sector", ""),
                                             region=company.get("region", ""),
                                             description=company.get("description", ""),
-                                            gcs_handler=gcs_handler)
+                                            gcs_handler=gcs_handler,
+                                            known_company_number=number,
+                                            trust_known_number=True)
             if not ch_data.get("error"):
                 new_financials = True
                 for col in ["revenue_y1", "revenue_y2", "revenue_y3", "gross_profit_y1", "gross_profit_y2",

@@ -19,6 +19,32 @@ _TIMEOUT = 6
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AverroesIntel/1.0; +https://averroescapital.com)"}
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+# A UK company is required to state its registration number on its own site
+# (Companies Act 2006 s.82), and in practice almost always does — usually in
+# the footer or on the Terms/Privacy page, which are exactly the pages we
+# already crawl for emails. Cross-referencing a number the company states
+# about ITSELF is a completely independent signal from name-similarity
+# matching, so it fixes the "sounds similar but is a different company" class
+# of CH mismatch without adding a single extra HTTP request.
+_CH_NUMBER_RE = re.compile(
+    r"(?:company\s*(?:reg(?:istration)?\.?|no\.?|number)\s*[:#]?\s*|"
+    r"registered\s+in\s+england(?:\s+and\s+wales)?\s*(?:,)?\s*(?:no\.?|number)?\s*[:#]?\s*|"
+    r"registered\s+company\s+number\s*[:#]?\s*)"
+    r"([A-Z]{0,2}\d{6,8})",
+    re.I,
+)
+
+
+def _extract_company_number(html: str) -> str:
+    """First plausible CH registration number stated in the page's own text
+    (footer/Terms/Privacy boilerplate). Empty if nothing looks right."""
+    # Strip tags to text first so "Company No: <b>12345678</b>" still matches.
+    text = re.sub(r"<[^>]+>", " ", html)
+    m = _CH_NUMBER_RE.search(text)
+    if not m:
+        return ""
+    return m.group(1).upper().strip()
 # Obvious non-contact addresses and file-name lookalikes
 _JUNK_PREFIXES = ("noreply", "no-reply", "donotreply", "notifications", "example",
                   "sentry", "wixpress", "godaddy", "email@", "user@", "name@")
@@ -63,23 +89,30 @@ def find_site_emails(website: str, contact_name: str = "") -> Dict:
     """
     domain = _clean_domain(website)
     if not domain:
-        return {"email": "", "source": "", "all": [], "pages": {}}
+        return {"email": "", "source": "", "all": [], "pages": {}, "company_number": "", "company_number_source": ""}
 
     base = f"https://{domain}"
     found: Dict[str, str] = {}  # email -> page found on
+    company_number, company_number_source = "", ""
     for path in _PATHS:
         url = urljoin(base, path)
         try:
             resp = requests.get(url, timeout=_TIMEOUT, headers=_HEADERS, allow_redirects=True)
             if resp.status_code != 200 or "text/html" not in resp.headers.get("content-type", ""):
                 continue
-            for e in _extract_emails(resp.text[:400_000]):
+            page_text = resp.text[:400_000]
+            for e in _extract_emails(page_text):
                 found.setdefault(e, url)
+            if not company_number:
+                num = _extract_company_number(page_text)
+                if num:
+                    company_number, company_number_source = num, url
         except Exception:
             continue
 
     if not found:
-        return {"email": "", "source": "", "all": [], "pages": {}}
+        return {"email": "", "source": "", "all": [], "pages": {},
+                "company_number": company_number, "company_number_source": company_number_source}
 
     # Rank: same-domain first; then name-matching personal > personal > generic
     name_bits = [w for w in re.sub(r"[^a-z ]", "", (contact_name or "").lower()).split() if len(w) > 2]
@@ -92,8 +125,10 @@ def find_site_emails(website: str, contact_name: str = "") -> Dict:
         return (same_domain, name_match, not generic)
 
     best = sorted(found.keys(), key=score, reverse=True)[0]
-    logger.info(f"[ContactFinder] {domain}: {len(found)} email(s) on site; picked {best}")
-    return {"email": best, "source": found[best], "all": sorted(found.keys()), "pages": dict(found)}
+    logger.info(f"[ContactFinder] {domain}: {len(found)} email(s) on site; picked {best}"
+                + (f"; CH number {company_number} found on {company_number_source}" if company_number else ""))
+    return {"email": best, "source": found[best], "all": sorted(found.keys()), "pages": dict(found),
+            "company_number": company_number, "company_number_source": company_number_source}
 
 
 # ── Who does an address belong to? ─────────────────────────────────────────
@@ -425,11 +460,20 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
     verifier_on = bool(_os.getenv("HUNTER_API_KEY", "") or _os.getenv("EMAIL_VERIFIER_API_KEY", ""))
     founder_named = bool((contact_name or "").strip())
 
+    # A CH registration number the company states about ITSELF, found on the
+    # same pages just crawled above — independent of anything to do with
+    # names, so it rides along on every outcome below regardless of which
+    # email rung matched (or didn't).
+    site_company_number = site.get("company_number", "")
+    site_company_number_source = site.get("company_number_source", "")
+
     def _out(email, source, verification, kind, step, recipient_name="",
              guess="", guess_status=""):
         return {"email": email or "", "source": source or "", "verification": verification,
                 "kind": kind, "recipient_name": recipient_name, "step": step,
-                "founder_guess": guess, "founder_guess_status": guess_status}
+                "founder_guess": guess, "founder_guess_status": guess_status,
+                "site_company_number": site_company_number,
+                "site_company_number_source": site_company_number_source}
 
     # Everything seen so far, each with a citation for where it came from.
     seen: List[tuple] = []

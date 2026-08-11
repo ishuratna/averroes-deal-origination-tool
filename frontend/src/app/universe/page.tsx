@@ -2005,6 +2005,11 @@ function UniverseInner() {
         .result-ch-conf-high { background: #dcfce7; color: #166534; }
         .result-ch-conf-medium { background: #fef9c3; color: #854d0e; }
         .result-ch-conf-low { background: #fee2e2; color: #991b1b; }
+        /* Not a guess at all — we already knew the registration number
+           (stored on the row, or stated on the company's own website) and
+           skipped name-matching entirely. Distinct from "high" on purpose. */
+        .result-ch-conf-verified { background: #dbeafe; color: #1e40af; }
+        .result-ch-conf-verified-website { background: #e0e7ff; color: #3730a3; }
         .outreach-loading { text-align: center; padding: 2.5rem 1.5rem; }
         .outreach-loading p { color: #64748b; margin-top: 0.75rem; font-size: 0.95rem; }
         .outreach-loading .loading-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 0.15rem; }
