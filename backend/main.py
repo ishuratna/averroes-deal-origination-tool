@@ -3752,6 +3752,180 @@ def _apply_ooo(entry: dict) -> dict:
             "pulled_back": pulled}
 
 
+def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
+    """Retro pass: apply out-of-office handling to mail already in the log.
+
+    Everything the live sync now does for a fresh autoresponder, applied to the
+    history. Possible without touching the mailbox because email_log already
+    stores each message's subject and snippet, so an OOO logged before
+    detection existed can simply be re-read.
+
+    Order matters:
+      1. Re-scan every stored inbound and mark the autoresponders.
+      2. Per company, take the LATEST OOO and stamp ooo_until, so the reminder
+         reflects the most recent thing they told us.
+      3. Clear reply-derived state and pull back to Engaged, but ONLY for
+         companies with no genuine reply. A company that sent an OOO and later
+         actually replied keeps its reply state and its stage.
+      4. Run the general pull-back reconciliation to catch companies advanced
+         off a reply that no longer exists at all.
+    """
+    from services.ooo_detect import (detect as ooo_detect, followup_days as ooo_days,
+                                     is_auto_reply, parse_return_date)
+
+    rows = bq_handler.get_received_log(limit=limit)
+    genuine = bq_handler.genuine_reply_names()
+
+    # Newest inbound per company (rows arrive newest first). An out-of-office
+    # only describes the CURRENT state if nothing has come in since: a company
+    # that sent an autoresponder in July and then actually replied in August is
+    # not out of office, and stamping the stale return date would wrongly defer
+    # their reminder.
+    newest_inbound: dict = {}
+    for r in rows:
+        newest_inbound.setdefault(r.get("entity_name"), r.get("message_id"))
+
+    # 1. Which stored messages are autoresponders?
+    hits, ai_used = [], 0
+    for r in rows:
+        subj, snip = r.get("subject") or "", r.get("snippet") or ""
+        if not is_auto_reply(subj, snip):
+            continue
+        on = _as_date(r.get("sent_at"))
+        until = parse_return_date(subj, snip, on)
+        source = "pattern" if until else ""
+        if not until and ai_used < ai_budget:
+            ai_used += 1
+            got = ooo_detect(subj, snip, received_on=on, allow_ai=True)
+            until, source = got.get("until"), got.get("date_source", "")
+        hits.append({"message_id": r.get("message_id"), "name": r.get("entity_name"),
+                     "sent_at": r.get("sent_at"), "until": until, "date_source": source,
+                     "already_marked": r.get("classification") == "out_of_office",
+                     "subject": subj[:120]})
+
+    # 2. Per company, the OOO only counts if it is their newest inbound.
+    # Autoresponders that were later superseded by a genuine reply are marked in
+    # the log (so they never count as a reply) but do not set ooo_until.
+    latest: dict = {}
+    for h in hits:
+        if h["message_id"] == newest_inbound.get(h["name"]):
+            latest.setdefault(h["name"], h)
+
+    to_mark = [h["message_id"] for h in hits if h["message_id"] and not h["already_marked"]]
+
+    # 3. Who can be corrected: no genuine reply on record.
+    universe = {c["name"]: c for c in bq_handler.get_universe_slim()}
+    plan = []
+    for name, h in latest.items():
+        c = universe.get(name)
+        if not c or c.get("source") == "Internal Test":
+            continue
+        has_genuine = name in genuine
+        status = c.get("status") or ""
+        target = ""
+        if not has_genuine and status == "Contacted":
+            target = "Engaged" if c.get("outreach_sent_at") else "Qualified"
+        until_s = h["until"].isoformat() if h["until"] else ""
+        days = None
+        if h["until"]:
+            days = ooo_days(_as_date(h["sent_at"]), h["until"])
+        plan.append({
+            "name": name, "status": status, "ooo_until": until_s,
+            "date_source": h["date_source"], "reminder_days": days,
+            "has_genuine_reply": has_genuine,
+            "pull_back_to": target, "subject": h["subject"],
+        })
+
+    if dry_run:
+        return {
+            "status": "Preview",
+            "dry_run": True,
+            "scanned_messages": len(rows),
+            "autoresponders_found": len(hits),
+            "messages_to_mark": len(to_mark),
+            "companies_affected": len(plan),
+            "with_return_date": sum(1 for p in plan if p["ooo_until"]),
+            "reminder_deferred": sum(1 for p in plan if (p["reminder_days"] or 0) > 14),
+            "would_pull_back": sum(1 for p in plan if p["pull_back_to"]),
+            "ai_calls_used": ai_used,
+            "companies": sorted(plan, key=lambda p: (not p["pull_back_to"], p["name"])),
+            "stale_contacted_no_reply": bq_handler.reconcile_unreplied_contacted(dry_run=True),
+            "message": ("Nothing was changed. Re-run with dry_run=0 to apply."),
+        }
+
+    marked = bq_handler.mark_emails_classification(to_mark, "out_of_office") if to_mark else 0
+
+    applied, pulled = [], []
+    for p in plan:
+        name = p["name"]
+        try:
+            note = (f"Out of office until {p['ooo_until']} (backfilled from the stored email log). "
+                    f"Follow-up reminder set to {p['reminder_days']} days after our email."
+                    if p["ooo_until"] else
+                    "Out of office, no return date stated. Follow-up reminder stays at 14 days.")
+            # Reply-derived fields are cleared ONLY where there is no genuine
+            # reply, so a real conversation is never wiped by this pass.
+            clear = ("" if p["has_genuine_reply"] else
+                     ", last_reply_at = NULL, reply_classification = NULL,"
+                     " action_bucket = NULL, action_rationale = NULL,"
+                     " action_follow_up_date = NULL, action_set_at = NULL,"
+                     " action_reply_subject = NULL, action_reply_body = NULL")
+            bq_handler.client.query(
+                f"""UPDATE `{bq_handler.table_id}`
+                    SET ooo_until = @until, ooo_note = @note{clear}
+                    WHERE name = @name""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("until", "STRING", p["ooo_until"]),
+                    bq_lib.ScalarQueryParameter("note", "STRING", note),
+                    bq_lib.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            if p["pull_back_to"]:
+                bq_handler.update_company_status(name, p["pull_back_to"], created_by="email-sync")
+                note += f" Pulled back to {p['pull_back_to']}: an out-of-office is not a reply."
+                pulled.append(f"{name} -> {p['pull_back_to']}")
+            bq_handler.add_activity_note(name, note, created_by="email-sync")
+            applied.append(name)
+        except Exception as e:
+            logger.warning(f"[OOO backfill] {name} failed: {e}")
+
+    stale = bq_handler.reconcile_unreplied_contacted()
+
+    return {
+        "status": "Success",
+        "dry_run": False,
+        "scanned_messages": len(rows),
+        "autoresponders_found": len(hits),
+        "messages_marked": marked,
+        "companies_updated": len(applied),
+        "pulled_back": pulled,
+        "stale_contacted_pulled_back": stale,
+        "ai_calls_used": ai_used,
+        "message": (f"Scanned {len(rows)} logged inbound messages, found {len(hits)} autoresponders, "
+                    f"marked {marked}, updated {len(applied)} companies, pulled {len(pulled)} back "
+                    f"out of Responded, plus {len(stale)} with no reply on record at all."),
+    }
+
+
+@app.post("/email/ooo-backfill")
+async def ooo_backfill(request: Request,
+                       dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
+                       ai_budget: int = Query(0, description="Max AI calls for unparseable dates"),
+                       limit: int = Query(5000, description="Max logged inbound messages to scan")):
+    """Retro-apply out-of-office handling to companies already in dialogue.
+
+    Defaults to a PREVIEW: it reports exactly what it would change and writes
+    nothing. Pass dry_run=0 to apply. Pattern matching only unless ai_budget is
+    raised, so a preview costs nothing.
+    """
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return _stream_json(lambda: _ooo_backfill(bool(dry_run),
+                                              max(0, min(ai_budget, 200)),
+                                              max(1, min(limit, 20000))))
+
+
 @app.post("/email/sync")
 async def sync_emails(days: int = Query(30, description="How many days back to scan"),
                       deep: bool = Query(False, description="Search per known contact — captures full history from the start")):

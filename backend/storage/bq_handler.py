@@ -1154,7 +1154,63 @@ class BigQueryHandler:
             logger.error(f"get_responded failed: {e}")
             return []
 
-    def reconcile_unreplied_contacted(self) -> List[Dict]:
+    def get_received_log(self, limit: int = 5000) -> List[Dict]:
+        """Every inbound company message already in email_log.
+
+        subject and snippet are stored, so an out-of-office that was logged
+        BEFORE detection existed can be re-read from here — no mailbox access,
+        no re-sync, no cost. This is what makes a retro pass possible.
+        """
+        if not self.client:
+            return []
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            return self._run_query(f"""
+                SELECT message_id, entity_name, subject, snippet,
+                       IFNULL(classification, '') AS classification,
+                       CAST(sent_at AS STRING) AS sent_at
+                FROM `{log}`
+                WHERE entity_type = 'company' AND direction = 'received'
+                ORDER BY sent_at DESC
+                LIMIT {max(1, int(limit))}
+            """)
+        except Exception as e:
+            logger.error(f"get_received_log failed: {e}")
+            return []
+
+    def mark_emails_classification(self, message_ids: List[str], classification: str) -> int:
+        """Batch-set classification on logged messages. One statement, not one
+        per row, so a backfill over thousands of rows stays cheap."""
+        if not self.client or not message_ids:
+            return 0
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        job = self.client.query(
+            f"UPDATE `{log}` SET classification = @cls WHERE message_id IN UNNEST(@ids)",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("cls", "STRING", classification),
+                bigquery.ArrayQueryParameter("ids", "STRING", message_ids),
+            ]))
+        job.result()
+        return int(job.num_dml_affected_rows or 0)
+
+    def genuine_reply_names(self) -> set:
+        """Companies with at least one inbound that is NOT an autoresponder.
+        Used to decide who may be pulled back and whose reply state must stay."""
+        if not self.client:
+            return set()
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            rows = self.client.query(f"""
+                SELECT DISTINCT entity_name FROM `{log}`
+                WHERE entity_type = 'company' AND direction = 'received'
+                  AND IFNULL(classification, '') != 'out_of_office'
+            """).result()
+            return {r.entity_name for r in rows}
+        except Exception as e:
+            logger.error(f"genuine_reply_names failed: {e}")
+            return set()
+
+    def reconcile_unreplied_contacted(self, dry_run: bool = False) -> List[Dict]:
         """Mirror of the sync's auto-advance: pull a company BACK out of
         'Contacted' when no reply actually exists.
 
@@ -1209,6 +1265,10 @@ class BigQueryHandler:
         except Exception as e:
             logger.error(f"reconcile_unreplied_contacted query failed: {e}")
             return []
+
+        if dry_run:
+            return [{"name": r.name, "from": "Contacted", "to": r.target,
+                     "would_change": True} for r in rows]
 
         changed = []
         for r in rows:
