@@ -31,7 +31,8 @@ assert "{" not in sql, f"unresolved placeholder in SQL:\n{sql}"
 db = duckdb.connect()
 db.execute("""
 CREATE TABLE targets (name VARCHAR, status VARCHAR, source VARCHAR, outreach_sent_at TIMESTAMP);
-CREATE TABLE email_log (entity_name VARCHAR, entity_type VARCHAR, direction VARCHAR);
+CREATE TABLE email_log (entity_name VARCHAR, entity_type VARCHAR, direction VARCHAR,
+                        classification VARCHAR);
 CREATE TABLE activity_log (company_name VARCHAR, action_type VARCHAR, new_status VARCHAR,
                            created_by VARCHAR, created_at TIMESTAMP);
 """)
@@ -41,8 +42,8 @@ T = "2026-08-01 10:00:00"
 def company(name, status, sent=T, source="Conference"):
     db.execute("INSERT INTO targets VALUES (?,?,?,?)", [name, status, source, sent])
 
-def mail(name, direction):
-    db.execute("INSERT INTO email_log VALUES (?,?,?)", [name, "company", direction])
+def mail(name, direction, cls=None):
+    db.execute("INSERT INTO email_log VALUES (?,?,?,?)", [name, "company", direction, cls])
 
 def moved(name, to, by, at=T):
     db.execute("INSERT INTO activity_log VALUES (?,?,?,?,?)",
@@ -94,12 +95,25 @@ company("Neighbour", "Contacted");             mail("Neighbour", "sent")
 moved("Neighbour", "Contacted", "email-sync")
 mail("SomeoneElse", "received")
 
+# 11. An out-of-office is NOT a reply, so it must not shield a company from
+#     being pulled back. This is the whole point of the classification filter.
+company("OooOnly", "Contacted");                mail("OooOnly", "sent")
+mail("OooOnly", "received", cls="out_of_office")
+moved("OooOnly", "Contacted", "email-sync")
+
+# 12. An OOO plus a genuine reply -> the genuine one protects it.
+company("OooAndReal", "Contacted");             mail("OooAndReal", "sent")
+mail("OooAndReal", "received", cls="out_of_office")
+mail("OooAndReal", "received", cls="interested")
+moved("OooAndReal", "Contacted", "email-sync")
+
 got = {r[0]: r[1] for r in db.execute(sql).fetchall()}
 want = {
     "GhostReply":   "Engaged",
     "SyncLast":     "Engaged",
     "NeverEmailed": "Qualified",
     "Neighbour":    "Engaged",
+    "OooOnly":      "Engaged",   # an autoresponder never counts as a reply
 }
 
 fails = 0
@@ -110,7 +124,7 @@ for name, target in want.items():
     fails += 0 if ok else 1
 
 for name in ("RealReply", "PhonedIn", "HumanLast", "TestCo", "AwaitingReply",
-             "DeepMeeting", "DeepDD", "DeepOffer", "DeepWon"):
+             "OooAndReal", "DeepMeeting", "DeepDD", "DeepOffer", "DeepWon"):
     ok = name not in got
     print(("PASS" if ok else "FAIL"), f"{name} left alone",
           "" if ok else f"-> wrongly pulled back to {got.get(name)!r}")

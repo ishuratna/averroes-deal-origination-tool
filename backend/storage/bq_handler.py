@@ -76,6 +76,11 @@ class BigQueryHandler:
         # ONE owner field on purpose: it changes hands from Ishu to the assigned
         # associate on loop-in, so per-person open-call counts derive from it
         # directly and there is never a second copy of "who has this".
+        # Out-of-office: the first day the recipient said they are back, read
+        # from their autoresponder. Drives the follow-up reminder override.
+        # Stored as a plain YYYY-MM-DD string, like the other date columns here.
+        ("ooo_until", "STRING"),
+        ("ooo_note", "STRING"),
         ("owner", "STRING"),
         # 'A' = high fit, goes to Bea via the Thursday session.
         # 'B' = low/moderate fit or too early, associate call via Wednesday.
@@ -1176,9 +1181,13 @@ class BigQueryHandler:
         try:
             rows = list(self.client.query(f"""
                 WITH replied AS (
+                    -- Out-of-office autoresponders are excluded: they are not
+                    -- replies, so one must never shield a company from being
+                    -- pulled back out of Contacted.
                     SELECT DISTINCT entity_name
                     FROM `{log}`
                     WHERE entity_type = 'company' AND direction = 'received'
+                      AND IFNULL(classification, '') != 'out_of_office'
                 ),
                 last_move AS (
                     SELECT company_name, created_by,

@@ -1474,39 +1474,90 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
     try:
         email_table = bq_handler._ensure_email_log_table()
         rows = bq_handler.client.query(f"""
-            WITH latest AS (
+            WITH msgs AS (
                 SELECT entity_name, direction, subject, snippet, counterparty_email, sent_at,
-                       ROW_NUMBER() OVER (PARTITION BY entity_name ORDER BY sent_at DESC) AS rn
+                       IFNULL(classification, '') = 'out_of_office' AS is_ooo
                 FROM `{email_table}`
                 WHERE entity_type = 'company'
+            ),
+            -- Our last outbound. The follow-up clock runs from HERE, never from
+            -- an autoresponder that happened to arrive afterwards.
+            last_sent AS (
+                SELECT * EXCEPT(rn) FROM (
+                    SELECT entity_name, subject, snippet, counterparty_email, sent_at,
+                           ROW_NUMBER() OVER (PARTITION BY entity_name ORDER BY sent_at DESC) AS rn
+                    FROM msgs WHERE direction = 'sent'
+                ) WHERE rn = 1
+            ),
+            -- Their last GENUINE inbound. Out-of-office replies are excluded:
+            -- an autoresponder does not mean we owe anybody an answer.
+            last_recv AS (
+                SELECT * EXCEPT(rn) FROM (
+                    SELECT entity_name, subject, snippet, counterparty_email, sent_at,
+                           ROW_NUMBER() OVER (PARTITION BY entity_name ORDER BY sent_at DESC) AS rn
+                    FROM msgs WHERE direction = 'received' AND NOT is_ooo
+                ) WHERE rn = 1
+            ),
+            calc AS (
+                SELECT t.name, t.status, t.contact_name, t.averroes_fit_score,
+                       t.action_bucket, NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note,
+                       s.sent_at AS last_sent_at, s.subject AS sent_subject,
+                       s.snippet AS sent_snippet, s.counterparty_email AS sent_to,
+                       r.sent_at AS last_recv_at, r.subject AS recv_subject,
+                       r.snippet AS recv_snippet, r.counterparty_email AS recv_from,
+                       -- The agreed rule, verbatim:
+                       --   length = days from our email to their return date
+                       --   if length > 14: remind at length + 1 days
+                       --   else:           remind at 14 days
+                       -- The comparison is STRICTLY greater than @days, so a
+                       -- return date exactly 14 days out does NOT override the
+                       -- base rule. (A plain GREATEST() would, and did — it
+                       -- effectively triggers from length > 13.) Anything
+                       -- shorter, absent or already past keeps the 14 days.
+                       IF(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')) IS NOT NULL
+                          AND DATE_DIFF(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')),
+                                        DATE(s.sent_at), DAY) > @days,
+                          TIMESTAMP(DATE_ADD(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')),
+                                             INTERVAL 1 DAY)),
+                          TIMESTAMP_ADD(s.sent_at, INTERVAL @days DAY)
+                       ) AS due_at
+                FROM `{bq_handler.table_id}` t
+                JOIN last_sent s ON s.entity_name = t.name
+                LEFT JOIN last_recv r ON r.entity_name = t.name
+                WHERE t.status IN ('Engaged', 'Contacted', 'Meeting', 'DD', 'Offer')
+                  AND IFNULL(t.source, '') != 'Internal Test'
             )
-            SELECT l.entity_name AS name, l.subject, l.snippet, l.counterparty_email,
-                   CAST(l.sent_at AS STRING) AS last_email_at,
-                   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) AS days_waiting,
-                   IF(l.direction = 'sent', 'waiting_on_them', 'we_owe_reply') AS type,
-                   t.status, t.contact_name, t.averroes_fit_score, t.action_bucket
-            FROM latest l
-            JOIN `{bq_handler.table_id}` t ON t.name = l.entity_name
-            WHERE l.rn = 1
-              AND t.status IN ('Engaged', 'Contacted', 'Meeting', 'DD', 'Offer')
-              AND IFNULL(t.source, '') != 'Internal Test'
-              AND (
-                (l.direction = 'sent'
-                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @days)
+            SELECT name, status, contact_name, averroes_fit_score, action_bucket,
+                   ooo_until, ooo_note,
+                   CAST(due_at AS STRING) AS due_at,
+                   TIMESTAMP_DIFF(due_at, last_sent_at, DAY) AS threshold_days,
+                   IF(owed, 'we_owe_reply', 'waiting_on_them') AS type,
+                   IF(owed, recv_subject, sent_subject) AS subject,
+                   IF(owed, recv_snippet, sent_snippet) AS snippet,
+                   IF(owed, recv_from, sent_to) AS counterparty_email,
+                   CAST(IF(owed, last_recv_at, last_sent_at) AS STRING) AS last_email_at,
+                   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), IF(owed, last_recv_at, last_sent_at), DAY) AS days_waiting
+            FROM (SELECT *, last_recv_at IS NOT NULL AND last_recv_at > last_sent_at AS owed FROM calc)
+            WHERE (
+                -- They answered and the ball is with us.
+                (owed
+                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), last_recv_at, DAY) >= @reply_days
+                 AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close'))
                 OR
-                (l.direction = 'received'
-                 AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.sent_at, DAY) >= @reply_days
-                 AND IFNULL(t.action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close'))
-              )
-            ORDER BY IF(l.direction = 'received', 0, 1), days_waiting DESC""",
+                -- Silence since our email, and the reminder is now due.
+                (NOT owed AND CURRENT_TIMESTAMP() >= due_at)
+            )
+            ORDER BY owed DESC, days_waiting DESC""",
             job_config=bq_lib.QueryJobConfig(query_parameters=[
                 bq_lib.ScalarQueryParameter("days", "INT64", max(1, min(days, 365))),
                 bq_lib.ScalarQueryParameter("reply_days", "INT64", max(1, min(reply_days, 365))),
             ])).result()
         items = [dict(r) for r in rows]
         owe = sum(1 for i in items if i["type"] == "we_owe_reply")
+        deferred = sum(1 for i in items if (i.get("threshold_days") or 0) > days)
         return {"days_threshold": days, "reply_days_threshold": reply_days,
-                "count": len(items), "we_owe_count": owe, "followups": items}
+                "count": len(items), "we_owe_count": owe,
+                "ooo_deferred_count": deferred, "followups": items}
     except Exception as e:
         logger.warning(f"Follow-up query failed: {e}")
         return {"days_threshold": days, "count": 0, "followups": [], "error": str(e)}
@@ -3619,6 +3670,88 @@ class CriteriaApplyRequest(BaseModel):
 
 # ── Email communications log ─────────────────────────────────────────────────
 
+def _as_date(ts) -> "date_cls":
+    """Best-effort date from whatever the mailbox handed us (ISO string or
+    datetime). Falls back to today rather than raising, since a missing
+    timestamp must never stop a sync."""
+    from datetime import date as date_cls, datetime as dt_cls
+    if isinstance(ts, dt_cls):
+        return ts.date()
+    if isinstance(ts, date_cls):
+        return ts
+    s = str(ts or "")[:10]
+    try:
+        return dt_cls.strptime(s, "%Y-%m-%d").date()
+    except Exception:
+        return date_cls.today()
+
+
+def _apply_ooo(entry: dict) -> dict:
+    """Record an out-of-office autoresponder against its company.
+
+    Three things happen, and NOT the fourth:
+      * ooo_until / ooo_note are stamped so /followups can push the reminder
+        out past their return date.
+      * Any reply-derived state is cleared, because an autoresponder is not a
+        reply and must not leave a reply chip or an action bucket behind.
+      * If a previous sync had advanced this company to Contacted off the back
+        of this autoresponder, it is pulled straight back to Engaged.
+      * We do NOT advance the stage and do NOT spend an action-bucket call.
+    """
+    from google.cloud import bigquery as bq_lib
+    name = entry["entity_name"]
+    got = entry.get("_ooo") or {}
+    until = got.get("until")
+    until_s = until.isoformat() if until else ""
+    sent_on = _as_date(entry.get("sent_at"))
+
+    if until:
+        from services.ooo_detect import followup_days as _fd
+        days = _fd(sent_on, until)
+        note = (f"Out of office until {until_s} (read from their autoresponder "
+                f"by {got.get('date_source') or 'pattern'}). Follow-up reminder moved to "
+                f"{days} days after our email.")
+    else:
+        note = ("Out of office, no return date stated in the autoresponder. "
+                "Follow-up reminder stays at 14 days.")
+
+    bq_handler.client.query(
+        f"""UPDATE `{bq_handler.table_id}` SET
+                ooo_until = @until, ooo_note = @note,
+                last_reply_at = NULL, reply_classification = NULL,
+                action_bucket = NULL, action_rationale = NULL,
+                action_follow_up_date = NULL, action_set_at = NULL,
+                action_reply_subject = NULL, action_reply_body = NULL
+            WHERE name = @name""",
+        job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("until", "STRING", until_s),
+            bq_lib.ScalarQueryParameter("note", "STRING", note),
+            bq_lib.ScalarQueryParameter("name", "STRING", name),
+        ])).result()
+
+    # An autoresponder must never leave a company sitting in Responded. If an
+    # earlier sync advanced it (before OOO was understood), pull it back now.
+    pulled = False
+    try:
+        rows = list(bq_handler.client.query(
+            f"SELECT status, outreach_sent_at FROM `{bq_handler.table_id}` WHERE name = @name LIMIT 1",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("name", "STRING", name)])).result())
+        if rows and rows[0].status == "Contacted":
+            target = "Engaged" if rows[0].outreach_sent_at else "Qualified"
+            bq_handler.update_company_status(name, target, created_by="email-sync")
+            pulled = True
+            note += f" Pulled back to {target}: an out-of-office is not a reply."
+    except Exception as e:
+        logger.warning(f"OOO pull-back check failed for {name}: {e}")
+
+    bq_handler._log_activity(name, "note", "email-sync", note_text=note,
+                             event_time=entry.get("sent_at"))
+    logger.info(f"[OOO] {name}: until={until_s or 'unknown'} pulled_back={pulled}")
+    return {"name": name, "until": until_s, "date_source": got.get("date_source", ""),
+            "pulled_back": pulled}
+
+
 @app.post("/email/sync")
 async def sync_emails(days: int = Query(30, description="How many days back to scan"),
                       deep: bool = Query(False, description="Search per known contact — captures full history from the start")):
@@ -3717,8 +3850,42 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     seen = bq_handler.get_logged_message_ids()
     new_entries = [e for e in entries if e.get("message_id") not in seen]
 
-    replies = [e for e in new_entries if e["direction"] == "received"]
+    # ── Autoresponders are not replies ───────────────────────────────────────
+    # An "I'm away until the 15th" used to advance the company to Responded,
+    # consume two Gemini calls and land on the triage queue. Now it is detected
+    # first (deterministically, one cheap AI call only if the date cannot be
+    # read), stamped on the company to move the follow-up reminder out, and
+    # then kept OUT of `replies` so none of the reply machinery touches it.
+    from services.ooo_detect import detect as _ooo_detect, followup_days as _ooo_followup_days
+
+    received_new = [e for e in new_entries if e["direction"] == "received"]
+    ooo_hits, replies = [], []
+    for e in received_new:
+        try:
+            got = _ooo_detect(e.get("subject", ""), e.get("snippet", ""),
+                              headers=e.get("headers", ""),
+                              received_on=_as_date(e.get("sent_at")))
+        except Exception as ex:
+            logger.warning(f"OOO detection failed for {e.get('entity_name')}: {ex}")
+            got = {"is_ooo": False}
+        if got.get("is_ooo"):
+            e["classification"] = "out_of_office"
+            e["summary"] = ("Automatic out-of-office reply"
+                            + (f", back {got['until'].isoformat()}" if got.get("until") else ", no return date stated"))
+            e["_ooo"] = got
+            ooo_hits.append(e)
+        else:
+            replies.append(e)
+
     advanced, classified = [], 0
+    ooo_applied = []
+    for e in ooo_hits:
+        if e.get("entity_type") != "company":
+            continue
+        try:
+            ooo_applied.append(_apply_ooo(e))
+        except Exception as ex:
+            logger.warning(f"OOO stamp failed for {e.get('entity_name')}: {ex}")
 
     for r in replies[:25]:  # classification bounded per sync run
         result = classify_reply(r["subject"], r["snippet"], r["entity_name"])
@@ -3851,6 +4018,15 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         ename = r["entity_name"]
         if r["entity_type"] != "company" or ename in handled:
             continue
+        # An autoresponder is not a reply, so it must not trigger the advance
+        # here either. Re-checked (not read off `_ooo`) because this pass also
+        # walks messages logged in EARLIER runs, which carry no such marker.
+        try:
+            from services.ooo_detect import is_auto_reply as _is_auto
+            if _is_auto(r.get("subject", ""), r.get("snippet", ""), r.get("headers", "")):
+                continue
+        except Exception:
+            pass
         sender = _sender_of(r["counterparty_email"])
         if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
             try:

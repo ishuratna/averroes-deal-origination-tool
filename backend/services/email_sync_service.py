@@ -149,6 +149,17 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 "subject": _decode(msg.get("Subject")),
                 "snippet": _body_snippet(msg),
                 "sent_at": sent_at,
+                # Autoresponder markers only (RFC 3834 and the vendor variants),
+                # not the whole header block. These are the one unambiguous way
+                # to tell an out-of-office from a real reply, and they cost
+                # nothing to read since the message is already parsed. Consumed
+                # by services/ooo_detect.py; not a column in email_log.
+                "headers": "; ".join(
+                    f"{h}: {_decode(msg.get(h))}" for h in (
+                        "Auto-Submitted", "X-Autoreply", "X-Autorespond",
+                        "X-Auto-Response-Suppress", "Precedence",
+                    ) if msg.get(h)
+                ),
             })
     except Exception as e:
         logger.error(f"[EmailSync] Folder {folder} failed: {e}")
