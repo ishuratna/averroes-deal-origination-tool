@@ -9,7 +9,7 @@
 import Link from 'next/link';
 
 export type NavKey =
-  | 'deal-pipeline' | 'deal-universe'
+  | 'deal-pipeline' | 'deal-universe' | 'responded'
   | 'investor-pipeline' | 'investor-universe'
   | 'chat' | 'analytics' | 'quick-tools';
 
@@ -24,6 +24,10 @@ const GROUPS: { label: string; items: { key: NavKey; href: string; label: string
       {
         key: 'deal-universe', href: '/universe', label: 'Master Universe',
         icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" stroke="currentColor" strokeWidth="1" fill="none"/></svg>,
+      },
+      {
+        key: 'responded', href: '/responded', label: 'Responded',
+        icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v7A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.4" fill="none"/><path d="M2.6 4.8L8 8.6l5.4-3.8" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>,
       },
     ],
   },

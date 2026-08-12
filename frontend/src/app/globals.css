@@ -783,3 +783,73 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .qt-ident { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.82rem; color: #334155; margin-bottom: 0.9rem; }
 .qt-muted { color: #94a3b8; font-size: 0.76rem; }
 .qt-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
+
+/* ── Owner tag (shared component: OwnerTag.tsx) ──────────────────────────
+   Who is managing a company. One field that changes hands from Ishu to the
+   assigned associate on loop-in, so the same tag appears on the Responded
+   page, the Universe table, the Pipeline cards and the company profile. */
+.owner-tag { display: inline-flex; align-items: center; gap: 0.32rem; border-radius: 999px; font-weight: 700; white-space: nowrap; border: 1px solid transparent; }
+.owner-tag-sm { font-size: 0.66rem; padding: 0.1rem 0.42rem 0.1rem 0.12rem; }
+.owner-tag-md { font-size: 0.75rem; padding: 0.18rem 0.6rem 0.18rem 0.16rem; }
+.owner-tag-dot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 1.15rem; border-radius: 999px; background: rgba(255,255,255,0.75); font-size: 0.58rem; font-weight: 800; letter-spacing: -0.02em; }
+.owner-tag-md .owner-tag-dot { min-width: 1.35rem; height: 1.35rem; font-size: 0.64rem; }
+.owner-tag-name { padding-right: 0.1rem; }
+/* Bea = partner (plum), Ishu = operator (navy), associates = amber */
+.owner-tag-bea      { background: #f1ecf7; color: #4a2a6b; border-color: #d8c9ea; }
+.owner-tag-ishu     { background: #e9eef4; color: #1f3b5c; border-color: #c7d4e3; }
+.owner-tag-issam    { background: #fbf1e6; color: #8a4b0f; border-color: #ecd5b8; }
+.owner-tag-marianna { background: #fdf1f4; color: #8c1d2a; border-color: #f0cdd5; }
+.owner-tag-none     { background: #f4f6f9; color: #94a3b8; border-color: #e2e8f0; font-weight: 600; font-size: 0.64rem; padding: 0.12rem 0.5rem; }
+
+/* ── Responded page ──────────────────────────────────────────────────────── */
+.rsp-load { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.rsp-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin-bottom: 1.1rem; }
+.rsp-stat { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.7rem 0.85rem; }
+.rsp-stat-n { font-size: 1.35rem; font-weight: 800; color: #0f172a; line-height: 1.1; }
+.rsp-stat-l { font-size: 0.68rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.15rem; }
+.rsp-stat.act { border-color: #c7b8dd; background: #faf7fd; }
+.rsp-stat.act .rsp-stat-n { color: #4a2a6b; }
+
+.rsp-load-panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.8rem 0.95rem; margin-bottom: 1.1rem; }
+.rsp-load-title { font-size: 0.72rem; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.55rem; }
+.rsp-load-row { display: flex; gap: 1.4rem; flex-wrap: wrap; align-items: center; }
+.rsp-load-item { display: flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; color: #334155; }
+.rsp-load-count { font-weight: 800; color: #0f172a; }
+.rsp-load-next { font-size: 0.72rem; font-weight: 700; color: #0f5132; background: #e8f1ec; border: 1px solid #bcd9c8; border-radius: 6px; padding: 0.15rem 0.45rem; }
+.rsp-load-hint { font-size: 0.74rem; color: #64748b; margin-top: 0.5rem; }
+
+.rsp-group { margin-bottom: 1.3rem; }
+.rsp-group-head { display: flex; align-items: baseline; gap: 0.55rem; margin-bottom: 0.45rem; }
+.rsp-group-title { font-size: 0.9rem; font-weight: 800; color: #0f172a; }
+.rsp-group-n { font-size: 0.7rem; font-weight: 800; color: #fff; background: #64748b; border-radius: 999px; padding: 0.08rem 0.42rem; }
+.rsp-group.plum  .rsp-group-n { background: #4a2a6b; }
+.rsp-group.teal  .rsp-group-n { background: #0f5132; }
+.rsp-group.amber .rsp-group-n { background: #8a4b0f; }
+.rsp-group.grey  .rsp-group-n { background: #94a3b8; }
+.rsp-group-hint { font-size: 0.75rem; color: #64748b; }
+
+.rsp-table { width: 100%; border-collapse: separate; border-spacing: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+.rsp-table th { background: #f4f6f9; font-size: 0.66rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid #e2e8f0; }
+.rsp-table td { padding: 0.55rem 0.7rem; font-size: 0.79rem; color: #334155; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.rsp-table tr:last-child td { border-bottom: none; }
+.rsp-table tbody tr:hover { background: #f8fafc; }
+.rsp-name { font-weight: 700; color: #0f172a; background: none; border: none; padding: 0; font-size: 0.82rem; cursor: pointer; text-align: left; font-family: inherit; }
+.rsp-name:hover { color: #1d4ed8; text-decoration: underline; }
+.rsp-sub { font-size: 0.7rem; color: #94a3b8; margin-top: 0.1rem; }
+.rsp-stale { color: #b91c1c; font-weight: 700; }
+.rsp-actions { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.rsp-btn { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 6px; padding: 0.22rem 0.5rem; font-size: 0.68rem; font-weight: 800; cursor: pointer; font-family: inherit; }
+.rsp-btn:hover:not(:disabled) { border-color: #94a3b8; background: #f8fafc; }
+.rsp-btn:disabled { opacity: 0.5; cursor: default; }
+.rsp-btn.a { border-color: #bcd9c8; color: #0f5132; background: #e8f1ec; }
+.rsp-btn.a:hover:not(:disabled) { background: #d8e9df; }
+.rsp-btn.b { border-color: #ecd5b8; color: #8a4b0f; background: #fbf1e6; }
+.rsp-btn.b:hover:not(:disabled) { background: #f6e5d1; }
+.rsp-btn.kill { border-color: #f0cdd5; color: #8c1d2a; background: #fdf1f4; }
+.rsp-btn.kill:hover:not(:disabled) { background: #fadfe5; }
+.rsp-assign { border: 1px solid #cbd5e1; border-radius: 6px; padding: 0.2rem 0.35rem; font-size: 0.7rem; font-weight: 700; color: #334155; background: #fff; cursor: pointer; font-family: inherit; }
+.rsp-empty { background: #fff; border: 1px dashed #cbd5e1; border-radius: 10px; padding: 1rem; font-size: 0.8rem; color: #94a3b8; text-align: center; }
+.rsp-filters { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.rsp-chip { border: 1px solid #cbd5e1; background: #fff; color: #475569; border-radius: 999px; padding: 0.28rem 0.7rem; font-size: 0.74rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+.rsp-chip.on { border-color: #4a2a6b; background: #f1ecf7; color: #4a2a6b; }
+.rsp-search { flex: 1; min-width: 200px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.82rem; font-family: inherit; }

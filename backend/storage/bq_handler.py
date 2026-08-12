@@ -72,6 +72,16 @@ class BigQueryHandler:
         ("employees_ch", "INT64"),
         ("filing_type", "STRING"),
         ("ch_match_confidence", "STRING"),
+        # Deal-team ownership + triage (see docs/Averroes_Deal_Pipeline_Process.pdf).
+        # ONE owner field on purpose: it changes hands from Ishu to the assigned
+        # associate on loop-in, so per-person open-call counts derive from it
+        # directly and there is never a second copy of "who has this".
+        ("owner", "STRING"),
+        # 'A' = high fit, goes to Bea via the Thursday session.
+        # 'B' = low/moderate fit or too early, associate call via Wednesday.
+        # 'kill' = closed out. Blank = not yet triaged by Ishu.
+        ("track", "STRING"),
+        ("triaged_at", "TIMESTAMP"),
         ("ch_notes", "STRING"),
         ("ch_pdf_path", "STRING"),
         # Averroes fit scoring
@@ -1032,6 +1042,112 @@ class BigQueryHandler:
             ORDER BY ingested_at DESC
         """
         return self._run_query(query)
+
+    # ── Deal-team ownership + triage ─────────────────────────────────────────
+    # See docs/Averroes_Deal_Pipeline_Process.pdf. Both setters live here so
+    # every page that changes an owner or a track goes through the same write,
+    # rather than each page issuing its own SQL.
+
+    OWNERS = ("Bea", "Ishu", "Issam", "Marianna")
+    TRACKS = ("A", "B", "kill")
+
+    def set_owner(self, name: str, owner: str) -> bool:
+        """Assign who is managing a company. One field, and it changes hands
+        on loop-in, so per-person open counts derive straight from it.
+
+        Validation runs BEFORE the client check on purpose: a bad value is a
+        bad value whether or not BigQuery is reachable, and the caller should
+        hear about it either way rather than getting a silent False.
+        """
+        owner = (owner or "").strip()
+        if owner and owner not in self.OWNERS:
+            raise ValueError(f"Unknown owner '{owner}'. Expected one of {', '.join(self.OWNERS)} or blank to clear.")
+        if not self.client:
+            return False
+        job = self.client.query(
+            f"UPDATE `{self.table_id}` SET owner = @owner WHERE LOWER(name) = LOWER(@name)",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("owner", "STRING", owner),
+                bigquery.ScalarQueryParameter("name", "STRING", name),
+            ]))
+        job.result()
+        return int(job.num_dml_affected_rows or 0) > 0
+
+    def set_track(self, name: str, track: str, owner: str = None) -> bool:
+        """Record Ishu's triage decision. triaged_at stamps when the DECISION
+        was made (event time, not processing time), and is refreshed on a
+        re-triage because the current decision is what matters operationally.
+        `owner` is optional so triage-and-assign is a single write.
+
+        Both values are validated BEFORE the client check, so a typo raises
+        rather than silently returning False.
+        """
+        track = (track or "").strip()
+        if track and track not in self.TRACKS:
+            raise ValueError(f"Unknown track '{track}'. Expected one of {', '.join(self.TRACKS)} or blank to clear.")
+        if owner is not None:
+            owner = (owner or "").strip()
+            if owner and owner not in self.OWNERS:
+                raise ValueError(f"Unknown owner '{owner}'. Expected one of {', '.join(self.OWNERS)} or blank to clear.")
+        if not self.client:
+            return False
+        sets = ["track = @track",
+                "triaged_at = CASE WHEN @track != '' THEN CURRENT_TIMESTAMP() ELSE NULL END"]
+        params = [bigquery.ScalarQueryParameter("track", "STRING", track),
+                  bigquery.ScalarQueryParameter("name", "STRING", name)]
+        if owner is not None:
+            sets.append("owner = @owner")
+            params.append(bigquery.ScalarQueryParameter("owner", "STRING", owner))
+        job = self.client.query(
+            f"UPDATE `{self.table_id}` SET {', '.join(sets)} WHERE LOWER(name) = LOWER(@name)",
+            job_config=bigquery.QueryJobConfig(query_parameters=params))
+        job.result()
+        return int(job.num_dml_affected_rows or 0) > 0
+
+    def get_responded(self) -> List[Dict]:
+        """Every company that has ever replied, with the email counts needed to
+        work out what it needs next.
+
+        Which email a reply is answering is DERIVED from email_log rather than
+        stored on the company: email_log already holds that fact, and a second
+        copy would be one more thing to keep in sync. sent_count tells us how
+        far down the sequence we are; last_direction tells us whether the ball
+        is with them or with us.
+        """
+        if not self.client:
+            return []
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            return self._run_query(f"""
+                WITH agg AS (
+                    SELECT entity_name,
+                           COUNTIF(direction = 'sent')     AS sent_count,
+                           COUNTIF(direction = 'received') AS recv_count,
+                           MAX(sent_at)                    AS last_msg_at,
+                           MAX(IF(direction = 'received', sent_at, NULL)) AS last_reply_at,
+                           ARRAY_AGG(direction ORDER BY sent_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS last_direction
+                    FROM `{log}`
+                    WHERE entity_type = 'company'
+                    GROUP BY entity_name
+                    HAVING recv_count > 0
+                )
+                SELECT t.name, t.status, t.sector, t.website, t.contact_name, t.contact_email,
+                       t.averroes_fit_score, t.revenue_band, t.revenue_estimate_m,
+                       t.size_bucket, t.action_bucket, t.unfit_reason,
+                       t.owner, t.track, CAST(t.triaged_at AS STRING) AS triaged_at,
+                       a.sent_count, a.recv_count, a.last_direction,
+                       CAST(a.last_msg_at AS STRING)   AS last_msg_at,
+                       CAST(a.last_reply_at AS STRING) AS last_reply_at,
+                       TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), a.last_reply_at, DAY) AS days_since_reply
+                FROM agg a
+                JOIN `{self.table_id}` t ON t.name = a.entity_name
+                WHERE t.hidden_at IS NULL
+                  AND IFNULL(t.source, '') != 'Internal Test'
+                ORDER BY a.last_reply_at DESC
+            """)
+        except Exception as e:
+            logger.error(f"get_responded failed: {e}")
+            return []
 
     def hide_companies(self, names: List[str], by: str = "") -> int:
         """SOFT delete: stamp hidden_at so the row drops out of the Master

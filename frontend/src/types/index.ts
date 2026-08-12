@@ -92,6 +92,11 @@ export interface CompanyTarget {
   ch_match_confidence?: string;
   ch_notes?: string;
   ch_pdf_path?: string;
+  // Deal-team ownership + triage (docs/Averroes_Deal_Pipeline_Process.pdf).
+  // One owner field, which changes hands from Ishu to the assigned associate.
+  owner?: DealOwner | '';
+  track?: DealTrack;
+  triaged_at?: string;
   // Averroes fit scoring
   averroes_fit_score?: number;
   score_employee_growth?: number;
@@ -182,6 +187,54 @@ export interface PipelineMetrics {
 // Deal stages in pipeline order
 export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
 export type DealStage = typeof DEAL_STAGES[number];
+
+// ── Deal-team ownership + triage ────────────────────────────────────────────
+// Mirrors bq_handler.OWNERS / TRACKS. Process: docs/Averroes_Deal_Pipeline_Process.pdf
+export const DEAL_OWNERS = ['Bea', 'Ishu', 'Issam', 'Marianna'] as const;
+export type DealOwner = typeof DEAL_OWNERS[number];
+
+// Only Issam and Marianna take Track B founder calls; the Wednesday allocation
+// balances between them. Bea takes Track A calls; Ishu takes none.
+export const CALL_ASSOCIATES = ['Issam', 'Marianna'] as const;
+
+export type DealTrack = 'A' | 'B' | 'kill' | '';
+
+export const OWNER_ROLES: Record<DealOwner, string> = {
+  Bea: 'Partner — takes Track A calls',
+  Ishu: 'Operator — triages, writes as Bea, takes no calls',
+  Issam: 'Associate — Track B calls',
+  Marianna: 'Associate — Track B calls',
+};
+
+// The six live queues on the Responded page, in the order they are worked.
+// Backend counterpart: main.py _responded_group().
+export const RESPONDED_QUEUES = [
+  { key: 'needs_email_2',             label: 'Needs Email 2',            hint: 'Replied to Email 1. Ishu sends the growth-story ask in his next block.',      tone: 'plum'  },
+  { key: 'needs_triage',              label: 'Needs triage',             hint: 'Email 2 reply in. Ishu picks Track A, Track B or kill.',                      tone: 'plum'  },
+  { key: 'track_a_awaiting_thursday', label: 'Track A — awaiting Thursday', hint: 'High fit. Waiting for the fortnightly shortlist session.',                 tone: 'teal'  },
+  { key: 'track_b_awaiting_wednesday', label: 'Track B — awaiting Wednesday', hint: 'Low or moderate fit, or too early. Waiting to be allocated.',            tone: 'amber' },
+  { key: 'track_b_assigned',          label: 'Assigned — call pending',  hint: 'An associate owns it and Email 4 has gone out.',                              tone: 'amber' },
+  { key: 'track_a_call_done',         label: 'Track A — call happened',  hint: 'Moved past the first call with Bea.',                                         tone: 'teal'  },
+  { key: 'track_b_call_done',         label: 'Track B — call happened',  hint: 'Moved past the associate call.',                                              tone: 'amber' },
+  { key: 'closed',                    label: 'Closed',                   hint: 'Killed or declined. Kept for the record.',                                    tone: 'grey'  },
+] as const;
+
+export interface RespondedCompany extends CompanyTarget {
+  queue: string;
+  sent_count?: number;
+  recv_count?: number;
+  last_direction?: string;
+  last_msg_at?: string;
+  days_since_reply?: number;
+}
+
+export interface RespondedResponse {
+  total: number;
+  counts: Record<string, number>;
+  open_calls: Record<string, number>;
+  owners: string[];
+  companies: RespondedCompany[];
+}
 
 // Display labels for stored statuses. 'Contacted' is stored in the DB but
 // shown as "Responded" (a reply exists). Never rename the stored value.

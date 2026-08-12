@@ -11,6 +11,7 @@ import OutreachModal from "../components/OutreachModal";
 import SyncEmailsButton from "../components/SyncEmailsButton";
 import { outreachButtonState } from "../lib/outreach";
 import SideNav from '../components/SideNav';
+import OwnerTag from '../components/OwnerTag';
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -619,8 +620,11 @@ function HomeInner() {
                               );
                             })()}
 
-                            {/* Row 2 — assessment badges */}
-                            {(getRevenueBand(company) || company.averroes_fit_score != null) && (
+                            {/* Row 2 — assessment badges + who is managing it.
+                                Owner uses the shared OwnerTag so it looks and
+                                behaves identically here, on the Universe table
+                                and on the Responded page. */}
+                            {(getRevenueBand(company) || company.averroes_fit_score != null || company.owner) && (
                               <div className="kc-badge-row">
                                 {getRevenueBand(company) && (
                                   <span className={`kc-band-badge band-${getRevenueBand(company)!.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -633,6 +637,7 @@ function HomeInner() {
                                     Fit {Math.round(company.averroes_fit_score * 100)}
                                   </span>
                                 )}
+                                {company.owner && <OwnerTag owner={company.owner} />}
                               </div>
                             )}
 

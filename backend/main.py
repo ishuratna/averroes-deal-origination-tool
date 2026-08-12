@@ -3319,6 +3319,129 @@ async def update_company_status(company_name: str, req: StatusUpdateRequest):
     return {"status": "Success", "company": company_name, "new_status": req.status}
 
 
+class TriageRequest(BaseModel):
+    track: str                              # 'A' | 'B' | 'kill' | '' to clear
+    owner: Optional[str] = None             # set in the same write when known
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+class OwnerRequest(BaseModel):
+    owner: str                              # Bea | Ishu | Issam | Marianna | '' to clear
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+# ── Triage + ownership (the Responded page) ──────────────────────────────────
+# Process reference: docs/Averroes_Deal_Pipeline_Process.pdf.
+#   Track A = high fit, goes to Bea via the fortnightly Thursday session.
+#   Track B = low/moderate fit or too early, associate call agreed on Wednesday.
+#   kill    = closed out. Ishu can do this alone, no meeting required.
+# Both endpoints write through bq_handler so the Responded page, the Universe
+# table and the Pipeline board can never drift apart on who owns a company.
+
+_TRACK_LABELS = {
+    "A": "Track A (high fit, to Bea via Thursday)",
+    "B": "Track B (associate call, allocated Wednesday)",
+    "kill": "Killed (closed out)",
+}
+
+
+@app.put("/company/{company_name}/triage")
+async def triage_company(company_name: str, req: TriageRequest):
+    """Record the triage decision on an Email 2 reply."""
+    track = (req.track or "").strip()
+    if track and track not in bq_handler.TRACKS:
+        raise HTTPException(status_code=400,
+                            detail=f"Invalid track. Must be one of: {list(bq_handler.TRACKS)} (or blank to clear).")
+    try:
+        ok = bq_handler.set_track(company_name, track, owner=req.owner)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"'{company_name}' not found.")
+
+    note = (f"Triaged: {_TRACK_LABELS.get(track, track)}" if track else "Triage cleared")
+    if req.owner is not None:
+        note += f" — owner set to {req.owner or 'unassigned'}"
+    try:
+        bq_handler.add_activity_note(company_name, note, req.created_by)
+    except Exception as e:
+        logger.warning(f"triage note failed for {company_name} (non-fatal): {e}")
+    return {"status": "Success", "company": company_name, "track": track, "owner": req.owner}
+
+
+@app.put("/company/{company_name}/owner")
+async def set_company_owner(company_name: str, req: OwnerRequest):
+    """Assign who is managing a company. One field: it changes hands from Ishu
+    to the assigned associate on loop-in."""
+    try:
+        ok = bq_handler.set_owner(company_name, req.owner)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"'{company_name}' not found.")
+    try:
+        bq_handler.add_activity_note(
+            company_name, f"Owner set to {req.owner or 'unassigned'}", req.created_by)
+    except Exception as e:
+        logger.warning(f"owner note failed for {company_name} (non-fatal): {e}")
+    return {"status": "Success", "company": company_name, "owner": req.owner}
+
+
+# Which queue a replied-to company sits in. Derived, never stored: the moment
+# an email is sent or a track is set, the company moves group on its own.
+_LIVE_CALL_STAGES = ("Contacted", "Meeting", "DD", "Offer")
+
+
+def _responded_group(r: dict) -> str:
+    track = (r.get("track") or "").strip()
+    status = r.get("status") or ""
+    owner = (r.get("owner") or "").strip()
+    sent = int(r.get("sent_count") or 0)
+
+    if status in ("Lost", "Not a Fit") or track == "kill":
+        return "closed"
+    if not track:
+        # Not triaged yet. One email out means they answered Email 1 and are
+        # owed Email 2; two or more means they answered the real ask.
+        return "needs_email_2" if sent <= 1 else "needs_triage"
+    if track == "A":
+        return "track_a_call_done" if status in ("Meeting", "DD", "Offer") else "track_a_awaiting_thursday"
+    # Track B
+    if owner in ("Issam", "Marianna"):
+        return "track_b_call_done" if status in ("Meeting", "DD", "Offer") else "track_b_assigned"
+    return "track_b_awaiting_wednesday"
+
+
+@app.get("/responded")
+async def get_responded():
+    """The Responded page: every company that has ever replied, grouped by what
+    it needs next, plus the per-associate open-call counts that decide the
+    Wednesday allocation."""
+    rows = bq_handler.get_responded()
+    for r in rows:
+        r["queue"] = _responded_group(r)
+
+    groups: Dict[str, List[dict]] = {}
+    for r in rows:
+        groups.setdefault(r["queue"], []).append(r)
+
+    # Open founder conversations per associate: what "whoever has fewer live
+    # conversations" actually means, counted rather than remembered.
+    open_calls = {a: 0 for a in ("Bea", "Ishu", "Issam", "Marianna")}
+    for r in rows:
+        o = (r.get("owner") or "").strip()
+        if o in open_calls and r["queue"] not in ("closed",) and (r.get("status") or "") in _LIVE_CALL_STAGES:
+            open_calls[o] += 1
+
+    return {
+        "total": len(rows),
+        "counts": {k: len(v) for k, v in groups.items()},
+        "open_calls": open_calls,
+        "owners": list(bq_handler.OWNERS),
+        "companies": rows,
+    }
+
+
 class RemoveRequest(BaseModel):
     created_by: Optional[str] = "Ishu Ratna"
 

@@ -11,6 +11,7 @@ import { CompanyTarget, ActivityEntry, displayStatus, getRevenueBand, actionBuck
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
+import OwnerTag from './OwnerTag';
 
 interface Props {
   companies: CompanyTarget[];
@@ -305,6 +306,9 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
             )}
           </div>
           <div className="cp-nav-pos">
+            {/* Who is managing this company. Same shared tag as the Universe
+                table, the Pipeline cards and the Responded page. */}
+            <OwnerTag owner={company.owner} size="md" />
             <span>{index + 1} / {companies.length}</span>
             <button className="cp-nav-btn" disabled={index === 0} onClick={() => onNavigate(index - 1)} title="Previous (←)">←</button>
             <button className="cp-nav-btn" disabled={index === companies.length - 1} onClick={() => onNavigate(index + 1)} title="Next (→)">→</button>

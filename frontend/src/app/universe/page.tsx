@@ -12,6 +12,7 @@ import SyncEmailsButton from "../../components/SyncEmailsButton";
 import { outreachButtonState } from "../../lib/outreach";
 import SideNav from '../../components/SideNav';
 import MultiSelect from '../../components/MultiSelect';
+import OwnerTag from '../../components/OwnerTag';
 
 // ── Source definitions ──────────────────────────────────────────────────────
 
@@ -1353,6 +1354,7 @@ function UniverseInner() {
                   <th><InfoTip label="Profit" tip={DEFS.profit} /></th>
                   <th><InfoTip label="Assets" tip={DEFS.assets} /></th>
                   <th><InfoTip label="Status" tip={DEFS.status} /></th>
+                  <th><InfoTip label="Owner" tip={DEFS.owner} /></th>
                   <th><InfoTip label="Leadership" tip={DEFS.leadership} /></th>
                   <th><InfoTip label="Email" tip={DEFS.email} /></th>
                   <th><InfoTip label="LinkedIn" tip={DEFS.linkedin} /></th>
@@ -1368,7 +1370,7 @@ function UniverseInner() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="skeleton-row"><td colSpan={26}><div className="skeleton-line"></div></td></tr>
+                    <tr key={i} className="skeleton-row"><td colSpan={27}><div className="skeleton-line"></div></td></tr>
                   ))
                 ) : filteredUniverse.length > 0 ? (
                   pageRows.map(([i, company]) => (
@@ -1440,6 +1442,7 @@ function UniverseInner() {
                           <span className={`status-badge ${company.status?.toLowerCase().replace(/\s+/g, '-')}`}>{displayStatus(company.status)}</span>
                         )}
                       </td>
+                      <td><OwnerTag owner={company.owner} /></td>
                       <td>{company.contact_name || '—'}</td>
                       <td className="email-cell">{company.contact_email ? (<a href="#" className="email-link" onClick={(e) => { e.preventDefault(); openOutreach(company); }}>{company.contact_email}</a>) : '—'}</td>
                       <td>{company.linkedin_url ? (<a href={company.linkedin_url} target="_blank" rel="noreferrer" className="linkedin-link">View</a>) : '—'}</td>
@@ -1488,7 +1491,7 @@ function UniverseInner() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={26} className="empty-row">No targets match your search.</td></tr>
+                  <tr><td colSpan={27} className="empty-row">No targets match your search.</td></tr>
                 )}
               </tbody>
             </table>

@@ -1,4 +1,4 @@
-import { CompanyTarget, ActivityEntry } from "../types";
+import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, RespondedResponse } from "../types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
@@ -68,6 +68,42 @@ export const dealApi = {
       console.error('Universe API Error:', error);
       return [];
     }
+  },
+
+  // ── Responded page: triage queues + ownership ──────────────────────────
+  // Process reference: docs/Averroes_Deal_Pipeline_Process.pdf
+  async getResponded(): Promise<RespondedResponse> {
+    const response = await apiFetch(`${API_BASE_URL}/responded`);
+    if (!response.ok) throw new Error('Failed to load the Responded queue');
+    return await response.json();
+  },
+
+  async triageCompany(name: string, track: DealTrack, owner?: DealOwner | ''): Promise<any> {
+    const body: Record<string, unknown> = { track };
+    if (owner !== undefined) body.owner = owner;
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/triage`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to record the triage decision');
+    }
+    return await response.json();
+  },
+
+  async setCompanyOwner(name: string, owner: DealOwner | ''): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/owner`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to assign the owner');
+    }
+    return await response.json();
   },
 
   async ingestMarketplace(name?: string): Promise<any> {

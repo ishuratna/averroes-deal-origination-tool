@@ -76,6 +76,7 @@ export const DEFS: Record<string, string> = {
   assets: "Total assets from the latest Companies House filing. Used as a revenue proxy (× 2.5) when turnover is not disclosed.",
   size: "Size bucket from revenue or AI estimate: Micro < £5M, Small £5–15M, Mid £15–50M all qualify; Large > £50M is rejected by the size filter.",
   status: "Deal lifecycle stage: Scraped/Uploaded (raw, not yet assessed) → Qualified or Not a Fit (after SmartFill) → Contacted → Meeting → Due Diligence → Offer → Won/Lost. 'Engaged' is set automatically when an outreach email is sent.",
+  owner: "Who on the team is managing this company. One field that changes hands: Ishu holds it through triage, then it moves to Bea (Track A) or to Issam/Marianna on loop-in (Track B). Set on the Responded page.",
   leadership: "Founder/CEO name discovered by AI enrichment (live web search).",
   email: "Contact email found by enrichment. Click to draft an AI outreach email.",
   linkedin: "Company or founder LinkedIn profile.",
