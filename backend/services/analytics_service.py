@@ -28,12 +28,13 @@ logger = logging.getLogger(__name__)
 
 # Stage events tracked in the ledger (stored + funnel + terminal states).
 STAGE_EVENTS = [
-    "Qualified", "Engaged", "Contacted", "Meeting", "DD",
+    "Qualified", "Contacted", "Responded", "Meeting", "DD",
     "Offer", "Won", "Lost", "Not a Fit", "Under Review",
 ]
-# Display order for the funnel (Contacted is shown as "Responded" in the UI).
+# Display order for the funnel. Stored values now match what is displayed:
+# Contacted = we emailed them, Responded = they replied.
 FUNNEL_ORDER = [
-    "Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer", "Won", "Lost",
+    "Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer", "Won", "Lost",
 ]
 
 
@@ -98,7 +99,7 @@ def ledger_sync(bq_handler) -> int:
             FROM `{targets}` WHERE IFNULL(source,'') != 'Internal Test'
             {stamp_unions}
             UNION ALL
-            -- current status (covers Engaged / Under Review / Not a Fit, which
+            -- current status (covers Under Review / Not a Fit, which
             -- have no dedicated stamp column)
             SELECT LOWER(name), name, status,
                    IFNULL(stage_entered_at, IFNULL(ingested_at, CURRENT_TIMESTAMP()))
@@ -157,7 +158,7 @@ def compute_stats(bq_handler) -> Dict:
 
     # Current counts, WITH email evidence per row (live stamps + ledger), so
     # the outreach stages can be evidence-consistent with their ever-counts:
-    #   Engaged current   = in Engaged stage AND we actually emailed them
+    #   Contacted current = in Contacted stage AND we actually emailed them
     #   Responded current = in Responded stage AND an inbound reply exists
     # Rows in those stages WITHOUT evidence are surfaced as inconsistencies,
     # never silently counted or silently dropped.
@@ -197,20 +198,20 @@ def compute_stats(bq_handler) -> Dict:
     except Exception as e:
         logger.warning(f"[Analytics] weekly email stats failed: {e}")
 
-    # SEMANTICS FIX: stage history is unreliable for the outreach stages
-    # (stored 'Contacted' historically meant "WE contacted them" before it was
-    # redefined as Responded; Engaged predates part of the send history and
-    # has no permanent stamp column). Ever-counts for both come from email
-    # EVIDENCE instead, which is deletion-proof and semantically true:
-    #   Engaged ever   = companies we ever emailed ('emailed' event)
+    # SEMANTICS: stage history is unreliable for the two outreach stages,
+    # because they were renamed (the old 'Engaged' is now Contacted, and the
+    # old 'Contacted' is now Responded) and the rename predates part of the
+    # send history. Ever-counts for both come from email EVIDENCE instead,
+    # which is deletion-proof and semantically true regardless of naming:
+    #   Contacted ever = companies we ever emailed ('emailed' event)
     #   Responded ever = companies that ever replied ('replied' event +
     #                    last_reply_at stamps)
-    _EVIDENCE = {"Engaged": "emailed", "Contacted": "replied"}
+    _EVIDENCE = {"Contacted": "emailed", "Responded": "replied"}
 
     def _current(s: str) -> int:
-        if s == "Engaged":
-            return with_email.get(s, 0)
         if s == "Contacted":
+            return with_email.get(s, 0)
+        if s == "Responded":
             return with_reply.get(s, 0)
         return current.get(s, 0)
 
@@ -222,13 +223,13 @@ def compute_stats(bq_handler) -> Dict:
 
     # Stage/evidence disagreements, surfaced for the page (0 = clean):
     inconsistencies = {
-        # sitting in Engaged but no outbound email on record
-        "engaged_without_email": current.get("Engaged", 0) - with_email.get("Engaged", 0),
+        # sitting in Contacted but no outbound email on record
+        "contacted_without_email": current.get("Contacted", 0) - with_email.get("Contacted", 0),
         # sitting in Responded but no inbound reply on record
-        "responded_without_reply": current.get("Contacted", 0) - with_reply.get("Contacted", 0),
+        "responded_without_reply": current.get("Responded", 0) - with_reply.get("Responded", 0),
         # replied although we never emailed them (inbound-first threads);
         # this is why Responded-ever is not mathematically forced to be a
-        # subset of Engaged-ever
+        # subset of Contacted-ever
         "replied_never_emailed": max(0, ever.get("replied", 0) - ever.get("emailed", 0)),
     }
 

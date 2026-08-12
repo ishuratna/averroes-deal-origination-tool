@@ -12,7 +12,7 @@ export interface MultiSelectProps {
   options: string[];
   selected: string[];
   onChange: (next: string[]) => void;
-  optionLabel?: (v: string) => string;   // display transform (e.g. Contacted -> Responded)
+  optionLabel?: (v: string) => string;   // optional display transform
   width?: number;
   className?: string;
 }

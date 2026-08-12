@@ -55,7 +55,7 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
     const colors: Record<string, string> = {
       'Qualified': '#3b82f6', 'Contacted': '#8b5cf6', 'Meeting': '#f59e0b',
       'DD': '#ef4444', 'Offer': '#10b981', 'Won': '#059669', 'Lost': '#6b7280',
-      'Engaged': '#8b5cf6', 'Under Review': '#d97706', 'Scraped': '#94a3b8',
+      'Responded': '#7c3aed', 'Under Review': '#d97706', 'Scraped': '#94a3b8',
       'Uploaded': '#3b82f6', 'Not a Fit': '#ef4444',
     };
     return colors[stage] || '#6b7280';

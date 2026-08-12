@@ -7,7 +7,7 @@ Page 2: the weekly operating rhythm
 Page 3: who does what, the standing rules, and the new Responded page
 Page 4: settled decisions + questions still open
 
-Stage names (Qualified / Engaged / Contacted / Meeting / DD / Offer) and the
+Stage names (Qualified / Contacted / Responded / Meeting / DD / Offer) and the
 fit-bucket keys are the REAL values in BigQuery and on the Pipeline board, so
 the document and the screen never disagree.
 
@@ -251,14 +251,14 @@ y -= sh + 11
 GAP = 12
 
 y = step_card(y, 1, "Email 1  -  Introduction, no ask",
-              [("AUTO-DRAFTED", NAVY), ("FROM BEA", PLUM), ("QUALIFIED -> ENGAGED", GREY)],
+              [("AUTO-DRAFTED", NAVY), ("FROM BEA", PLUM), ("QUALIFIED -> CONTACTED", GREY)],
               "Why this company, who we are, an open invitation. No call, no meeting, no document request. "
               "Ishu sends these in his Tuesday and Thursday blocks.")
 arrow_down(M + 19, y - 2, y - GAP + 4)
 y -= GAP + 2
 
 y = step_card(y, 2, "The founder replies",
-              [("AUTOMATED", NAVY), ("ENGAGED -> CONTACTED", GREY)],
+              [("AUTOMATED", NAVY), ("CONTACTED -> RESPONDED", GREY)],
               "Logged against the company, classified into a fit bucket, and surfaced on the Responded page.")
 arrow_down(M + 19, y - 2, y - GAP + 4)
 y -= GAP + 2

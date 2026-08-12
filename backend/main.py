@@ -778,7 +778,7 @@ def _retro_qualified_blank():
 # check are classified into signals; accounts filings trigger a re-parse via
 # the existing SmartEnrich logic on the next manual run (flagged in activity).
 
-WATCH_STAGES = {"Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer"}
+WATCH_STAGES = {"Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer"}
 
 
 def _ch_watch_sweep(limit: int = 80):
@@ -1019,7 +1019,7 @@ def _run_investor_mining() -> dict:
     """
     from services.investor_miner import mine_companies, _canonical_key
 
-    dialogue = ("Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer", "Won")
+    dialogue = ("Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer", "Won")
     companies = [c for c in bq_handler.get_universe()
                  if c.get("status") in dialogue and c.get("source") != "Internal Test"]
     result = mine_companies(companies)
@@ -1524,7 +1524,7 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 FROM `{bq_handler.table_id}` t
                 JOIN last_sent s ON s.entity_name = t.name
                 LEFT JOIN last_recv r ON r.entity_name = t.name
-                WHERE t.status IN ('Engaged', 'Contacted', 'Meeting', 'DD', 'Offer')
+                WHERE t.status IN ('Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
                   AND IFNULL(t.source, '') != 'Internal Test'
             )
             SELECT name, status, contact_name, averroes_fit_score, action_bucket,
@@ -1744,7 +1744,7 @@ async def deep_sync_run(request: Request):
     return await sync_emails(days=3650, deep=True)
 
 
-# ── One-off enrich sweep: Engaged/Responded companies + Qualified-without-email
+# ── One-off enrich sweep: Contacted/Responded companies + Qualified-without-email
 # Runs the FULL current SmartEnrich (registry + distress + filing intel + cap
 # table v2 + contact waterfall + draft refresh) over the target set, a batch
 # per call. Companies enriched today are excluded, so repeated calls walk the
@@ -1766,7 +1766,7 @@ async def enrich_oneoff_run(request: Request, limit: int = Query(12, description
         if str(c.get("last_smartfill_at") or "")[:10] >= today:
             return False  # already refreshed today
         # Everything Qualified or later gets the full current depth
-        return c.get("status") in ("Qualified", "Engaged", "Contacted", "Meeting", "DD", "Offer", "Won")
+        return c.get("status") in ("Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer", "Won")
 
     eligible = [c["name"] for c in bq_handler.get_universe() if _target(c)]
     processed, failed = [], []
@@ -3260,14 +3260,14 @@ async def send_outreach(req: OutreachSendRequest):
     try:
         from google.cloud import bigquery as bq_lib
         # The Internal Test row is exempt from the Not-a-Fit guard: sending a
-        # test email always moves it to Engaged so the full loop can be tested
+        # test email always moves it to Contacted so the full loop can be tested
         # from any starting state.
         query = f"""UPDATE `{bq_handler.table_id}`
-                    SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Engaged' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Contacted' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
                         contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
                         outreach_sent_at = CURRENT_TIMESTAMP(),
                         outreach_draft_to = @to_addr,
-                        status = 'Engaged'
+                        status = 'Contacted'
                     WHERE name = @name AND (status != 'Not a Fit' OR source = 'Internal Test')"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("to_addr", "STRING", req.to or ""),
@@ -3440,7 +3440,7 @@ async def set_company_owner(company_name: str, req: OwnerRequest):
 
 # Which queue a replied-to company sits in. Derived, never stored: the moment
 # an email is sent or a track is set, the company moves group on its own.
-_LIVE_CALL_STAGES = ("Contacted", "Meeting", "DD", "Offer")
+_LIVE_CALL_STAGES = ("Responded", "Meeting", "DD", "Offer")
 
 
 def _responded_group(r: dict) -> str:
@@ -3602,7 +3602,7 @@ async def get_company_emails(company_name: str, limit: int = Query(30, descripti
         return {"company": company_name, "emails": [], "count": 0}
 
 
-# ── IC Memo (one-pager for Engaged companies) ────────────────────────────────
+# ── IC Memo (one-pager for Responded companies) ──────────────────────────────
 
 @app.post("/company/{company_name}/ic-memo")
 async def generate_ic_memo(company_name: str):
@@ -3694,8 +3694,8 @@ def _apply_ooo(entry: dict) -> dict:
         out past their return date.
       * Any reply-derived state is cleared, because an autoresponder is not a
         reply and must not leave a reply chip or an action bucket behind.
-      * If a previous sync had advanced this company to Contacted off the back
-        of this autoresponder, it is pulled straight back to Engaged.
+      * If a previous sync had advanced this company to Responded off the back
+        of this autoresponder, it is pulled straight back to Contacted.
       * We do NOT advance the stage and do NOT spend an action-bucket call.
     """
     from google.cloud import bigquery as bq_lib
@@ -3737,8 +3737,8 @@ def _apply_ooo(entry: dict) -> dict:
             f"SELECT status, outreach_sent_at FROM `{bq_handler.table_id}` WHERE name = @name LIMIT 1",
             job_config=bq_lib.QueryJobConfig(query_parameters=[
                 bq_lib.ScalarQueryParameter("name", "STRING", name)])).result())
-        if rows and rows[0].status == "Contacted":
-            target = "Engaged" if rows[0].outreach_sent_at else "Qualified"
+        if rows and rows[0].status == "Responded":
+            target = "Contacted" if rows[0].outreach_sent_at else "Qualified"
             bq_handler.update_company_status(name, target, created_by="email-sync")
             pulled = True
             note += f" Pulled back to {target}: an out-of-office is not a reply."
@@ -3764,7 +3764,7 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
       1. Re-scan every stored inbound and mark the autoresponders.
       2. Per company, take the LATEST OOO and stamp ooo_until, so the reminder
          reflects the most recent thing they told us.
-      3. Clear reply-derived state and pull back to Engaged, but ONLY for
+      3. Clear reply-derived state and pull back to Contacted, but ONLY for
          companies with no genuine reply. A company that sent an OOO and later
          actually replied keeps its reply state and its stage.
       4. Run the general pull-back reconciliation to catch companies advanced
@@ -3823,8 +3823,8 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
         has_genuine = name in genuine
         status = c.get("status") or ""
         target = ""
-        if not has_genuine and status == "Contacted":
-            target = "Engaged" if c.get("outreach_sent_at") else "Qualified"
+        if not has_genuine and status == "Responded":
+            target = "Contacted" if c.get("outreach_sent_at") else "Qualified"
         until_s = h["until"].isoformat() if h["until"] else ""
         days = None
         if h["until"]:
@@ -3906,6 +3906,128 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
     }
 
 
+def _stage_rename(dry_run: bool) -> dict:
+    """One-off migration: retire 'Engaged' and align stored stages with the UI.
+
+        old 'Engaged'   -> 'Contacted'   (we emailed them)
+        old 'Contacted' -> 'Responded'   (they replied)
+
+    'Contacted' previously meant "they replied" and was DISPLAYED as Responded,
+    while the send step wrote 'Engaged'. Both stored values now say exactly what
+    they mean, so the display translation is gone.
+
+    ORDER IS CRITICAL AND NOT INTERCHANGEABLE. Contacted -> Responded must run
+    FIRST. Doing Engaged -> Contacted first would rename the old Engaged rows to
+    Contacted, and the second statement would then sweep them straight on to
+    Responded, silently promoting every company we had merely emailed into
+    looking like it had replied.
+
+    Covers targets.status, the activity_log history (old_status and new_status,
+    so past stage changes still read correctly), and backfills responded_at from
+    last_reply_at for rows entering Responded.
+
+    The analytics ledger is deliberately NOT rewritten: its outreach counts come
+    from email evidence ('emailed' / 'replied' events), not stage names, so it
+    is already immune to this rename.
+    """
+    targets = bq_handler.table_id
+    activity = bq_handler.activity_table_id
+
+    def count(sql: str) -> int:
+        rows = list(bq_handler.client.query(sql).result())
+        return int(rows[0].n) if rows else 0
+
+    before = {
+        "targets_engaged": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Engaged'"),
+        "targets_contacted": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Contacted'"),
+        "targets_responded": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Responded'"),
+        "activity_new_engaged": count(f"SELECT COUNT(*) AS n FROM `{activity}` WHERE new_status = 'Engaged'"),
+        "activity_new_contacted": count(f"SELECT COUNT(*) AS n FROM `{activity}` WHERE new_status = 'Contacted'"),
+        "activity_old_engaged": count(f"SELECT COUNT(*) AS n FROM `{activity}` WHERE old_status = 'Engaged'"),
+        "activity_old_contacted": count(f"SELECT COUNT(*) AS n FROM `{activity}` WHERE old_status = 'Contacted'"),
+    }
+
+    if dry_run:
+        return {
+            "status": "Preview",
+            "dry_run": True,
+            "before": before,
+            "would_become": {
+                "Contacted (we emailed them)": before["targets_engaged"],
+                "Responded (they replied)": before["targets_contacted"],
+                "already Responded (left alone)": before["targets_responded"],
+            },
+            "activity_rows_to_rewrite":
+                before["activity_new_engaged"] + before["activity_new_contacted"]
+                + before["activity_old_engaged"] + before["activity_old_contacted"],
+            "order": ["1. Contacted -> Responded", "2. Engaged -> Contacted"],
+            "message": ("Nothing was changed. Re-run with dry_run=0 to apply. "
+                        "Step 1 must precede step 2 or every emailed company would be "
+                        "promoted to Responded."),
+        }
+
+    steps = []
+    # ── STEP 1: they-replied moves out of the way FIRST ──
+    for label, sql in [
+        ("targets: Contacted -> Responded",
+         f"UPDATE `{targets}` SET status = 'Responded' WHERE status = 'Contacted'"),
+        ("activity_log new_status: Contacted -> Responded",
+         f"UPDATE `{activity}` SET new_status = 'Responded' WHERE new_status = 'Contacted'"),
+        ("activity_log old_status: Contacted -> Responded",
+         f"UPDATE `{activity}` SET old_status = 'Responded' WHERE old_status = 'Contacted'"),
+        # ── STEP 2: only now may Engaged take the freed name ──
+        ("targets: Engaged -> Contacted",
+         f"UPDATE `{targets}` SET status = 'Contacted' WHERE status = 'Engaged'"),
+        ("activity_log new_status: Engaged -> Contacted",
+         f"UPDATE `{activity}` SET new_status = 'Contacted' WHERE new_status = 'Engaged'"),
+        ("activity_log old_status: Engaged -> Contacted",
+         f"UPDATE `{activity}` SET old_status = 'Contacted' WHERE old_status = 'Engaged'"),
+        # responded_at: first entry into Responded. last_reply_at is when they
+        # actually replied, which is precisely what this stage records.
+        ("backfill responded_at from last_reply_at",
+         f"""UPDATE `{targets}` SET responded_at = last_reply_at
+             WHERE responded_at IS NULL AND last_reply_at IS NOT NULL"""),
+    ]:
+        job = bq_handler.client.query(sql)
+        job.result()
+        n = int(job.num_dml_affected_rows or 0)
+        steps.append({"step": label, "rows": n})
+        logger.info(f"[stage-rename] {label}: {n} rows")
+
+    after = {
+        "targets_engaged": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Engaged'"),
+        "targets_contacted": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Contacted'"),
+        "targets_responded": count(f"SELECT COUNT(*) AS n FROM `{targets}` WHERE status = 'Responded'"),
+    }
+    return {
+        "status": "Success",
+        "dry_run": False,
+        "before": before,
+        "steps": steps,
+        "after": after,
+        "engaged_remaining": after["targets_engaged"],
+        "message": (f"Renamed {before['targets_contacted']} companies to Responded and "
+                    f"{before['targets_engaged']} to Contacted. "
+                    f"'Engaged' rows remaining: {after['targets_engaged']} (should be 0)."),
+    }
+
+
+@app.post("/admin/stage-rename")
+async def stage_rename(request: Request,
+                       dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
+    """Retire 'Engaged'. Renames stored stages so they match the board:
+    Engaged -> Contacted (we emailed them), Contacted -> Responded (they replied).
+
+    Defaults to a PREVIEW. Idempotent: re-running after it has been applied
+    finds nothing left to change.
+    """
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    return _stream_json(lambda: _stage_rename(bool(dry_run)))
+
+
 @app.post("/email/ooo-backfill")
 async def ooo_backfill(request: Request,
                        dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
@@ -3932,7 +4054,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     """
     Sync Beatrice's Gmail (IMAP, same App Password as sending) against known
     contacts in companies + LPs. Logs exchanges, classifies replies with AI,
-    stamps last_reply_at, and auto-advances Engaged → Contacted on reply.
+    stamps last_reply_at, and auto-advances Contacted → Responded on reply.
     deep=true searches per known address/domain (no mailbox-size cap) over a
     10-year window, so the email activity log holds every exchange ever made.
     """
@@ -3996,7 +4118,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     deep_addresses = None
     if deep:
         deep_addresses = set()
-        dialogue = {"Engaged", "Contacted", "Meeting", "DD", "Offer", "Won", "Lost"}
+        dialogue = {"Contacted", "Responded", "Meeting", "DD", "Offer", "Won", "Lost"}
         for c in companies_by_name.values():
             if c.get("outreach_draft_to") or c.get("outreach_sent_at") or c.get("status") in dialogue:
                 for em in ((c.get("contact_email") or ""), (c.get("outreach_draft_to") or "")):
@@ -4156,13 +4278,13 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 # Log with the email's ACTUAL received time, not the sync time
                 bq_handler._log_activity(ename, "note", "email-sync",
                                          note_text=note, event_time=r["sent_at"])
-                # Auto-advance: a reply means dialogue — Engaged → Contacted.
-                # The Internal Test row advances from ANY pre-Contacted state so
+                # Auto-advance: a reply means dialogue — Contacted → Responded.
+                # The Internal Test row advances from ANY pre-Responded state so
                 # the loop is testable regardless of where it started.
                 sender = _sender_of(r["counterparty_email"])
-                past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
-                if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
-                    bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                past_contact = {"Responded", "Meeting", "DD", "Offer", "Won"}
+                if sender.get("status") == "Contacted" or (sender.get("is_test") and sender.get("status") not in past_contact):
+                    bq_handler.update_company_status(ename, "Responded", created_by="email-sync")
                     advanced.append(ename)
                 # Action bucket for this new reply (bounded per run)
                 company_row = companies_by_name.get(ename)
@@ -4187,7 +4309,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # stage update failed mid-run. No new log entries or activity notes —
     # just the stage advance that should have happened.
     handled = {r["entity_name"] for r in replies}
-    past_contact = {"Contacted", "Meeting", "DD", "Offer", "Won"}
+    past_contact = {"Responded", "Meeting", "DD", "Offer", "Won"}
     for r in sorted((e for e in entries if e["direction"] == "received"), key=lambda x: x.get("sent_at") or ""):
         ename = r["entity_name"]
         if r["entity_type"] != "company" or ename in handled:
@@ -4202,7 +4324,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         except Exception:
             pass
         sender = _sender_of(r["counterparty_email"])
-        if sender.get("status") == "Engaged" or (sender.get("is_test") and sender.get("status") not in past_contact):
+        if sender.get("status") == "Contacted" or (sender.get("is_test") and sender.get("status") not in past_contact):
             try:
                 # Ensure the reply stamp exists (idempotent), then advance
                 bq_handler.client.query(
@@ -4211,15 +4333,15 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                         bq_lib.ScalarQueryParameter("ts", "TIMESTAMP", r["sent_at"]),
                         bq_lib.ScalarQueryParameter("name", "STRING", ename),
                     ])).result()
-                bq_handler.update_company_status(ename, "Contacted", created_by="email-sync")
+                bq_handler.update_company_status(ename, "Responded", created_by="email-sync")
                 advanced.append(ename)
                 handled.add(ename)
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
     # Reverse pass: the mirror of the advance above. A company sitting in
-    # Contacted with NO reply on record gets pulled back to where it belongs
-    # (Engaged if we emailed it, Qualified if we never did). Runs AFTER the
+    # Responded with NO reply on record gets pulled back to where it belongs
+    # (Contacted if we emailed it, Qualified if we never did). Runs AFTER the
     # advances so a reply logged moments ago is already visible and the company
     # is not pulled back and pushed forward in the same run. Only reverses
     # moves that email-sync itself made; a human's stage change always stands.
@@ -4242,7 +4364,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 FROM `{bq_handler.project_id}.{bq_handler.dataset_id}.email_log` e
                 JOIN `{bq_handler.table_id}` t ON t.name = e.entity_name
                 WHERE t.action_bucket IS NULL
-                  AND t.status IN ('Contacted', 'Meeting', 'DD', 'Offer', 'Engaged')
+                  AND t.status IN ('Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
                   AND e.entity_type = 'company'
                 ORDER BY e.entity_name, e.sent_at
             """).result()
@@ -4319,7 +4441,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                    + (f", {len(reclassified)} reclassified" if reclassified else "")
                    + (f", {len(bucketed)} action-bucketed" if bucketed else "")
                    + (f", {len(bucket_errors)} bucket attempts FAILED: {bucket_errors[0]}" if bucket_errors else "") + "). "
-                   + (f"Advanced to Contacted: {', '.join(advanced)}. " if advanced else "")
+                   + (f"Advanced to Responded: {', '.join(advanced)}. " if advanced else "")
                    + (f"Pulled back (no reply on record): "
                       + ", ".join(f"{p['name']} -> {p['to']}" for p in pulled_back) + "."
                       if pulled_back else "")

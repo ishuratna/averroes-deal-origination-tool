@@ -1,5 +1,5 @@
 """
-IC Memo one-pager for Engaged companies.
+IC Memo one-pager for Responded companies.
 
 Data honesty is the design principle: every NUMBER on the memo (financial
 table, scorecard, cap table, valuation math) is assembled IN CODE from the

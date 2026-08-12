@@ -43,20 +43,19 @@ function growthCategory(c: CompanyTarget): 'fast' | 'steady' | 'unknown' {
 
 // ── Stage helpers ────────────────────────────────────────────────────────────
 
-// Engaged sits between Qualified and Contacted: outreach email sent, awaiting
-// reply. Cards land there automatically on send — never by manual advance.
-const PIPELINE_STAGES = ['Qualified', 'Engaged', 'Contacted', 'Meeting', 'DD', 'Offer'] as const;
-// NOTE: 'Contacted' stays as the STORED status value (single source of truth,
-// no data migration) — it is DISPLAYED as "Responded" everywhere.
+// 'Contacted' = we emailed them (cards land there automatically on send).
+// 'Responded' = they replied. Stored values match these labels exactly, so
+// nothing is translated on the way out.
+const PIPELINE_STAGES = ['Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer'] as const;
 const STAGE_LABELS: Record<string, string> = {
-  'Qualified': 'Qualified', 'Contacted': 'Responded', 'Meeting': 'Meeting',
-  'DD': 'Due Diligence', 'Offer': 'Offer', 'Won': 'Won', 'Lost': 'Lost', 'Engaged': 'Engaged',
+  'Qualified': 'Qualified', 'Contacted': 'Contacted', 'Responded': 'Responded',
+  'Meeting': 'Meeting', 'DD': 'Due Diligence', 'Offer': 'Offer', 'Won': 'Won', 'Lost': 'Lost',
 };
 
-// Manual advance path skips Engaged (that stage is only entered by sending
-// an outreach email); from Engaged the next manual step is Contacted.
+// Contacted is normally entered by SENDING an outreach email, not by a manual
+// advance, but the manual path is kept so a stage can still be corrected by hand.
 const NEXT_STAGE: Record<string, string | null> = {
-  'Qualified': 'Contacted', 'Engaged': 'Contacted', 'Contacted': 'Meeting',
+  'Qualified': 'Contacted', 'Contacted': 'Responded', 'Responded': 'Meeting',
   'Meeting': 'DD', 'DD': 'Offer', 'Offer': null,
 };
 
@@ -66,16 +65,16 @@ function getNextStage(current: string): string | null {
 
 function stageColor(stage: string): string {
   const colors: Record<string, string> = {
-    'Qualified': '#3b82f6', 'Contacted': '#8b5cf6', 'Meeting': '#f59e0b',
-    'DD': '#ef4444', 'Offer': '#10b981', 'Won': '#059669', 'Lost': '#6b7280', 'Engaged': '#8b5cf6',
+    'Qualified': '#3b82f6', 'Contacted': '#8b5cf6', 'Responded': '#7c3aed', 'Meeting': '#f59e0b',
+    'DD': '#ef4444', 'Offer': '#10b981', 'Won': '#059669', 'Lost': '#6b7280',
   };
   return colors[stage] || '#6b7280';
 }
 
 function stageBg(stage: string): string {
   const bgs: Record<string, string> = {
-    'Qualified': '#eff6ff', 'Contacted': '#f5f3ff', 'Meeting': '#fffbeb',
-    'DD': '#fef2f2', 'Offer': '#ecfdf5', 'Won': '#ecfdf5', 'Lost': '#f9fafb', 'Engaged': '#f5f3ff',
+    'Qualified': '#eff6ff', 'Contacted': '#f5f3ff', 'Responded': '#f3effe', 'Meeting': '#fffbeb',
+    'DD': '#fef2f2', 'Offer': '#ecfdf5', 'Won': '#ecfdf5', 'Lost': '#f9fafb',
   };
   return bgs[stage] || '#f9fafb';
 }
@@ -700,9 +699,9 @@ function HomeInner() {
                               </button>
                             ); })()}
 
-                            {/* IC Memo — Engaged and later: the associate's
+                            {/* IC Memo — Contacted and later: the associate's
                                 one-pager for the committee */}
-                            {['Engaged', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
+                            {['Contacted', 'Responded', 'Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
                               <button className="kc-icmemo" disabled={memoBusy === company.name}
                                 title={company.ic_memo ? 'Open the stored IC memo' : 'Generate a one-page IC memo from the verified record'}
                                 onClick={async () => {

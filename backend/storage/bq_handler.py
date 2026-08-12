@@ -79,6 +79,9 @@ class BigQueryHandler:
         # Out-of-office: the first day the recipient said they are back, read
         # from their autoresponder. Drives the follow-up reminder override.
         # Stored as a plain YYYY-MM-DD string, like the other date columns here.
+        # First entry into Responded (they replied). Backfilled from
+        # last_reply_at by the stage rename migration.
+        ("responded_at", "TIMESTAMP"),
         ("ooo_until", "STRING"),
         ("ooo_note", "STRING"),
         ("owner", "STRING"),
@@ -123,7 +126,7 @@ class BigQueryHandler:
         ("action_set_at", "TIMESTAMP"),
         ("action_reply_subject", "STRING"),
         ("action_reply_body", "STRING"),
-        # IC memo one-pager (JSON) for Engaged-or-later companies
+        # IC memo one-pager (JSON) for Responded-or-later companies
         ("ic_memo", "STRING"),
         ("ic_memo_at", "TIMESTAMP"),
         # Companies House registry intelligence
@@ -189,7 +192,13 @@ class BigQueryHandler:
     # Map stage name → its permanent first-entry timestamp column
     STAGE_TIMESTAMP_COLS = {
         "Qualified": "qualified_at",
+        # 'Contacted' = we emailed them. contacted_at has ALWAYS been stamped at
+        # send time, so this column already matched this meaning before the
+        # status value was renamed from 'Engaged'.
         "Contacted": "contacted_at",
+        # 'Responded' = they replied. Previously stored as 'Contacted', which is
+        # why the UI had to translate it on the way out.
+        "Responded": "responded_at",
         "Meeting": "meeting_at",
         "DD": "dd_at",
         "Offer": "offer_at",
@@ -358,8 +367,12 @@ class BigQueryHandler:
     # ── Deal lifecycle: status updates ──────────────────────────────────────────
 
     # Valid deal stages in pipeline order
-    DEAL_STAGES = ["Scraped", "Uploaded", "Not a Fit", "Qualified", "Contacted", "Meeting", "DD", "Offer", "Won", "Lost"]
-    ACTIVE_PIPELINE_STAGES = ("Qualified", "Contacted", "Meeting", "DD", "Offer")
+    # Deal stages. 'Contacted' = we emailed them; 'Responded' = they replied.
+    # There is no 'Engaged': it was the old name for Contacted and means nothing
+    # anywhere in the product. See /admin/stage-rename for the migration.
+    DEAL_STAGES = ["Scraped", "Uploaded", "Not a Fit", "Qualified", "Contacted",
+                   "Responded", "Meeting", "DD", "Offer", "Won", "Lost"]
+    ACTIVE_PIPELINE_STAGES = ("Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer")
 
     def update_company_status(self, company_name: str, new_status: str, created_by: str = "Ishu Ratna") -> bool:
         """Update a company's status and log the change in activity_log."""
@@ -1000,7 +1013,7 @@ class BigQueryHandler:
             return []
         query = f"""
             SELECT * FROM `{self.table_id}`
-            WHERE status IN ('Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Engaged')
+            WHERE status IN ('Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
             ORDER BY name ASC
         """
         return self._run_query(query)
@@ -1212,22 +1225,22 @@ class BigQueryHandler:
 
     def reconcile_unreplied_contacted(self, dry_run: bool = False) -> List[Dict]:
         """Mirror of the sync's auto-advance: pull a company BACK out of
-        'Contacted' when no reply actually exists.
+        'Responded' when no reply actually exists.
 
-        WHY: sending outreach sets 'Engaged'; a synced reply advances it to
-        'Contacted'. That advance was only ever one-way, so if the reply later
+        WHY: sending outreach sets 'Contacted'; a synced reply advances it to
+        'Responded'. That advance was only ever one-way, so if the reply later
         turns out not to exist (misattributed to the wrong company, deleted
         from the mailbox, or advanced on a message that was not really a reply)
-        the company sat in Contacted forever and showed up as Responded.
+        the company sat in Responded forever looking like it had answered.
 
         Deliberately narrow, per the agreed rule:
-          * Only the outreach -> Contacted layer. Meeting / DD / Offer / Won are
+          * Only the Contacted -> Responded layer. Meeting / DD / Offer / Won are
             human decisions with real work behind them and are never reversed.
           * Only when EMAIL-SYNC made the move. A stage set by a human stands,
             because they may have replied by phone or been advanced on purpose.
           * email_log is the source of truth for whether a reply exists.
 
-        Demotes to 'Engaged' when we did email them, or back to 'Qualified'
+        Demotes to 'Contacted' when we did email them, or back to 'Qualified'
         when no outreach was ever sent (in which case it should never have left).
         Returns [{name, from, to}] for the caller to report.
         """
@@ -1239,7 +1252,7 @@ class BigQueryHandler:
                 WITH replied AS (
                     -- Out-of-office autoresponders are excluded: they are not
                     -- replies, so one must never shield a company from being
-                    -- pulled back out of Contacted.
+                    -- pulled back out of Responded.
                     SELECT DISTINCT entity_name
                     FROM `{log}`
                     WHERE entity_type = 'company' AND direction = 'received'
@@ -1250,14 +1263,14 @@ class BigQueryHandler:
                            ROW_NUMBER() OVER (PARTITION BY company_name
                                               ORDER BY created_at DESC) AS rn
                     FROM `{self.activity_table_id}`
-                    WHERE action_type = 'status_change' AND new_status = 'Contacted'
+                    WHERE action_type = 'status_change' AND new_status = 'Responded'
                 )
                 SELECT t.name,
-                       IF(t.outreach_sent_at IS NULL, 'Qualified', 'Engaged') AS target
+                       IF(t.outreach_sent_at IS NULL, 'Qualified', 'Contacted') AS target
                 FROM `{self.table_id}` t
                 JOIN last_move m ON m.company_name = t.name AND m.rn = 1
                 LEFT JOIN replied r ON r.entity_name = t.name
-                WHERE t.status = 'Contacted'
+                WHERE t.status = 'Responded'
                   AND r.entity_name IS NULL
                   AND m.created_by = 'email-sync'
                   AND IFNULL(t.source, '') != 'Internal Test'
@@ -1267,7 +1280,7 @@ class BigQueryHandler:
             return []
 
         if dry_run:
-            return [{"name": r.name, "from": "Contacted", "to": r.target,
+            return [{"name": r.name, "from": "Responded", "to": r.target,
                      "would_change": True} for r in rows]
 
         changed = []
@@ -1291,10 +1304,10 @@ class BigQueryHandler:
                 self.add_activity_note(
                     r.name,
                     f"Pulled back to {r.target}: no reply from this company exists in the email log, "
-                    f"and the move to Contacted was made automatically by email-sync.",
+                    f"and the move to Responded was made automatically by email-sync.",
                     created_by="email-sync")
-                changed.append({"name": r.name, "from": "Contacted", "to": r.target})
-                logger.info(f"[sync] pulled {r.name} back: Contacted -> {r.target} (no reply on record)")
+                changed.append({"name": r.name, "from": "Responded", "to": r.target})
+                logger.info(f"[sync] pulled {r.name} back: Responded -> {r.target} (no reply on record)")
             except Exception as e:
                 logger.warning(f"Pull-back failed for {r.name}: {e}")
         return changed

@@ -65,11 +65,11 @@ class StubHandler:
 
     def get_universe_slim(self):
         return [
-            {"name": "LongLeave", "status": "Contacted", "outreach_sent_at": "2026-08-01", "source": "Conf"},
-            {"name": "RepliedLater", "status": "Contacted", "outreach_sent_at": "2026-07-01", "source": "Conf"},
-            {"name": "NoDate", "status": "Contacted", "outreach_sent_at": "2026-08-05", "source": "Conf"},
-            {"name": "GenuineOnly", "status": "Contacted", "outreach_sent_at": "2026-08-01", "source": "Conf"},
-            {"name": "TestCo", "status": "Contacted", "outreach_sent_at": "2026-08-01", "source": "Internal Test"},
+            {"name": "LongLeave", "status": "Responded", "outreach_sent_at": "2026-08-01", "source": "Conf"},
+            {"name": "RepliedLater", "status": "Responded", "outreach_sent_at": "2026-07-01", "source": "Conf"},
+            {"name": "NoDate", "status": "Responded", "outreach_sent_at": "2026-08-05", "source": "Conf"},
+            {"name": "GenuineOnly", "status": "Responded", "outreach_sent_at": "2026-08-01", "source": "Conf"},
+            {"name": "TestCo", "status": "Responded", "outreach_sent_at": "2026-08-01", "source": "Internal Test"},
         ]
 
     def reconcile_unreplied_contacted(self, dry_run=False):
@@ -107,8 +107,8 @@ chk("counts the deferred reminders", res["reminder_deferred"], 1)
 
 print()
 print("── Stage correction ──")
-chk("no genuine reply -> pulled back to Engaged", by["LongLeave"]["pull_back_to"], "Engaged")
-chk("undated OOO still corrects the stage", by["NoDate"]["pull_back_to"], "Engaged")
+chk("no genuine reply -> pulled back to Contacted", by["LongLeave"]["pull_back_to"], "Contacted")
+chk("undated OOO still corrects the stage", by["NoDate"]["pull_back_to"], "Contacted")
 chk("counts the pull-backs", res["would_pull_back"], 2)
 
 print()

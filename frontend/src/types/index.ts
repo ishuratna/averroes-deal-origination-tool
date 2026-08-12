@@ -16,7 +16,7 @@ export interface CompanyTarget {
   contact_email_source?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
-  status: 'Qualified' | 'Contacted' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Engaged' | 'Not a Fit' | 'Scraped' | 'Uploaded';
+  status: 'Qualified' | 'Contacted' | 'Responded' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Not a Fit' | 'Scraped' | 'Uploaded';
   ingested_at?: string;
   // Expanded PitchBook fields
   contact_title?: string;
@@ -148,7 +148,7 @@ export interface CompanyTarget {
   action_set_at?: string;
   action_reply_subject?: string;
   action_reply_body?: string;
-  // IC memo one-pager (JSON string) for Engaged-or-later companies
+  // IC memo one-pager (JSON string) for Responded-or-later companies
   ic_memo?: string;
   ic_memo_at?: string;
   // Raw investor/owner lists from the Inven export
@@ -185,7 +185,9 @@ export interface PipelineMetrics {
 }
 
 // Deal stages in pipeline order
-export const DEAL_STAGES = ['Qualified', 'Contacted', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
+// 'Contacted' = we emailed them. 'Responded' = they replied. There is no
+// 'Engaged' anywhere any more.
+export const DEAL_STAGES = ['Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'] as const;
 export type DealStage = typeof DEAL_STAGES[number];
 
 // ── Deal-team ownership + triage ────────────────────────────────────────────
@@ -236,11 +238,11 @@ export interface RespondedResponse {
   companies: RespondedCompany[];
 }
 
-// Display labels for stored statuses. 'Contacted' is stored in the DB but
-// shown as "Responded" (a reply exists). Never rename the stored value.
+// Stored statuses now read the same on screen as they do in BigQuery, so there
+// is nothing left to translate. Kept as a function because it is called in a
+// lot of places and a stage label may need special-casing again one day.
 export function displayStatus(status?: string): string {
-  if (!status) return '';
-  return status === 'Contacted' ? 'Responded' : status;
+  return status || '';
 }
 
 // ── Responded-stage action buckets ──────────────────────────────────────────

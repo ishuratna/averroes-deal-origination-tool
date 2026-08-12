@@ -75,7 +75,7 @@ export const DEFS: Record<string, string> = {
   profit: "Latest filed profit from Companies House accounts (or net income from PitchBook).",
   assets: "Total assets from the latest Companies House filing. Used as a revenue proxy (× 2.5) when turnover is not disclosed.",
   size: "Size bucket from revenue or AI estimate: Micro < £5M, Small £5–15M, Mid £15–50M all qualify; Large > £50M is rejected by the size filter.",
-  status: "Deal lifecycle stage: Scraped/Uploaded (raw, not yet assessed) → Qualified or Not a Fit (after SmartFill) → Contacted → Meeting → Due Diligence → Offer → Won/Lost. 'Engaged' is set automatically when an outreach email is sent.",
+  status: "Deal lifecycle stage: Scraped/Uploaded (raw, not yet assessed) → Qualified or Not a Fit (after SmartFill) → Contacted (we emailed them, set automatically on send) → Responded (they replied) → Meeting → Due Diligence → Offer → Won/Lost.",
   owner: "Who on the team is managing this company. One field that changes hands: Ishu holds it through triage, then it moves to Bea (Track A) or to Issam/Marianna on loop-in (Track B). Set on the Responded page.",
   leadership: "Founder/CEO name discovered by AI enrichment (live web search).",
   email: "Contact email found by enrichment. Click to draft an AI outreach email.",
@@ -94,11 +94,12 @@ export const DEFS: Record<string, string> = {
 
   // ── Pipeline stages ──
   stageQualified: "Passed all 3 hard filters: UK/Ireland geography, technology/SaaS industry, and revenue under £40M. Awaiting first contact.",
-  stageContacted: "The founder or company has replied — a two-way dialogue is open. Set automatically when a reply is synced, or manually.",
+  stageContacted: "An outreach email was sent from the platform. Set automatically on send.",
+  stageResponded: "The founder or company has replied — a two-way dialogue is open. Set automatically when a reply is synced, or manually.",
   stageMeeting: "An intro call or meeting is scheduled or has taken place.",
   stageDD: "Due diligence — reviewing financials, contracts, tech and team in depth.",
   stageOffer: "A term sheet or offer has been put forward.",
-  stageEngaged: "An outreach email was sent from the platform (set automatically on send).",
+
   stageWon: "Deal closed successfully.",
   stageLost: "Deal did not proceed — passed, lost or went cold.",
 
@@ -115,7 +116,7 @@ export const STAGE_DEFS: Record<string, string> = {
   Meeting: DEFS.stageMeeting,
   DD: DEFS.stageDD,
   Offer: DEFS.stageOffer,
-  Engaged: DEFS.stageEngaged,
+  Responded: DEFS.stageResponded,
   Won: DEFS.stageWon,
   Lost: DEFS.stageLost,
 };

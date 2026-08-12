@@ -4,7 +4,7 @@
 // Pipeline kanban. Behaviour contract:
 //   • A previously saved draft opens instantly for review (no AI regeneration)
 //   • "Generate New Draft" explicitly replaces it (uses AI credits)
-//   • Only SEND changes the company's stage (backend moves it to Engaged);
+//   • Only SEND changes the company's stage (backend moves it to Contacted);
 //     drafting alone never touches the stage.
 
 import { useState, useEffect, useCallback } from 'react';
@@ -68,7 +68,7 @@ export default function OutreachModal({
     try {
       await dealApi.sendOutreach(draft.to, draft.subject, draft.body, draft.company);
       setSent(true);
-      onSent?.();  // stage bumps to Engaged — let the parent reload
+      onSent?.();  // stage bumps to Contacted — let the parent reload
     } catch (err: any) {
       alert(`Send failed: ${err.message}`);
     } finally { setSending(false); }
@@ -99,7 +99,7 @@ export default function OutreachModal({
               <div className="sent-icon">&#10003;</div>
               <h4>Email Sent</h4>
               <p>Sent to <strong>{draft?.to}</strong> from Beatrice Carrara &lt;beatrice@averroescapital.com&gt;.</p>
-              <p className="sent-sub">The company&apos;s stage has moved to Engaged.</p>
+              <p className="sent-sub">The company&apos;s stage has moved to Contacted.</p>
             </div>
           ) : draft ? (
             <div className="outreach-form">

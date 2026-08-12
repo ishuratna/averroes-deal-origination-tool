@@ -53,7 +53,7 @@ calc AS (
     FROM targets t
     JOIN last_sent s ON s.entity_name = t.name
     LEFT JOIN last_recv r ON r.entity_name = t.name
-    WHERE t.status IN ('Engaged','Contacted','Meeting','DD','Offer')
+    WHERE t.status IN ('Contacted','Responded','Meeting','DD','Offer')
       AND COALESCE(t.source,'') != 'Internal Test'
 )
 SELECT name,
@@ -79,7 +79,7 @@ CREATE TABLE email_log (entity_name VARCHAR, entity_type VARCHAR, direction VARC
 """)
 
 
-def company(name, ooo=None, status="Engaged", source="Conference", bucket=None):
+def company(name, ooo=None, status="Contacted", source="Conference", bucket=None):
     db.execute("INSERT INTO targets VALUES (?,?,?,?,?)", [name, status, source, ooo, bucket])
 
 

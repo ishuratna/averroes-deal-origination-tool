@@ -29,7 +29,7 @@ interface Analytics {
   weekly_emails: WeeklyRow[];
   snapshots: Snapshot[];
   inconsistencies?: {
-    engaged_without_email?: number;
+    contacted_without_email?: number;
     responded_without_reply?: number;
     replied_never_emailed?: number;
   };
@@ -134,13 +134,13 @@ function AnalyticsInner() {
                 <span><i className="an-dot an-dot-ever" /> ever reached stage</span>
                 <span><i className="an-dot an-dot-current" /> currently in stage</span>
                 <span className="an-legend-note">
-                  Engaged = emailed · Responded = replied (email evidence, ever and current) · Not a Fit: {data.not_a_fit_ever.toLocaleString()} ever · {data.not_a_fit_current.toLocaleString()} current
+                  Contacted = emailed · Responded = replied (email evidence, ever and current) · Not a Fit: {data.not_a_fit_ever.toLocaleString()} ever · {data.not_a_fit_current.toLocaleString()} current
                 </span>
               </div>
               {(() => {
                 const inc = data.inconsistencies || {};
                 const warns: string[] = [];
-                if (inc.engaged_without_email) warns.push(`${inc.engaged_without_email} in Engaged with no outbound email on record`);
+                if (inc.contacted_without_email) warns.push(`${inc.contacted_without_email} in Contacted with no outbound email on record`);
                 if (inc.responded_without_reply) warns.push(`${inc.responded_without_reply} in Responded with no logged reply`);
                 if (inc.replied_never_emailed) warns.push(`${inc.replied_never_emailed} replied although we never emailed them (inbound-first)`);
                 return warns.length > 0 ? (

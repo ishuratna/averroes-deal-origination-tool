@@ -24,7 +24,7 @@ interface Props {
 
 const TABS = ['Summary', 'Financials', 'Ownership', 'People', 'Companies House', 'Outreach', 'IC Memo'] as const;
 const NEXT_STAGE: Record<string, string> = {
-  Qualified: 'Contacted', Engaged: 'Contacted', Contacted: 'Meeting', Meeting: 'DD', DD: 'Offer',
+  Qualified: 'Contacted', Contacted: 'Responded', Responded: 'Meeting', Meeting: 'DD', DD: 'Offer',
 };
 
 const fmtRaw = (v?: number | null) => (v != null && v !== 0) ? `£${(v / 1e6).toFixed(1)}M` : null;
@@ -50,8 +50,8 @@ function parseDirectors(s?: string): string[] {
 
 function statusColor(stage: string): string {
   const c: Record<string, string> = {
-    Qualified: '#3b82f6', Contacted: '#8b5cf6', Meeting: '#f59e0b', DD: '#ef4444',
-    Offer: '#10b981', Won: '#059669', Lost: '#6b7280', Engaged: '#8b5cf6',
+    Qualified: '#3b82f6', Contacted: '#8b5cf6', Responded: '#7c3aed', Meeting: '#f59e0b', DD: '#ef4444',
+    Offer: '#10b981', Won: '#059669', Lost: '#6b7280',
     'Under Review': '#d97706', Scraped: '#94a3b8', Uploaded: '#3b82f6', 'Not a Fit': '#ef4444',
   };
   return c[stage] || '#6b7280';
@@ -252,7 +252,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
   if (!company) return null;
   const ob = outreachButtonState(company);
-  const inPipeline = ['Qualified', 'Engaged', 'Contacted', 'Meeting', 'DD', 'Offer'].includes(company.status);
+  const inPipeline = ['Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer'].includes(company.status);
   const nextStage = NEXT_STAGE[company.status];
   const band = getRevenueBand(company);
   const revLatest = company.revenue_y1 ? company.revenue_y1 / 1e6 : company.revenue_m || company.revenue_estimate_m || null;

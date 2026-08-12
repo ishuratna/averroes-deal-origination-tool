@@ -51,69 +51,69 @@ def moved(name, to, by, at=T):
 
 # ── The cases that matter ────────────────────────────────────────────────────
 # 1. THE BUG: sync advanced it, the reply is gone. Must be pulled back.
-company("GhostReply", "Contacted");            mail("GhostReply", "sent")
-moved("GhostReply", "Contacted", "email-sync")
+company("GhostReply", "Responded");            mail("GhostReply", "sent")
+moved("GhostReply", "Responded", "email-sync")
 
 # 2. A genuine reply exists. Must be LEFT ALONE.
-company("RealReply", "Contacted")
+company("RealReply", "Responded")
 mail("RealReply", "sent"); mail("RealReply", "received")
-moved("RealReply", "Contacted", "email-sync")
+moved("RealReply", "Responded", "email-sync")
 
 # 3. A HUMAN moved it (replied by phone). Must be left alone even with no email.
-company("PhonedIn", "Contacted");              mail("PhonedIn", "sent")
-moved("PhonedIn", "Contacted", "Ishu Ratna")
+company("PhonedIn", "Responded");              mail("PhonedIn", "sent")
+moved("PhonedIn", "Responded", "Ishu Ratna")
 
 # 4. Sync advanced it, then a human re-advanced it later. Latest move wins -> leave.
-company("HumanLast", "Contacted");             mail("HumanLast", "sent")
-moved("HumanLast", "Contacted", "email-sync", "2026-07-01 09:00:00")
-moved("HumanLast", "Contacted", "Ishu Ratna",  "2026-07-20 09:00:00")
+company("HumanLast", "Responded");             mail("HumanLast", "sent")
+moved("HumanLast", "Responded", "email-sync", "2026-07-01 09:00:00")
+moved("HumanLast", "Responded", "Ishu Ratna",  "2026-07-20 09:00:00")
 
 # 5. Human moved it first, sync re-advanced later. Latest is sync -> pull back.
-company("SyncLast", "Contacted");               mail("SyncLast", "sent")
-moved("SyncLast", "Contacted", "Ishu Ratna",   "2026-07-01 09:00:00")
-moved("SyncLast", "Contacted", "email-sync",   "2026-07-20 09:00:00")
+company("SyncLast", "Responded");               mail("SyncLast", "sent")
+moved("SyncLast", "Responded", "Ishu Ratna",   "2026-07-01 09:00:00")
+moved("SyncLast", "Responded", "email-sync",   "2026-07-20 09:00:00")
 
-# 6. Never emailed at all -> should go back to Qualified, not Engaged.
-company("NeverEmailed", "Contacted", sent=None)
-moved("NeverEmailed", "Contacted", "email-sync")
+# 6. Never emailed at all -> should go back to Qualified, not Contacted.
+company("NeverEmailed", "Responded", sent=None)
+moved("NeverEmailed", "Responded", "email-sync")
 
 # 7. Stages past Contacted must NEVER be reversed, reply or not.
 for stage in ("Meeting", "DD", "Offer", "Won"):
     company(f"Deep{stage}", stage);            mail(f"Deep{stage}", "sent")
-    moved(f"Deep{stage}", "Contacted", "email-sync")
+    moved(f"Deep{stage}", "Responded", "email-sync")
 
 # 8. The Internal Test row is exempt.
-company("TestCo", "Contacted", source="Internal Test"); mail("TestCo", "sent")
-moved("TestCo", "Contacted", "email-sync")
+company("TestCo", "Responded", source="Internal Test"); mail("TestCo", "sent")
+moved("TestCo", "Responded", "email-sync")
 
-# 9. Still in Engaged (no reply yet) -> nothing to do, must not appear.
-company("AwaitingReply", "Engaged");           mail("AwaitingReply", "sent")
+# 9. Still in Contacted (no reply yet) -> nothing to do, must not appear.
+company("AwaitingReply", "Contacted");           mail("AwaitingReply", "sent")
 
 # 10. An outbound-only log plus a received row for a DIFFERENT company must not
 #     protect this one (guards against a sloppy join).
-company("Neighbour", "Contacted");             mail("Neighbour", "sent")
-moved("Neighbour", "Contacted", "email-sync")
+company("Neighbour", "Responded");             mail("Neighbour", "sent")
+moved("Neighbour", "Responded", "email-sync")
 mail("SomeoneElse", "received")
 
 # 11. An out-of-office is NOT a reply, so it must not shield a company from
 #     being pulled back. This is the whole point of the classification filter.
-company("OooOnly", "Contacted");                mail("OooOnly", "sent")
+company("OooOnly", "Responded");                mail("OooOnly", "sent")
 mail("OooOnly", "received", cls="out_of_office")
-moved("OooOnly", "Contacted", "email-sync")
+moved("OooOnly", "Responded", "email-sync")
 
 # 12. An OOO plus a genuine reply -> the genuine one protects it.
-company("OooAndReal", "Contacted");             mail("OooAndReal", "sent")
+company("OooAndReal", "Responded");             mail("OooAndReal", "sent")
 mail("OooAndReal", "received", cls="out_of_office")
 mail("OooAndReal", "received", cls="interested")
-moved("OooAndReal", "Contacted", "email-sync")
+moved("OooAndReal", "Responded", "email-sync")
 
 got = {r[0]: r[1] for r in db.execute(sql).fetchall()}
 want = {
-    "GhostReply":   "Engaged",
-    "SyncLast":     "Engaged",
+    "GhostReply":   "Contacted",
+    "SyncLast":     "Contacted",
     "NeverEmailed": "Qualified",
-    "Neighbour":    "Engaged",
-    "OooOnly":      "Engaged",   # an autoresponder never counts as a reply
+    "Neighbour":    "Contacted",
+    "OooOnly":      "Contacted",   # an autoresponder never counts as a reply
 }
 
 fails = 0
