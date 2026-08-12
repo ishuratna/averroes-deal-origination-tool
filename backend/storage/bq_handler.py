@@ -1149,6 +1149,87 @@ class BigQueryHandler:
             logger.error(f"get_responded failed: {e}")
             return []
 
+    def reconcile_unreplied_contacted(self) -> List[Dict]:
+        """Mirror of the sync's auto-advance: pull a company BACK out of
+        'Contacted' when no reply actually exists.
+
+        WHY: sending outreach sets 'Engaged'; a synced reply advances it to
+        'Contacted'. That advance was only ever one-way, so if the reply later
+        turns out not to exist (misattributed to the wrong company, deleted
+        from the mailbox, or advanced on a message that was not really a reply)
+        the company sat in Contacted forever and showed up as Responded.
+
+        Deliberately narrow, per the agreed rule:
+          * Only the outreach -> Contacted layer. Meeting / DD / Offer / Won are
+            human decisions with real work behind them and are never reversed.
+          * Only when EMAIL-SYNC made the move. A stage set by a human stands,
+            because they may have replied by phone or been advanced on purpose.
+          * email_log is the source of truth for whether a reply exists.
+
+        Demotes to 'Engaged' when we did email them, or back to 'Qualified'
+        when no outreach was ever sent (in which case it should never have left).
+        Returns [{name, from, to}] for the caller to report.
+        """
+        if not self.client:
+            return []
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            rows = list(self.client.query(f"""
+                WITH replied AS (
+                    SELECT DISTINCT entity_name
+                    FROM `{log}`
+                    WHERE entity_type = 'company' AND direction = 'received'
+                ),
+                last_move AS (
+                    SELECT company_name, created_by,
+                           ROW_NUMBER() OVER (PARTITION BY company_name
+                                              ORDER BY created_at DESC) AS rn
+                    FROM `{self.activity_table_id}`
+                    WHERE action_type = 'status_change' AND new_status = 'Contacted'
+                )
+                SELECT t.name,
+                       IF(t.outreach_sent_at IS NULL, 'Qualified', 'Engaged') AS target
+                FROM `{self.table_id}` t
+                JOIN last_move m ON m.company_name = t.name AND m.rn = 1
+                LEFT JOIN replied r ON r.entity_name = t.name
+                WHERE t.status = 'Contacted'
+                  AND r.entity_name IS NULL
+                  AND m.created_by = 'email-sync'
+                  AND IFNULL(t.source, '') != 'Internal Test'
+            """).result())
+        except Exception as e:
+            logger.error(f"reconcile_unreplied_contacted query failed: {e}")
+            return []
+
+        changed = []
+        for r in rows:
+            try:
+                # Clear everything that was premised on a reply existing. Left
+                # in place these would keep the company looking like it had
+                # answered (reply chip on the card, an action bucket, a
+                # suggested reply drafted from a message that is not there).
+                self.client.query(
+                    f"""UPDATE `{self.table_id}` SET
+                            last_reply_at = NULL, reply_classification = NULL,
+                            action_bucket = NULL, action_rationale = NULL,
+                            action_follow_up_date = NULL, action_set_at = NULL,
+                            action_reply_subject = NULL, action_reply_body = NULL
+                        WHERE name = @name""",
+                    job_config=bigquery.QueryJobConfig(query_parameters=[
+                        bigquery.ScalarQueryParameter("name", "STRING", r.name),
+                    ])).result()
+                self.update_company_status(r.name, r.target, created_by="email-sync")
+                self.add_activity_note(
+                    r.name,
+                    f"Pulled back to {r.target}: no reply from this company exists in the email log, "
+                    f"and the move to Contacted was made automatically by email-sync.",
+                    created_by="email-sync")
+                changed.append({"name": r.name, "from": "Contacted", "to": r.target})
+                logger.info(f"[sync] pulled {r.name} back: Contacted -> {r.target} (no reply on record)")
+            except Exception as e:
+                logger.warning(f"Pull-back failed for {r.name}: {e}")
+        return changed
+
     def hide_companies(self, names: List[str], by: str = "") -> int:
         """SOFT delete: stamp hidden_at so the row drops out of the Master
         Universe view. Nothing is deleted from BigQuery."""

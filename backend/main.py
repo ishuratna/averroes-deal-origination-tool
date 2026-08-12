@@ -3867,6 +3867,18 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
+    # Reverse pass: the mirror of the advance above. A company sitting in
+    # Contacted with NO reply on record gets pulled back to where it belongs
+    # (Engaged if we emailed it, Qualified if we never did). Runs AFTER the
+    # advances so a reply logged moments ago is already visible and the company
+    # is not pulled back and pushed forward in the same run. Only reverses
+    # moves that email-sync itself made; a human's stage change always stands.
+    pulled_back = []
+    try:
+        pulled_back = bq_handler.reconcile_unreplied_contacted()
+    except Exception as e:
+        logger.warning(f"Pull-back reconciliation failed (non-fatal): {e}")
+
     # Retro bucketing: companies with a logged reply but no action bucket yet
     # (replies synced before buckets existed, or a call failed). Reads from
     # email_log — the single source of truth — so it works regardless of the
@@ -3949,6 +3961,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "replies_found": len(replies),
         "replies_classified": classified,
         "auto_advanced": advanced,
+        "pulled_back": pulled_back,
         "reclassified": reclassified,
         "action_buckets": bucketed,
         "bucket_errors": bucket_errors[:10],
@@ -3956,7 +3969,11 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                    + (f", {len(reclassified)} reclassified" if reclassified else "")
                    + (f", {len(bucketed)} action-bucketed" if bucketed else "")
                    + (f", {len(bucket_errors)} bucket attempts FAILED: {bucket_errors[0]}" if bucket_errors else "") + "). "
-                   + (f"Advanced to Contacted: {', '.join(advanced)}." if advanced else "No stage changes."),
+                   + (f"Advanced to Contacted: {', '.join(advanced)}. " if advanced else "")
+                   + (f"Pulled back (no reply on record): "
+                      + ", ".join(f"{p['name']} -> {p['to']}" for p in pulled_back) + "."
+                      if pulled_back else "")
+                   + ("No stage changes." if not advanced and not pulled_back else ""),
     }
 
 
