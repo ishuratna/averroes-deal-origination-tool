@@ -234,18 +234,17 @@ y = page_header(
     "booked until we have seen real numbers.",
 )
 
-# Persona strip - the single most important thing to get right
-PERSONA = ("Emails 1, 2 and 3 all go out from Bea's mailbox. Ishu writes and sends them, and manages every reply. "
-           "The founder believes throughout that they are corresponding with Bea, and nothing they see contradicts that.")
+# Who the founder corresponds with, and who operates the mailbox
+PERSONA = ("Emails 1, 2 and 3 are sent from Bea's mailbox. Ishu drafts them, sends them and manages all replies. "
+           "The founder corresponds with Bea throughout.")
 pw = CW - 108
 sh = 12 + para_h(PERSONA, F, 8.3, 10.8, pw) + 8
 box(M, y, CW, sh, fill=PLUMBG, stroke=PLUM, lw=1.0)
 c.setFillColor(PLUM)
 c.rect(M, y - sh, 2.6, sh, stroke=0, fill=1)
-c.setFont(FB, 8.4)
+c.setFont(FB, 7.2)
 c.setFillColor(PLUM)
-c.drawString(M + 12, y - 15, "Bea is the voice.")
-c.drawString(M + 12, y - 26, "Ishu is the hand.")
+c.drawString(M + 12, y - 19, "SENDER")
 para(M + 96, y - 8, pw, PERSONA, F, 8.3, 10.8, BODY)
 y -= sh + 11
 
@@ -456,12 +455,12 @@ y = table(
     [0.18, 0.30, 0.52],
     ["Person", "Role", "What they do and do not do"],
     [
-        ("Bea", "Partner. The voice the founder knows.",
+        ("Bea", "Partner. Named sender of Emails 1 to 3.",
          "Her mailbox sends Emails 1, 2 and 3, though Ishu operates it. She takes every Track A call, briefed "
          "beforehand by Ishu. She does not attend the Wednesday or Thursday sessions.", PLUM),
-        ("Ishu", "Operator, triager, brief writer.",
-         "Writes and sends all founder email as Bea. Triages every Email 2 reply into Track A, Track B or kill. "
-         "Writes the handover brief for each Track A company. Takes no founder calls himself.", NAVY),
+        ("Ishu", "Operates the mailbox and triages.",
+         "Drafts and sends Emails 1 to 3 from Bea's mailbox. Triages every Email 2 reply into Track A, Track B or "
+         "kill. Writes the handover brief for each Track A company. Takes no founder calls.", NAVY),
         ("Issam", "Associate. Track B founder calls.",
          "Takes Track B calls, alternating with Marianna. Email 4 comes from his own mailbox, and he owns the "
          "relationship from that point.", AMBER),
