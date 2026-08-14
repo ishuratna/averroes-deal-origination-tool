@@ -1631,10 +1631,13 @@ async def diag_ch_match_audit(request: Request):
     if not expected or token != expected:
         raise HTTPException(status_code=403, detail="Invalid token.")
 
-    from services.companies_house_service import _name_gate
+    from services.companies_house_service import _core_name, _name_gate
 
     rows = list(bq_handler.client.query(
-        f"""SELECT name, ch_official_name, ch_company_number, ch_match_confidence
+        f"""SELECT name, ch_official_name, ch_company_number, ch_match_confidence,
+                   CAST(ch_incorporated_date AS STRING) AS ch_incorporated_date,
+                   CAST(ingested_at AS STRING) AS ingested_at,
+                   status, revenue_band, averroes_fit_score
             FROM `{bq_handler.table_id}`
             WHERE ch_company_number IS NOT NULL AND ch_company_number != ''""").result())
 
@@ -1646,31 +1649,66 @@ async def diag_ch_match_audit(request: Request):
         checked += 1
         gate = _name_gate(r.name, r.ch_official_name)
         new_level = gate[0] if gate else "REJECTED"
+
+        # Impossible: the register company was incorporated after we first knew
+        # of this one. Strongest signal there is — it is not a judgement call.
+        inc = (r.ch_incorporated_date or "")[:10]
+        ing = (r.ingested_at or "")[:10]
+        impossible = bool(inc and ing and inc > ing)
+
+        # A one-word name sits inside hundreds of register names, so a match on
+        # one alone is worth re-checking by hand even if the gate now allows it.
+        one_word = len(_core_name(r.name).split()) < 2
         # Old confidence -> the loosest gate tier that could have produced it,
         # under the OLD scheme (fuzzy/partial were both accepted then).
         old_conf = r.ch_match_confidence or ""
-        risky_new = new_level in ("REJECTED", "fuzzy", "partial", "core-ambiguous")
-        risky_old = old_conf in ("low",) or (old_conf == "medium" and new_level in ("REJECTED", "fuzzy", "partial", "core-ambiguous"))
-        if risky_new or risky_old:
-            flagged.append({
-                "name": r.name,
-                "ch_official_name": r.ch_official_name,
-                "ch_company_number": r.ch_company_number,
-                "stored_confidence": old_conf,
-                "gate_under_new_rules": new_level,
-                "suggested_action": (
-                    "REJECTED — new rules would not have matched this at all; "
-                    "manually verify on Companies House before trusting this row's financials"
-                    if new_level == "REJECTED" else
-                    "would now be refused for financials (sounds similar, not confirmed) — "
-                    "manually verify, or clear ch_company_number to force a fresh match next SmartEnrich"
-                ),
-            })
+        weak = new_level in ("REJECTED", "fuzzy", "partial", "core-ambiguous")
+        risky_old = old_conf in ("low",) or (old_conf == "medium" and weak)
 
+        if impossible:
+            why, action = ("IMPOSSIBLE",
+                           f"The register company was incorporated {inc}, AFTER we first saw this "
+                           f"company on {ing}. It cannot be the same entity. Clear ch_company_number "
+                           f"and re-run SmartEnrich.")
+        elif new_level == "REJECTED":
+            why, action = ("REJECTED",
+                           "The tightened rules would not match these two names at all. Verify on "
+                           "Companies House before trusting this row's financials, PSC or cap table.")
+        elif weak:
+            why, action = ("TOO WEAK",
+                           "Now refused for financials: the names only sound similar, or match on a "
+                           "single word. Verify by hand, or clear ch_company_number to force a fresh match.")
+        elif one_word:
+            why, action = ("ONE-WORD NAME",
+                           "Matched on a single-word name. The gate accepts it, but a one-word name "
+                           "sits inside many register names — worth a spot check.")
+        elif risky_old:
+            why, action = ("LOW CONFIDENCE", "Recorded at low confidence when it was matched.")
+        else:
+            continue
+
+        flagged.append({
+            "name": r.name,
+            "ch_official_name": r.ch_official_name,
+            "ch_company_number": r.ch_company_number,
+            "stored_confidence": old_conf,
+            "gate_under_new_rules": new_level,
+            "ch_incorporated_date": inc,
+            "first_seen": ing,
+            "status": r.status,
+            "revenue_band": r.revenue_band,
+            "fit_score": r.averroes_fit_score,
+            "flag": why,
+            "suggested_action": action,
+        })
+
+    order = {"IMPOSSIBLE": 0, "REJECTED": 1, "TOO WEAK": 2, "ONE-WORD NAME": 3, "LOW CONFIDENCE": 4}
+    flagged.sort(key=lambda f: (order.get(f["flag"], 9), f["name"]))
     return {
         "checked": checked,
         "total_with_ch_number": len(rows),
         "flagged_count": len(flagged),
+        "by_flag": {k: sum(1 for f in flagged if f["flag"] == k) for k in order},
         "flagged": flagged,
     }
 
@@ -2352,6 +2390,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 known_company_number=_known_number,
                 trust_known_number=_trust_known,
                 hq_city=company_data.get("hq_city", ""),
+                known_since=str(company_data.get("ingested_at") or ""),
             )
             if ch_data.get("error"):
                 logger.warning(f"CH extraction returned error for {company_name}: {ch_data['error']}")
@@ -2944,7 +2983,8 @@ async def smartenrich_company(company_name: str):
                                             description=company.get("description", ""),
                                             gcs_handler=gcs_handler,
                                             known_company_number=number,
-                                            trust_known_number=True)
+                                            trust_known_number=True,
+                                            known_since=str(company.get("ingested_at") or ""))
             if not ch_data.get("error"):
                 new_financials = True
                 for col in ["revenue_y1", "revenue_y2", "revenue_y3", "gross_profit_y1", "gross_profit_y2",

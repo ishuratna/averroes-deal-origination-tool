@@ -119,12 +119,33 @@ def _name_gate(company_name: str, title: str) -> Optional[Tuple[str, int]]:
     if c1 and c1 == c2:
         d1 = set(n1.split()) & _DESCRIPTOR_TOKENS
         d2 = set(n2.split()) & _DESCRIPTOR_TOKENS
-        if d1 and d2 and d1 != d2:
+        # The cores are only equal because descriptor words were stripped. That
+        # is safe ONLY when both names carry the SAME descriptors. Any
+        # difference means the register name says something the stored name
+        # does not, and with a short name that is wide open:
+        #   "Porta"            vs "PORTA DIGITAL LTD"     (2,637 CH matches!)
+        #   "Kaizen Software"  vs "Kaizen Consulting Ltd"
+        # An earlier version only downgraded when BOTH sides had descriptors,
+        # which let the first case through at high confidence and matched a
+        # dead crypto project to a three-month-old company in Stansted.
+        if d1 != d2:
             return ("core-ambiguous", 55)
         return ("exact-core", 90)
 
-    # One distinctive name contains the other (e.g. "monzo" in "monzo bank")
+    # One distinctive name contains the other (e.g. "monzo" in "monzo bank").
+    #
+    # HARD REQUIREMENT: the shorter core must be at least TWO words. A
+    # single-word core sits inside every company that merely starts with that
+    # word, and on the register that is a very large set. "Porta" is inside
+    # PORTA COFFEE, PORTA LOGISTICS, PORTA GUARD, PORTA HEALTH and hundreds
+    # more, none of which are the company we were looking for. Matching on one
+    # word is not evidence of identity, so a one-word name has to be resolved
+    # by its registration number (stored, or read off its own website) rather
+    # than by string containment.
     if c1 and c2 and len(min(c1, c2, key=len)) >= 4 and (c1 in c2 or c2 in c1):
+        shorter = c1 if len(c1) <= len(c2) else c2
+        if len(shorter.split()) < 2:
+            return ("core-ambiguous", 55)
         return ("contains", 75)
 
     # Fuzzy: near-identical distinctive names (typos, spacing)
@@ -140,12 +161,31 @@ def _name_gate(company_name: str, title: str) -> Optional[Tuple[str, int]]:
     return None
 
 
+def _incorporated_after(item: dict, known_since: str) -> bool:
+    """True if this CH company was incorporated AFTER we first knew of the
+    company we are trying to match.
+
+    A hard logical impossibility, not a heuristic: if a founder list, a
+    conference roster or a PitchBook export told us about a company in March,
+    a company incorporated in May cannot be it. The CH search response already
+    carries date_of_creation, so this costs nothing. It is what would have
+    stopped a dead 2021 crypto project being matched to a company incorporated
+    on 28 May 2026.
+    """
+    created = (item.get("date_of_creation") or "")[:10]
+    since = (known_since or "")[:10]
+    if not created or not since:
+        return False
+    return created > since
+
+
 def _pick_best_match(
     results: List[dict],
     company_name: str,
     sector: str = "",
     description: str = "",
     hq_city: str = "",
+    known_since: str = "",
 ) -> Optional[dict]:
     """
     Pick the best matching company from CH search results.
@@ -170,8 +210,15 @@ def _pick_best_match(
     context_kw = ["software", "tech", "data", "digital", "saas", "platform", "cloud"]
 
     scored = []
+    skipped_too_new = 0
     for item in results:
         title = item.get("title") or ""
+
+        # Impossible before anything else: cannot be a company that did not
+        # exist when we first heard of this one.
+        if known_since and _incorporated_after(item, known_since):
+            skipped_too_new += 1
+            continue
 
         gate = _name_gate(company_name, title)
         if gate is None:
@@ -210,8 +257,13 @@ def _pick_best_match(
         scored.append((score, item))
 
     if not scored:
-        logger.warning(f"[CH] No candidate passed the name gate for '{company_name}' — refusing to match.")
+        logger.warning(f"[CH] No candidate passed the name gate for '{company_name}' — refusing to match."
+                       + (f" ({skipped_too_new} discarded as incorporated after we first saw it)"
+                          if skipped_too_new else ""))
         return None
+    if skipped_too_new:
+        logger.info(f"[CH] '{company_name}': discarded {skipped_too_new} candidate(s) incorporated "
+                    f"after {known_since[:10]} — they cannot be this company.")
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best = scored[0]
@@ -624,9 +676,14 @@ def extract_ch_financials(
     known_company_number: str = "",
     trust_known_number: bool = True,
     hq_city: str = "",
+    known_since: str = "",
 ) -> Dict:
     """
     Full pipeline: Find company → Download accounts PDF → Parse with Gemini.
+
+    known_since: when we first knew of this company (its ingested_at). Any CH
+    company incorporated after that date is discarded as impossible before the
+    name is even compared.
 
     known_company_number: skip the name search entirely when we already know
     who this is — e.g. it came from a source that IS the CH register (the SIC
@@ -684,7 +741,8 @@ def extract_ch_financials(
         if not results:
             return {"error": f"No results found on Companies House for '{company_name}'"}
 
-        best = _pick_best_match(results, company_name, sector, description, hq_city=hq_city)
+        best = _pick_best_match(results, company_name, sector, description,
+                                hq_city=hq_city, known_since=known_since)
         if not best:
             return {"error": f"No confident match found on Companies House for '{company_name}'"}
 
