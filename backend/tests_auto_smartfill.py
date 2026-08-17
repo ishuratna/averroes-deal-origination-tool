@@ -63,13 +63,25 @@ chk("a 3-line description is not 'substantive'",
     == _auto_smartfill_rank(base), True)
 
 print()
-print("── Source quality ──")
+print("── Source tiers: Gain > Inven > conference > anonymous ──")
+chk("Gain beats Inven",
+    _auto_smartfill_rank({**base, "source": "Upload: gain_export_q3.xlsx"})
+    < _auto_smartfill_rank({**base, "source": "Upload: inven_export.csv"}), True)
 chk("Inven beats a conference",
-    _auto_smartfill_rank({**base, "source": "Inven Export Q3"})
+    _auto_smartfill_rank({**base, "source": "Upload: inven_export.csv"})
     < _auto_smartfill_rank({**base, "source": "SaaStock 2026"}), True)
 chk("a conference beats an anonymous scrape",
     _auto_smartfill_rank({**base, "source": "conference booth list"})
     < _auto_smartfill_rank({**base, "source": "Scraped"}), True)
+# The tier must not be swamped by data richness: a bare Gain name still beats a
+# fully-populated anonymous scrape? No — deliberately NOT. Data richness can
+# outweigh one tier, because a rich row is cheaper and safer to enrich. But
+# tier order must hold between rows of EQUAL richness, which is what these
+# assert. And Gain + rich beats Inven + rich:
+rich_fields = {"revenue_y1": 1_000_000, "website": "https://x.co"}
+chk("equal richness: Gain still first",
+    _auto_smartfill_rank({**base, **rich_fields, "source": "Upload: gain.xlsx"})
+    < _auto_smartfill_rank({**base, **rich_fields, "source": "Upload: inven.csv"}), True)
 
 print()
 print("── The order is stable, so ticks never skip or repeat ──")

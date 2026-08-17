@@ -2895,9 +2895,14 @@ def _auto_smartfill_rank(c: dict) -> tuple:
         score += 2          # a live site is both a signal and what SmartFill reads
     if len((c.get("description") or "").strip()) >= 200:
         score += 1
+    # Source tiers, per Ishu (17 Aug 2026): Gain first, then Inven, then the
+    # rest. Detection matches the upload parser's own: the stored source is
+    # "Upload: <filename>" and the filename names the provider.
     src = (c.get("source") or "").lower()
-    if "inven" in src:
-        score += 2          # curated dataset, richest starting point
+    if "gain" in src:
+        score += 3          # Gain.pro export: highest-priority dataset
+    elif "inven" in src:
+        score += 2          # Inven export: curated, rich starting point
     elif any(k in src for k in ("conference", "saastock", "event")):
         score += 1          # someone met them or they showed up somewhere real
     return (-score, (c.get("name") or "").lower())
