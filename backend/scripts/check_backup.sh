@@ -101,6 +101,27 @@ else
   echo "        curl -X POST \"https://averroes-deal-backend-890361705054.$REGION.run.app/admin/archive/run?token=\$T&force=1&note=baseline\""
 fi
 echo
+
+echo "[7] Is it automatic, or does it depend on someone remembering?"
+SLOC=$(gcloud scheduler jobs list --project="$PROJECT" --format="value(name)" 2>/dev/null | head -1 | sed -E "s#.*/locations/([^/]+)/.*#\\1#")
+[ -z "$SLOC" ] && SLOC="$REGION"
+JOBS=$(gcloud scheduler jobs list --location="$SLOC" --project="$PROJECT" --format="value(name.basename(),state,schedule)" 2>/dev/null)
+for J in averroes-archive-nightly averroes-backup-export-nightly; do
+  LINE=$(echo "$JOBS" | grep "^$J")
+  if [ -z "$LINE" ]; then
+    fail "$J does not exist. Run: bash backend/scripts/setup_backup_schedule.sh"
+  elif echo "$LINE" | grep -qi "PAUSED"; then
+    fail "$J exists but is PAUSED. Run: gcloud scheduler jobs resume $J --location=$SLOC --project=$PROJECT"
+  else
+    pass "$J is enabled ($(echo "$LINE" | awk "{print \$3, \$4, \$5, \$6, \$7}"))"
+  fi
+done
+if [ -n "$JOBS" ]; then
+  echo "      last attempts:"
+  gcloud scheduler jobs list --location="$SLOC" --project="$PROJECT" \
+    --format="table[no-heading](name.basename():label=JOB, lastAttemptTime:label=LAST)" 2>/dev/null | sed "s/^/        /"
+fi
+echo
 echo "==================================================================="
 echo " Any FAIL above tells you the next command to run."
 echo "==================================================================="
