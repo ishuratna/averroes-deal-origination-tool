@@ -11,7 +11,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services.ooo_detect import (  # noqa: E402
-    BASE_FOLLOWUP_DAYS, detect, followup_days, followup_due_date,
+    BASE_FOLLOWUP_DAYS, MAX_LEAVE_DAYS, detect, followup_days, followup_due_date,
     is_auto_reply, parse_return_date,
 )
 
@@ -99,6 +99,27 @@ d3 = detect("Automatic reply", "Away with limited access to email.",
 chk("OOO with no readable date still flagged", d3["is_ooo"], True)
 chk("...but carries no date", d3["until"], None)
 chk("...and says so via an empty source", d3["date_source"], "")
+
+print()
+print("── Implausible dates are discarded, not trusted ──")
+# THE PLASTOMETREX CASE, found in production. An autoresponder mentioning a bare
+# "14 July" arrived just AFTER 14 July, so roll-forward pushed it to 14 July the
+# following year and set a 365-day follow-up freeze on a company that had
+# actually replied. No date is better than a wrong one: it keeps the 14-day rule.
+d = detect("Re: Averroes Capital, Plastometrex",
+           "Thanks. I have been out of the office since 14 July.",
+           received_on=date(2026, 7, 15), allow_ai=False)
+chk("still recognised as an autoresponder", d["is_ooo"], True)
+chk("the year-out date is discarded", d["until"], None)
+chk("...so no source is claimed", d["date_source"], "")
+chk("...and the reminder stays at 14 days", followup_days(date(2026, 7, 14), d["until"]), 14)
+
+# The cap must not reject genuinely long, plausible absences.
+ok = detect("Automatic reply", "On parental leave, back 1 October.",
+            received_on=date(2026, 8, 1), allow_ai=False)
+chk("a two-month absence is still believed", ok["until"], date(2026, 10, 1))
+chk("...and defers the reminder", followup_days(date(2026, 8, 1), ok["until"]) > 14, True)
+chk("the cap is a sane length", 60 <= MAX_LEAVE_DAYS <= 180, True)
 
 print()
 print("── The reminder rule ──")

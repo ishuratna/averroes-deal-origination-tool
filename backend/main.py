@@ -3810,11 +3810,11 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
       4. Run the general pull-back reconciliation to catch companies advanced
          off a reply that no longer exists at all.
     """
-    from services.ooo_detect import (detect as ooo_detect, followup_days as ooo_days,
-                                     is_auto_reply, parse_return_date)
+    from services.ooo_detect import (MAX_LEAVE_DAYS, detect as ooo_detect,
+                                     followup_days as ooo_days, is_auto_reply,
+                                     parse_return_date)
 
     rows = bq_handler.get_received_log(limit=limit)
-    genuine = bq_handler.genuine_reply_names()
 
     # Newest inbound per company (rows arrive newest first). An out-of-office
     # only describes the CURRENT state if nothing has come in since: a company
@@ -3833,6 +3833,11 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
             continue
         on = _as_date(r.get("sent_at"))
         until = parse_return_date(subj, snip, on)
+        # Same plausibility gate detect() applies: a date beyond the cap is a
+        # misread, and an implausible date is worse than none because it mutes
+        # follow-up indefinitely instead of keeping the honest 14-day rule.
+        if until and (until - on).days > MAX_LEAVE_DAYS:
+            until = None
         source = "pattern" if until else ""
         if not until and ai_used < ai_budget:
             ai_used += 1
@@ -3842,6 +3847,16 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
                      "sent_at": r.get("sent_at"), "until": until, "date_source": source,
                      "already_marked": r.get("classification") == "out_of_office",
                      "subject": subj[:120]})
+
+    # A company "genuinely replied" only if it has an inbound that is neither
+    # already marked out_of_office NOR identified as one by THIS run. Reading
+    # the log's current classification alone under-counts on the first pass:
+    # an unmarked autoresponder looked like a real reply and suppressed its own
+    # company's pull-back.
+    ooo_ids = {h["message_id"] for h in hits if h.get("message_id")}
+    genuine = {r.get("entity_name") for r in rows
+               if r.get("classification") != "out_of_office"
+               and r.get("message_id") not in ooo_ids}
 
     # 2. Per company, the OOO only counts if it is their newest inbound.
     # Autoresponders that were later superseded by a genuine reply are marked in

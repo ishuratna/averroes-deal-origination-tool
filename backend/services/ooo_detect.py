@@ -35,6 +35,17 @@ logger = logging.getLogger(__name__)
 
 BASE_FOLLOWUP_DAYS = 14
 
+# The furthest out a stated return date is allowed to be before we stop
+# believing it. Nobody autoresponds with a year-long absence, so a date beyond
+# this is a misread, not a long holiday.
+#
+# FOUND IN PRODUCTION: an autoresponder mentioning a bare "14 July" was received
+# just AFTER 14 July, so the roll-forward-to-next-occurrence rule pushed it to
+# 14 July the FOLLOWING year. That set a 365-day follow-up freeze on a company
+# that had genuinely replied. A past date referenced in an out-of-office is
+# almost always "I have been away since...", not "I am back in a year".
+MAX_LEAVE_DAYS = 120
+
 # ── 1. Is this an autoresponder? ─────────────────────────────────────────────
 
 # Headers a conforming mail system sets on an automatic reply. Checked first
@@ -281,6 +292,15 @@ def detect(subject: str = "", body: str = "", headers: str = "",
     if not until and allow_ai:
         until = _ai_return_date(subject, body, received_on)
         source = "ai" if until else ""
+
+    # Plausibility gate, applied to BOTH paths. An implausible date is worse
+    # than no date: no date keeps the honest 14-day rule, whereas a date a year
+    # out silently stops us ever chasing the company again.
+    if until and (until - received_on).days > MAX_LEAVE_DAYS:
+        logger.info(f"[OOO] discarding return date {until} (received {received_on}, "
+                    f"{(until - received_on).days}d out, cap {MAX_LEAVE_DAYS}d) "
+                    f"— falling back to the {BASE_FOLLOWUP_DAYS}-day rule")
+        until, source = None, ""
     return {"is_ooo": True, "until": until, "date_source": source}
 
 
