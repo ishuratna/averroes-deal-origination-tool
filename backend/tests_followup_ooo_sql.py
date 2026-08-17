@@ -16,14 +16,14 @@ import duckdb
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services.ooo_detect import followup_due_date  # noqa: E402
 
-DAYS = 14          # @days
-REPLY_DAYS = 3     # @reply_days
+DAYS = 14          # @days       — they have not answered OUR email (Contacted)
+REPLY_DAYS = 7     # @reply_days — THEY wrote and we have not answered (Responded)
 NOW = datetime(2026, 8, 12, 12, 0, 0)
 
 SQL = f"""
 WITH msgs AS (
     SELECT entity_name, direction, subject, snippet, counterparty_email, sent_at,
-           COALESCE(classification, '') = 'out_of_office' AS is_ooo
+           COALESCE(classification, '') IN ('out_of_office', 'bounce') AS is_ooo
     FROM email_log
     WHERE entity_type = 'company'
 ),
@@ -109,12 +109,13 @@ mail("LeaveOver", "received", D(2026, 7, 18, 1), cls="out_of_office")
 # 6. An OOO must NOT make it look like we owe a reply.
 company("OnlyOoo", ooo="2026-09-15"); mail("OnlyOoo", "sent", D(2026, 7, 1))
 mail("OnlyOoo", "received", D(2026, 7, 1, 1), cls="out_of_office")
-# 7. A genuine reply 5 days ago -> we owe them.
-company("RealReply");         mail("RealReply", "sent", D(2026, 8, 1))
-mail("RealReply", "received", D(2026, 8, 7))
-# 8. Genuine reply but parked -> never nag.
-company("Parked", bucket="declined_close"); mail("Parked", "sent", D(2026, 8, 1))
-mail("Parked", "received", D(2026, 8, 7))
+# 7. A genuine reply 8 days ago -> past the 7-day rule, we owe them.
+company("RealReply", status="Responded"); mail("RealReply", "sent", D(2026, 8, 1))
+mail("RealReply", "received", D(2026, 8, 4))
+# 8. Genuine reply but parked -> never nag. 11 days old, so ONLY the action
+#    bucket keeps it out; otherwise the test would pass for the wrong reason.
+company("Parked", bucket="declined_close"); mail("Parked", "sent", D(2026, 7, 28))
+mail("Parked", "received", D(2026, 8, 1))
 # 9. Test row is exempt.
 company("TestCo", source="Internal Test"); mail("TestCo", "sent", D(2026, 7, 1))
 # 10. Genuine reply, then an OOO after it. Still "we owe" from the real reply,
@@ -122,6 +123,22 @@ company("TestCo", source="Internal Test"); mail("TestCo", "sent", D(2026, 7, 1))
 company("ReplyThenOoo", ooo="2026-09-15"); mail("ReplyThenOoo", "sent", D(2026, 8, 1))
 mail("ReplyThenOoo", "received", D(2026, 8, 5))
 mail("ReplyThenOoo", "received", D(2026, 8, 9), cls="out_of_office")
+# ── THE 7-DAY RESPONDED RULE ────────────────────────────────────────────────
+# 11. Boundary, one day short. Replied 6 days ago -> not yet.
+company("ReplyDay6", status="Responded"); mail("ReplyDay6", "sent", D(2026, 8, 1))
+mail("ReplyDay6", "received", D(2026, 8, 6))
+# 12. Boundary, exactly 7 days -> shows. The comparison is >=, so day 7 counts.
+company("ReplyDay7", status="Responded"); mail("ReplyDay7", "sent", D(2026, 8, 1))
+mail("ReplyDay7", "received", D(2026, 8, 5))
+# 13. The other half of the rule, which needs no separate condition: they replied
+#     and we have sent NOTHING since, so their message is simply the last one.
+company("NeverAnsweredThem", status="Responded")
+mail("NeverAnsweredThem", "sent", D(2026, 7, 20))
+mail("NeverAnsweredThem", "received", D(2026, 7, 25))
+# 14. A BOUNCE is not their reply. Without excluding it the mailer-daemon report
+#     would look like the ball is with us, and we would chase a dead mailbox.
+company("Bounced"); mail("Bounced", "sent", D(2026, 7, 20))
+mail("Bounced", "received", D(2026, 7, 20, 1), cls="bounce")
 
 rows = {r[0]: {"type": r[1], "threshold": r[2], "due_on": r[3]} for r in db.execute(SQL).fetchall()}
 
@@ -147,6 +164,21 @@ chk("RealReply shows", "RealReply" in rows, True)
 chk("Parked never nags", "Parked" in rows, False)
 chk("TestCo exempt", "TestCo" in rows, False)
 chk("ReplyThenOoo shows", "ReplyThenOoo" in rows, True)
+
+print()
+print("── The 7-day Responded rule ──")
+chk("ReplyDay6 hidden (one day short)", "ReplyDay6" in rows, False)
+chk("ReplyDay7 shows (>= 7 days)", "ReplyDay7" in rows, True)
+chk("...as we_owe_reply", rows.get("ReplyDay7", {}).get("type"), "we_owe_reply")
+# One condition covers both halves of the rule the user described.
+chk("never answered them since their reply shows",
+    "NeverAnsweredThem" in rows, True)
+chk("...also as we_owe_reply", rows.get("NeverAnsweredThem", {}).get("type"), "we_owe_reply")
+
+print()
+print("── A bounce is not a reply ──")
+chk("a bounced company never counts as us owing a reply",
+    rows.get("Bounced", {}).get("type"), "waiting_on_them")
 
 print()
 print("── An autoresponder is not us owing a reply ──")

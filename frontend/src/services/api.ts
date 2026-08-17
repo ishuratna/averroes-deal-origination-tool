@@ -390,8 +390,11 @@ export const dealApi = {
     return data;
   },
 
-  async getFollowups(days: number = 14): Promise<any> {
-    const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}`);
+  // The agreed reminder thresholds. days = they have not answered our email
+  // (Contacted, 14 days, overridden by a stated out-of-office return date).
+  // replyDays = they wrote and we have not answered (Responded, 7 days).
+  async getFollowups(days: number = 14, replyDays: number = 7): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}&reply_days=${replyDays}`);
     if (!response.ok) return { count: 0, followups: [] };
     return await response.json();
   },

@@ -62,8 +62,49 @@ Read this before building anything. These rules are binding for all future work.
   migration logged nothing), so the join silently dropped exactly the rows that
   needed fixing and every preview came back empty while the board stayed wrong.
   The activity log records what happened, not what is true now.
-- Any migration that writes `status` with raw SQL MUST also write an
-  `activity_log` row, or it creates rows no reconciliation can reason about.
+- Any code path that writes `status` MUST also write a `status_change`
+  `activity_log` row — migrations AND the send path. Without it the row is
+  invisible to reconciliation.
+
+## 2b. THE OUTREACH LIFECYCLE (the whole loop, in order)
+
+1. Outreach sent → `Qualified` → `Contacted`. Stamps `outreach_sent_at`,
+   `contacted_at`, and BOTH activity rows (`outreach_sent` note +
+   `status_change`).
+2. Delivery is then VERIFIED, because SMTP success is not receipt
+   (`_verify_delivery` in `main.py`, inside the email sync so it costs no extra
+   IMAP call). Two independent failures, one consequence — back to `Qualified`:
+   - BOUNCE: a mailer-daemon report came back (`services/delivery_check.py`).
+     The address is dead, so `contact_email` is cleared and preserved in
+     `bounced_email` and the contact waterfall finds a new one.
+   - NEVER SENT: no `direction='sent'` row exists in `email_log` for the
+     company. The sync reads Gmail's All Mail (which includes Sent), so absence
+     means nothing was filed and nobody received it.
+   Both guarded by `window_days` (only judge sends inside the scanned period —
+   otherwise a shallow sync demotes the whole back catalogue) and `grace_hours`
+   (Gmail files to Sent with a lag).
+3. `NON_REPLY_CLASSES = ("out_of_office", "bounce")`. Neither may EVER count as
+   a reply. A bounce counting as one was a real bug: it is inbound and not an
+   autoresponder, so a mailer-daemon message promoted companies to Responded.
+   The delivery check therefore runs BEFORE the reply rule in the sync, so
+   bounces are already classified when the rule reads the log.
+4. Genuine reply → `Responded`. Out-of-office → stays `Contacted`.
+
+### Reminder thresholds (confirmed with Ishu, 14 Aug 2026)
+
+- `Contacted`, waiting on them: **14 days** since our last email.
+  OOO override: `length = days(our send date → their stated return date)`;
+  if `length > 14` remind on `return date + 1`, else 14 days from our send.
+  No date stated → 14 days. Floor is always 14; a past return date never
+  shortens it. Implemented once in `ooo_detect.followup_due_date()` and
+  cross-checked against the SQL by `tests_followup_ooo_sql.py`.
+- `Responded`, ball with us: **7 days** since their last genuine message.
+  ONE condition covers both halves of the rule — "we never wrote since they
+  replied" and "they sent the last email and we have not answered" — because a
+  company that replied and has heard nothing since necessarily has their message
+  as the last one. Do not add a second rule for it.
+- Parked companies (`not_fit_no_respond`, `declined_close`) never nag:
+  intentional silence is not an oversight.
 
 ## 3. Event truth
 

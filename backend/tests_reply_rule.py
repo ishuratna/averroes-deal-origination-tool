@@ -100,6 +100,10 @@ pred = inspect.getsource(BigQueryHandler._genuine_reply_sql)
 pm = re.search(r'return f"""(.*?)"""', pred, re.S)
 assert pm, "could not extract the genuine-reply predicate"
 sql = sql.replace("{self._genuine_reply_sql()}", pm.group(1))
+# The excluded classes are built from the real constant, exactly as production
+# does, so adding one (out_of_office, bounce, ...) is picked up here automatically
+# instead of leaving this test asserting an older definition of "a reply".
+sql = sql.replace("{excluded}", ", ".join(f"'{c}'" for c in BigQueryHandler.NON_REPLY_CLASSES))
 sql = (sql.replace("`{log}`", "email_log")
           .replace("`{self.activity_table_id}`", "activity_log")
           .replace("`{self.table_id}`", "targets"))
@@ -201,7 +205,19 @@ company("ConfirmedByHand", "Responded", exempt=T); mail("ConfirmedByHand", "sent
 # 15. Hidden rows are out of scope.
 company("HiddenCo", "Responded", hidden=T); mail("HiddenCo", "sent")
 
-# 16. A received row for a DIFFERENT company must not protect this one.
+# 16. A BOUNCE must never promote a company. It is inbound and it is not an
+#     autoresponder, so before 'bounce' joined NON_REPLY_CLASSES a mailer-daemon
+#     report counted as a genuine reply and pushed the company to Responded -
+#     the exact inverse of what a bounce means.
+company("BouncedOnly", "Contacted"); mail("BouncedOnly", "sent")
+mail("BouncedOnly", "received", cls="bounce")
+
+# 17. A bounce sitting in Responded must be pulled back out.
+company("BouncedButResponded", "Responded"); mail("BouncedButResponded", "sent")
+mail("BouncedButResponded", "received", cls="bounce")
+moved("BouncedButResponded", "Responded", "email-sync")
+
+# 18. A received row for a DIFFERENT company must not protect this one.
 company("Neighbour", "Responded"); mail("Neighbour", "sent")
 moved("Neighbour", "Responded", "email-sync")
 mail("SomeoneElse", "received", cls="interested")
@@ -222,7 +238,8 @@ for name, r in sel.items():
 chk("promoted", out["promote"], {"ReplyNotSeen": "Responded"})
 chk("demoted automatically", out["demote"],
     {"GhostReply": "Contacted", "SyncLast": "Contacted",
-     "NeverEmailed": "Qualified", "OooOnly": "Contacted", "Neighbour": "Contacted"})
+     "NeverEmailed": "Qualified", "OooOnly": "Contacted", "Neighbour": "Contacted",
+     "BouncedButResponded": "Contacted"})
 chk("asked about, never silently moved", out["ask"],
     {"MigratedNoTrace": "Contacted", "PhonedIn": "Contacted"})
 
@@ -230,7 +247,8 @@ print()
 for name in ("DeepMeeting", "DeepDD", "DeepOffer", "DeepWon", "DeepLost",
              "TestCo", "HiddenCo", "ConfirmedByHand"):
     chk(f"{name} is never even selected", name in sel, False)
-for name in ("RealReply", "OooAndReal", "AwaitingReply", "OooWhileContacted"):
+for name in ("RealReply", "OooAndReal", "AwaitingReply", "OooWhileContacted",
+             "BouncedOnly"):
     chk(f"{name} is selected but unchanged",
         name in sel and name not in out["promote"] and name not in out["demote"]
         and name not in out["ask"], True)

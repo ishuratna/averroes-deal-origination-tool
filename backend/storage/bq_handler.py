@@ -134,6 +134,16 @@ class BigQueryHandler:
         # never re-litigated on the next nightly run.
         ("reply_exempt_at", "TIMESTAMP"),
         ("reply_exempt_by", "STRING"),
+        # Did the outreach actually reach a human? 'delivered' = an outbound
+        # message for this company exists in the mailbox and nothing bounced.
+        # 'bounced' = the address is dead. 'not_sent' = SMTP reported success but
+        # nothing was filed in Sent, so the send silently failed.
+        ("delivery_status", "STRING"),
+        ("delivery_checked_at", "TIMESTAMP"),
+        ("delivery_note", "STRING"),
+        # The dead address, kept on the record after being cleared from
+        # contact_email so the contact waterfall never re-suggests it.
+        ("bounced_email", "STRING"),
         ("owner", "STRING"),
         # 'A' = high fit, goes to Bea via the Thursday session.
         # 'B' = low/moderate fit or too early, associate call via Wednesday.
@@ -440,6 +450,18 @@ class BigQueryHandler:
     # Anything downstream of Responded (Meeting / DD / Offer / Won / Lost) is a
     # human decision with real work behind it and is never touched by this rule.
 
+    # Inbound messages that are NOT a reply from a human. Both are machine
+    # generated, both arrive right after we write, both are ABOUT our message
+    # rather than an answer to it — and each has its own consequence:
+    #   out_of_office -> the address is good, the person is away. Stay Contacted,
+    #                    defer the reminder (ooo_detect.py).
+    #   bounce        -> the address is dead. Back to Qualified, clear the
+    #                    address, find a new contact (delivery_check.py).
+    # Neither may ever count as a reply. A bounce counting as one was a real bug:
+    # it is inbound and not an autoresponder, so it promoted the company to
+    # Responded on the strength of a mailer-daemon message.
+    NON_REPLY_CLASSES = ("out_of_office", "bounce")
+
     def _genuine_reply_sql(self) -> str:
         """The one definition of 'this company replied'. Returns a subquery
         yielding one row per company that has at least one real inbound message.
@@ -448,14 +470,15 @@ class BigQueryHandler:
         rule cannot land on one page and miss another.
         """
         log = f"{self.project_id}.{self.dataset_id}.email_log"
+        excluded = ", ".join(f"'{c}'" for c in self.NON_REPLY_CLASSES)
         return f"""
             SELECT entity_name,
                    COUNTIF(direction = 'sent')     AS sent_count,
                    COUNTIF(direction = 'received'
-                           AND IFNULL(classification, '') != 'out_of_office') AS recv_count,
+                           AND IFNULL(classification, '') NOT IN ({excluded})) AS recv_count,
                    MAX(sent_at) AS last_msg_at,
                    MAX(IF(direction = 'received'
-                          AND IFNULL(classification, '') != 'out_of_office',
+                          AND IFNULL(classification, '') NOT IN ({excluded}),
                           sent_at, NULL)) AS last_reply_at,
                    ARRAY_AGG(direction ORDER BY sent_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS last_direction
             FROM `{log}`
@@ -1269,6 +1292,7 @@ class BigQueryHandler:
         try:
             return self._run_query(f"""
                 SELECT message_id, entity_name, subject, snippet,
+                       IFNULL(counterparty_email, '') AS counterparty_email,
                        IFNULL(classification, '') AS classification,
                        CAST(sent_at AS STRING) AS sent_at
                 FROM `{log}`
@@ -1312,6 +1336,127 @@ class BigQueryHandler:
         except Exception as e:
             logger.error(f"genuine_reply_names failed: {e}")
             return set()
+
+    def pull_back_undelivered(self, name: str, reason: str, dead_address: str = "",
+                              kind: str = "bounced") -> bool:
+        """Return a company to Qualified because the outreach never reached anyone.
+
+        Called for a bounce (the address is dead) and for a send that never
+        appeared in the mailbox (SMTP said fine, nothing was filed). Both mean the
+        same thing operationally: nobody read our email, so the company is not
+        'Contacted' — it is waiting to be contacted.
+
+        Everything premised on the send is cleared so the Outreach button resets
+        and the company re-enters the queue properly:
+          * outreach_sent_at   -> NULL   (otherwise it looks emailed forever, and
+                                          the reply rule would send it to
+                                          Contacted rather than Qualified)
+          * contacted_at       -> NULL   (first-entry stamps are normally
+                                          permanent, but this entry never happened)
+          * contact_email      -> NULL on a bounce, moved to bounced_email so the
+                                  contact waterfall cannot re-suggest a dead box
+        """
+        if not self.client:
+            return False
+        clear_contact = bool(dead_address)
+        sets = [
+            "status = 'Qualified'",
+            "stage_entered_at = CURRENT_TIMESTAMP()",
+            "outreach_sent_at = NULL",
+            "contacted_at = NULL",
+            "delivery_status = @kind",
+            "delivery_checked_at = CURRENT_TIMESTAMP()",
+            "delivery_note = @reason",
+        ]
+        params = [
+            bigquery.ScalarQueryParameter("kind", "STRING", kind),
+            bigquery.ScalarQueryParameter("reason", "STRING", reason[:500]),
+            bigquery.ScalarQueryParameter("name", "STRING", name),
+        ]
+        if clear_contact:
+            sets += ["bounced_email = @dead", "contact_email = NULL",
+                     "outreach_draft_to = NULL"]
+            params.append(bigquery.ScalarQueryParameter("dead", "STRING", dead_address))
+        try:
+            self.client.query(
+                f"UPDATE `{self.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+            # Both rows, always. The note explains it to a human; the
+            # status_change makes the move visible to reconciliation. Writing
+            # status without a status_change is what created rows no
+            # reconciliation could reason about.
+            self._log_activity(name, "status_change", "delivery-check",
+                               old_status="Contacted", new_status="Qualified")
+            self.add_activity_note(
+                name,
+                (f"Outreach bounced: {reason}. Address {dead_address} cleared and kept on record; "
+                 f"back to Qualified so a new contact can be found."
+                 if clear_contact else
+                 f"Outreach never reached the mailbox: {reason}. Back to Qualified to be re-sent."),
+                created_by="delivery-check")
+            return True
+        except Exception as e:
+            logger.warning(f"pull_back_undelivered failed for {name}: {e}")
+            return False
+
+    def mark_delivered(self, names: List[str]) -> int:
+        """Record that an outbound message for these companies is in the mailbox.
+        Positive evidence, so a later check does not re-examine them from scratch."""
+        if not self.client or not names:
+            return 0
+        job = self.client.query(
+            f"""UPDATE `{self.table_id}`
+                SET delivery_status = 'delivered', delivery_checked_at = CURRENT_TIMESTAMP()
+                WHERE name IN UNNEST(@names)
+                  AND IFNULL(delivery_status, '') != 'delivered'""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("names", "STRING", names)]))
+        job.result()
+        return int(job.num_dml_affected_rows or 0)
+
+    def unverified_sends(self, window_days: int = 30, grace_hours: int = 12) -> List[Dict]:
+        """Companies in Contacted whose outbound email is NOWHERE in the mailbox.
+
+        The sync reads Gmail's All Mail, which includes Sent, so a company we
+        emailed must have a direction='sent' row in email_log. If it has none, the
+        SMTP call reported success but nothing was filed, and nobody received it.
+
+        TWO GUARDS, both essential, because a false positive throws a live
+        conversation back to Qualified:
+
+          window_days — only consider sends INSIDE the period the sync has
+            actually scanned. A company emailed 60 days ago has no sent row after
+            a 30-day sync simply because nothing looked that far back. Without
+            this guard a shallow sync would demote the entire back catalogue.
+
+          grace_hours — ignore very recent sends. Gmail does not file a message in
+            Sent instantly, and the sync may run seconds after the send.
+        """
+        if not self.client:
+            return []
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            return self._run_query(f"""
+                WITH sent AS (
+                    SELECT DISTINCT entity_name FROM `{log}`
+                    WHERE entity_type = 'company' AND direction = 'sent'
+                )
+                SELECT t.name, CAST(t.outreach_sent_at AS STRING) AS outreach_sent_at,
+                       IFNULL(t.contact_email, '') AS contact_email
+                FROM `{self.table_id}` t
+                LEFT JOIN sent s ON s.entity_name = t.name
+                WHERE t.status = 'Contacted'
+                  AND t.outreach_sent_at IS NOT NULL
+                  AND s.entity_name IS NULL
+                  AND t.hidden_at IS NULL
+                  AND IFNULL(t.source, '') != 'Internal Test'
+                  AND t.outreach_sent_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(window_days)} DAY)
+                  AND t.outreach_sent_at <= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(grace_hours)} HOUR)
+                ORDER BY t.outreach_sent_at
+            """)
+        except Exception as e:
+            logger.error(f"unverified_sends failed: {e}")
+            return []
 
     def set_reply_exempt(self, name: str, by: str = "Ishu Ratna", on: bool = True) -> bool:
         """Pin (or unpin) a company against the email-log reply rule.

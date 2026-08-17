@@ -1461,14 +1461,25 @@ async def smart_upload_confirm(req: SmartUploadConfirmRequest):
 
 @app.get("/followups")
 async def get_followups(days: int = Query(14, description="'Waiting on them' threshold (our last email unanswered)"),
-                        reply_days: int = Query(3, description="'We owe a reply' threshold (their email unanswered by us)")):
+                        reply_days: int = Query(7, description="'We owe a reply' threshold (their email unanswered by us)")):
     """
-    The follow-up queue, both directions, from email_log (single source of truth):
-      - we_owe_reply: THEY sent the last email and we have not replied for
-        reply_days+ days. Companies deliberately parked (do-not-respond /
-        declined action buckets) are excluded — intentional silence never nags.
-      - waiting_on_them: WE sent the last email, silence for days+ days.
-    Active outreach stages only; longest silence first; we-owe items lead.
+    The follow-up queue, both directions, from email_log (single source of truth).
+
+    THE AGREED THRESHOLDS:
+      - waiting_on_them: WE sent the last email and they have not answered for
+        14+ days. If their autoresponder gave a return date more than 14 days out,
+        the reminder moves to that date + 1 instead (see the due_at expression
+        below); anything shorter, absent or already past keeps the 14 days.
+      - we_owe_reply: THEY sent the last email and we have not replied for 7+
+        days. This is the Responded-stage rule, and one condition deliberately
+        covers both halves of it: a company that replied and has heard nothing
+        from us since necessarily has their message as the last one. Companies
+        deliberately parked (do-not-respond / declined action buckets) are
+        excluded — intentional silence never nags.
+
+    An out-of-office is never treated as their reply, so it cannot make it look
+    like the ball is with us. Active outreach stages only; longest silence first;
+    we-owe items lead.
     """
     from google.cloud import bigquery as bq_lib
     try:
@@ -1539,12 +1550,20 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                    TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), IF(owed, last_recv_at, last_sent_at), DAY) AS days_waiting
             FROM (SELECT *, last_recv_at IS NOT NULL AND last_recv_at > last_sent_at AS owed FROM calc)
             WHERE (
-                -- They answered and the ball is with us.
+                -- THE BALL IS WITH US: they answered and we have gone quiet.
+                -- In Responded this is the 7-day rule. It covers both of the
+                -- cases that sound different but are not: "we never sent
+                -- anything since they replied" and "they sent the last email and
+                -- we have not answered". If they replied and we have not written
+                -- since, their message IS the last one, so one condition catches
+                -- both. Companies deliberately parked (declined / do-not-respond)
+                -- are excluded: intentional silence must never nag.
                 (owed
                  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), last_recv_at, DAY) >= @reply_days
                  AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close'))
                 OR
-                -- Silence since our email, and the reminder is now due.
+                -- THE BALL IS WITH THEM: silence since our email, reminder due.
+                -- Contacted = 14 days, overridden by the out-of-office rule above.
                 (NOT owed AND CURRENT_TIMESTAMP() >= due_at)
             )
             ORDER BY owed DESC, days_waiting DESC""",
@@ -3280,10 +3299,14 @@ async def send_outreach(req: OutreachSendRequest):
     # Internal test company: force the recipient to the test inbox, even if
     # the To field was edited — a test email must never reach a real founder.
     to_addr = req.to
+    # Read the stage BEFORE the send so the status_change below can record what it
+    # moved from. Same pass as the test-recipient check, so no extra query.
+    prev_status = ""
     if req.company_name:
         try:
             for c in bq_handler.get_universe():
                 if c.get("name") == req.company_name:
+                    prev_status = c.get("status") or ""
                     if c.get("source") == "Internal Test" and to_addr != TEST_RECIPIENT:
                         logger.info(f"Test company send: recipient '{to_addr}' overridden to {TEST_RECIPIENT}")
                         to_addr = TEST_RECIPIENT
@@ -3317,12 +3340,24 @@ async def send_outreach(req: OutreachSendRequest):
     except Exception as e:
         logger.warning(f"Failed to update status after outreach: {e}")
 
-    # Activity log: the send event, with its metadata
+    # Activity log: BOTH rows, and both matter.
+    #
+    # The note is for a human reading the outreach tab. The status_change is for
+    # reconciliation, which needs to know how a company reached Contacted. The
+    # UPDATE above writes `status` directly, and for a long time nothing recorded
+    # that as a stage move — the same omission as the raw-SQL stage rename. The
+    # consequence was concrete: reconciliation joined on activity_log and silently
+    # skipped every company whose move it could not see. Any code path that writes
+    # `status` must also write a status_change row.
     if req.company_name:
         try:
             bq_handler._log_activity(
                 req.company_name, "outreach_sent", "system",
                 note_text=f"Outreach email sent to {req.to} — subject: \"{req.subject}\"")
+            if (prev_status or "") != "Contacted":
+                bq_handler._log_activity(
+                    req.company_name, "status_change", "outreach-send",
+                    old_status=prev_status or "", new_status="Contacted")
         except Exception as e:
             logger.warning(f"Failed to log send activity: {e}")
     return result
@@ -3798,6 +3833,125 @@ def _apply_ooo(entry: dict) -> dict:
             "pulled_back": pulled}
 
 
+# ── Delivery verification ────────────────────────────────────────────────────
+# "Sent" from SMTP's point of view is not the same as "a human received it".
+# Two independent failures, one shared consequence: back to Qualified.
+#
+#   BOUNCE     — a mailer-daemon report came back. The address is dead, so it is
+#                cleared (kept in bounced_email) and the contact waterfall can
+#                find a new one.
+#   NEVER SENT — no outbound message for the company exists anywhere in the
+#                mailbox, so nothing was actually delivered to anybody.
+#
+# Runs inside the email sync, which has already read the mailbox, so this costs
+# no extra IMAP work and no AI.
+
+def _verify_delivery(dry_run: bool = False, window_days: int = 30,
+                     grace_hours: int = 12, limit: int = 5000) -> dict:
+    from services.delivery_check import classify_delivery
+
+    our_address = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
+    rows = bq_handler.get_received_log(limit=limit)
+
+    # Bounces first. A company is only pulled back if the bounce is its NEWEST
+    # inbound message: an address can fail once and be fixed, and a genuine reply
+    # arriving afterwards proves someone is reading. Same guard the OOO pass uses.
+    newest: Dict[str, dict] = {}
+    for r in rows:
+        n = r.get("entity_name") or ""
+        if n and (n not in newest or str(r.get("sent_at") or "") > str(newest[n].get("sent_at") or "")):
+            newest[n] = r
+
+    bounces, to_mark = [], []
+    for r in rows:
+        got = classify_delivery(r.get("subject", ""), r.get("snippet", ""),
+                                from_addr=r.get("counterparty_email", ""),
+                                our_address=our_address)
+        if not got["is_bounce"]:
+            continue
+        # Always classify the message itself, even if the company is not pulled
+        # back. That is a fact about the message, and it stops a mailer-daemon
+        # report ever counting as a genuine reply.
+        if r.get("classification") != "bounce":
+            to_mark.append(r["message_id"])
+        name = r.get("entity_name") or ""
+        if newest.get(name, {}).get("message_id") != r.get("message_id"):
+            continue  # something newer arrived; the mailbox is alive
+        bounces.append({"name": name, "address": got["address"] or "",
+                        "reason": got["reason"], "subject": r.get("subject", ""),
+                        "at": r.get("sent_at", "")})
+
+    # Sends with no trace in the mailbox at all.
+    missing = bq_handler.unverified_sends(window_days=window_days, grace_hours=grace_hours)
+
+    # Only companies still sitting in Contacted are pulled back. If one has since
+    # reached Meeting or beyond, real work has happened and a stale bounce report
+    # must not undo it.
+    live = {}
+    try:
+        for c in bq_handler.get_universe():
+            live[c.get("name")] = c
+    except Exception as e:
+        logger.warning(f"[Delivery] universe read failed: {e}")
+
+    def _eligible(name: str) -> bool:
+        c = live.get(name) or {}
+        return (c.get("status") == "Contacted"
+                and c.get("source") != "Internal Test"
+                and not c.get("hidden_at"))
+
+    plan = ([{**b, "kind": "bounced"} for b in bounces if _eligible(b["name"])]
+            + [{"name": m["name"], "address": "", "kind": "not_sent",
+                "reason": "no outbound message for this company exists in the mailbox",
+                "subject": "", "at": m.get("outreach_sent_at", "")}
+               for m in missing if _eligible(m["name"])])
+
+    if dry_run:
+        return {
+            "status": "Preview", "dry_run": True,
+            "scanned_messages": len(rows),
+            "bounces_found": len(bounces),
+            "messages_to_mark": len(to_mark),
+            "sends_missing_from_mailbox": len(missing),
+            "would_pull_back": len(plan),
+            "companies": sorted(plan, key=lambda p: (p["kind"], p["name"])),
+            "message": "Nothing was changed. Re-run with dry_run=0 to apply.",
+        }
+
+    marked = 0
+    if to_mark:
+        try:
+            marked = bq_handler.mark_emails_classification(to_mark, "bounce")
+        except Exception as e:
+            logger.warning(f"[Delivery] marking bounces failed: {e}")
+
+    applied = []
+    for p in plan:
+        if bq_handler.pull_back_undelivered(p["name"], p["reason"], p["address"], p["kind"]):
+            applied.append(f"{p['name']} ({p['kind']})")
+
+    # Positive evidence for everyone else, so the check is cheap next time.
+    verified = [c["name"] for c in live.values()
+                if c.get("status") in ("Contacted", "Responded", "Meeting", "DD", "Offer")
+                and c.get("name") not in {p["name"] for p in plan}] if live else []
+    try:
+        bq_handler.mark_delivered(verified[:2000])
+    except Exception as e:
+        logger.warning(f"[Delivery] marking delivered failed: {e}")
+
+    return {
+        "status": "Success", "dry_run": False,
+        "scanned_messages": len(rows),
+        "bounces_found": len(bounces),
+        "messages_marked": marked,
+        "sends_missing_from_mailbox": len(missing),
+        "pulled_back": applied,
+        "message": (f"Scanned {len(rows)} inbound messages, found {len(bounces)} bounces, "
+                    f"{len(missing)} sends with no trace in the mailbox. "
+                    f"Pulled {len(applied)} back to Qualified."),
+    }
+
+
 def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
     """Retro pass: apply out-of-office handling to mail already in the log.
 
@@ -4203,6 +4357,24 @@ async def ooo_backfill(request: Request,
 # the nightly email sync calls the same handler method, so there is exactly one
 # implementation. Meeting / DD / Offer / Won / Lost are never touched.
 
+@app.post("/delivery/verify")
+async def delivery_verify(
+        dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
+        window_days: int = Query(30, description="Only judge sends inside the period the sync has scanned"),
+        grace_hours: int = Query(12, description="Ignore sends newer than this — Gmail files to Sent with a lag")):
+    """Did the outreach actually reach a human?
+
+    Pulls a company back to Qualified when the email bounced (address dead, so it
+    is cleared) or when no outbound message for it exists in the mailbox at all
+    (SMTP said fine, nothing was filed). Defaults to a PREVIEW.
+
+    Also classifies bounce messages in email_log as 'bounce', so a mailer-daemon
+    report can never be counted as a genuine reply.
+    """
+    return _stream_json(lambda: _verify_delivery(
+        bool(dry_run), max(1, min(window_days, 3650)), max(0, min(grace_hours, 240))))
+
+
 @app.post("/reply-rule/reconcile")
 async def reply_rule_reconcile(
         dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
@@ -4541,6 +4713,16 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
+    # DELIVERY CHECK, before the reply rule. Order matters: a bounce message must
+    # be classified as 'bounce' BEFORE the reply rule looks at the log, or the
+    # mailer-daemon report counts as a genuine reply and promotes the company to
+    # Responded — the exact inverse of what a bounce means.
+    delivery = {}
+    try:
+        delivery = _verify_delivery(dry_run=False, window_days=max(days, 30))
+    except Exception as e:
+        logger.warning(f"Delivery verification failed (non-fatal): {e}")
+
     # THE REPLY RULE, applied in both directions. Runs AFTER the advances above
     # so a reply logged moments ago is already visible and no company is pulled
     # back and pushed forward in the same run.
@@ -4642,6 +4824,8 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         # Companies the rule wants to move back but will not without a human
         # answer, because a person put them in Responded. The UI prompts on these.
         "needs_confirmation": reply_rule["needs_confirmation"],
+        "delivery": {k: delivery.get(k) for k in
+                     ("bounces_found", "sends_missing_from_mailbox", "pulled_back")},
         "reclassified": reclassified,
         "action_buckets": bucketed,
         "bucket_errors": bucket_errors[:10],
