@@ -31,10 +31,11 @@ echo
 echo "[2] Does the bucket exist, and is it protected?"
 if gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" >/dev/null 2>&1; then
   pass "gs://$BUCKET exists"
-  VER=$(gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" --format="value(versioning.enabled)" 2>/dev/null)
+  VER=$(gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" --format=json 2>/dev/null | grep -iE "\"versioning" -A2 | grep -io "true" | head -1)
+  [ -z "$VER" ] && VER=$(gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" --format="value(versioning_enabled)" 2>/dev/null)
   SD=$(gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" --format="value(softDeletePolicy.retentionDurationSeconds)" 2>/dev/null)
   LOC=$(gcloud storage buckets describe "gs://$BUCKET" --project="$PROJECT" --format="value(location)" 2>/dev/null)
-  [ "$VER" = "True" ] && pass "versioning ON (an overwrite keeps the old copy)" || fail "versioning OFF. Run: gcloud storage buckets update gs://$BUCKET --versioning"
+  [ "$VER" = "True" ] || [ "$VER" = "true" ] && pass "versioning ON (an overwrite keeps the old copy)" || fail "versioning OFF. Run: gcloud storage buckets update gs://$BUCKET --versioning"
   if [ -n "$SD" ] && [ "$SD" != "0" ]; then pass "soft delete ON ($((SD/86400)) days)"; else warn "soft delete not set (optional)"; fi
   warn "location: $LOC"
 else
@@ -77,7 +78,7 @@ echo
 
 echo "[6] Has the append-only archive run?"
 Q="SELECT COUNT(*) AS versions, COUNT(DISTINCT name) AS companies, CAST(MAX(archived_at) AS STRING) AS last_run FROM \`$PROJECT.$DATASET.targets_archive\`"
-OUT=$(bq query --project_id="$PROJECT" --use_legacy_sql=false --format=csv "$Q" 2>/dev/null | tail -1)
+OUT=$(bq query --project_id="$PROJECT" --use_legacy_sql=false --format=csv "$Q" 2>/dev/null | grep -E "^[0-9]+," | tail -1)
 if [ -n "$OUT" ] && [ "$OUT" != "versions,companies,last_run" ]; then
   V=$(echo "$OUT" | cut -d, -f1); C=$(echo "$OUT" | cut -d, -f2); L=$(echo "$OUT" | cut -d, -f3-)
   if [ "${V:-0}" -gt 0 ]; then
@@ -87,11 +88,11 @@ if [ -n "$OUT" ] && [ "$OUT" != "versions,companies,last_run" ]; then
     fail "archive table exists but is EMPTY. The archive has not run yet."
   fi
   LIVE=$(bq query --project_id="$PROJECT" --use_legacy_sql=false --format=csv \
-        "SELECT COUNT(*) FROM \`$PROJECT.$DATASET.targets\`" 2>/dev/null | tail -1)
+        "SELECT COUNT(*) FROM \`$PROJECT.$DATASET.targets\`" 2>/dev/null | grep -E "^[0-9]+$" | tail -1)
   warn "live targets table holds $LIVE companies"
-  if [ -n "$LIVE" ] && [ -n "$C" ] && [ "$C" -ge "$LIVE" ] 2>/dev/null; then
+  if [ -n "$LIVE" ] && [ -n "$C" ] && [ "$C" -eq "$C" ] 2>/dev/null && [ "$LIVE" -eq "$LIVE" ] 2>/dev/null && [ "$C" -ge "$LIVE" ]; then
     pass "every live company has at least one archived version"
-  elif [ -n "$LIVE" ] && [ -n "$C" ]; then
+  elif [ -n "$LIVE" ] && [ -n "$C" ] && [ "$LIVE" -eq "$LIVE" ] 2>/dev/null && [ "$C" -eq "$C" ] 2>/dev/null; then
     fail "$((LIVE - C)) live companies have NO archived version yet"
     echo "        curl -X POST \"https://averroes-deal-backend-890361705054.$REGION.run.app/admin/archive/run?token=\$T&force=1&note=baseline\""
   fi
