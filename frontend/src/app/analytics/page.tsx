@@ -143,16 +143,44 @@ function AnalyticsInner() {
                 </span>
               </div>
               {(() => {
+                // DATA-INTEGRITY ALARM, not a footnote.
+                //
+                // The reply rule keeps status in step with the email log, so both
+                // of the first two counters MUST be zero. A non-zero value means
+                // the rule has not run since something changed, or something is
+                // writing status outside it. Companies deliberately kept in
+                // Responded by hand are excluded server-side, so they cannot make
+                // this fire and dull the signal.
+                //
+                // replied_never_emailed is NOT a fault: an inbound-first thread is
+                // a founder reaching us first, which is why it reads separately.
                 const inc = data.inconsistencies || {};
-                const warns: string[] = [];
-                if (inc.contacted_without_email) warns.push(`${inc.contacted_without_email} in Contacted with no outbound email on record`);
-                if (inc.responded_without_reply) warns.push(`${inc.responded_without_reply} in Responded with no logged reply`);
-                if (inc.replied_never_emailed) warns.push(`${inc.replied_never_emailed} replied although we never emailed them (inbound-first)`);
-                return warns.length > 0 ? (
-                  <div className="an-warn">
-                    Stage and email history disagree for some rows (excluded from the bars above): {warns.join(' · ')}.
-                  </div>
-                ) : null;
+                const faults: string[] = [];
+                if (inc.contacted_without_email) faults.push(`${inc.contacted_without_email} sitting in Contacted with no outbound email on record`);
+                if (inc.responded_without_reply) faults.push(`${inc.responded_without_reply} sitting in Responded with no genuine reply on record`);
+                const inbound = inc.replied_never_emailed || 0;
+                return (
+                  <>
+                    {faults.length > 0 ? (
+                      <div className="an-warn">
+                        <b>Stages disagree with the email evidence.</b> {faults.join(' · ')}.
+                        These should always be zero. Run <b>Check stages</b> on the Pipeline
+                        to reconcile them.
+                      </div>
+                    ) : (
+                      <div className="an-ok">
+                        Every stage agrees with the email evidence. Contacted means we
+                        emailed them; Responded means they genuinely replied.
+                      </div>
+                    )}
+                    {inbound > 0 && (
+                      <div className="an-note">
+                        {inbound} replied without us emailing first — inbound-first threads,
+                        not a fault.
+                      </div>
+                    )}
+                  </>
+                );
               })()}
             </section>
 

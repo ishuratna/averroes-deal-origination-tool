@@ -1151,6 +1151,30 @@ async def get_analytics(refresh: int = Query(0, description="1 = force ledger sy
     return stats
 
 
+@app.post("/admin/analytics/ledger-rebuild")
+async def analytics_ledger_rebuild(request: Request,
+                                   dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
+    """Recompute every analytics fact from evidence.
+
+    The ledger is a DERIVED CACHE of conclusions, not a store of primary data, and
+    it is append-only — so a conclusion that turns out false becomes permanent.
+    That happened: while the stage-rename migration wrongly held 18 companies in
+    Responded, the ledger banked 'ever reached Responded' for each, and correcting
+    the live rows could not correct the history.
+
+    This deletes and re-derives facts ONLY for companies still present in targets.
+    Facts for companies that have since been deleted or renamed away are preserved
+    untouched, which is the entire reason the ledger exists. Primary sources
+    (targets, activity_log, email_log) are never written to.
+
+    Defaults to a PREVIEW reporting the delta per event. A negative delta is a
+    fact the evidence does not support.
+    """
+    _require_token(request)
+    from services import analytics_service
+    return _stream_json(lambda: analytics_service.ledger_rebuild(bq_handler, bool(dry_run)))
+
+
 @app.get("/connections/company/{company_name}")
 async def company_connections(company_name: str):
     """Investors of a company + sibling companies sharing any investor."""

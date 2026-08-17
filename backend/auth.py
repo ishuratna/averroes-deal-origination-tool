@@ -37,7 +37,7 @@ ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").spl
 
 # /ch-watch/run is exempt from Google auth but guarded by its own shared
 # token (WATCH_TOKEN) — Cloud Scheduler cannot present a user session.
-EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run", "/email/deep-sync/run", "/investor-mine/run", "/investors/gcs-refill/run", "/diag/verify-email", "/diag/source-counts", "/diag/ch-match-audit", "/smartfill/run-by-number", "/email/ooo-backfill", "/admin/stage-rename", "/admin/archive/run", "/admin/backup/export", "/delivery/verify", "/admin/reply-rule/reconcile"}
+EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run", "/email/deep-sync/run", "/investor-mine/run", "/investors/gcs-refill/run", "/diag/verify-email", "/diag/source-counts", "/diag/ch-match-audit", "/smartfill/run-by-number", "/email/ooo-backfill", "/admin/stage-rename", "/admin/archive/run", "/admin/backup/export", "/delivery/verify", "/admin/reply-rule/reconcile", "/admin/analytics/ledger-rebuild"}
 # Every prefix here MUST be token-guarded inside its handler (see
 # _require_token in main.py) — exempting a path skips sign-in entirely.
 # tests_auth_exempt.py enforces that pairing.

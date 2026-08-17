@@ -186,6 +186,31 @@ mistake is both visible and correctable. This one logged nothing, which is why
   path (session) and an `/admin/...` alias (token). Never a second copy of the
   logic.
 
+## 6b. Analytics: a derived cache must be rebuildable
+
+- `analytics_ledger` is a CACHE of derived conclusions. The primary sources are
+  `targets`, `activity_log` and `email_log`. Append-only is right for an archive
+  of primary data (`archive_service`, which never deletes); it is WRONG for
+  derived conclusions, because a wrong conclusion becomes permanent.
+- That happened. The ledger ingested the company's CURRENT STATUS as a fact, so
+  while the stage rename wrongly held 18 companies in Responded it banked
+  "ever reached Responded" for each, and fixing the live rows could not undo it.
+  A snapshot of a mutable field is not evidence that an event occurred.
+- Stage facts therefore come only from per-stage timestamp stamps and logged
+  `status_change` rows. Current status is used ONLY for stages with no stamp
+  column (`Not a Fit`, `Under Review`), which are not funnel stages.
+- `ledger_rebuild()` recomputes facts for companies still in `targets` and
+  PRESERVES facts for companies that have since gone, which is the whole reason
+  the ledger exists. Defaults to a dry run and reports a per-event delta.
+- The `replied` event uses `NON_REPLY_CLASSES`, like everything else. It did not,
+  so autoresponders and bounces counted as replies and the headline response rate
+  was inflated. Analytics must never hold its own definition of a reply.
+- The inconsistency counters are an ALARM, not a footnote: with the reply rule
+  running, `contacted_without_email` and `responded_without_reply` must both be
+  zero. `reply_exempt` companies are excluded server-side so a deliberate human
+  decision cannot make the alarm permanently non-zero and therefore ignorable.
+  `replied_never_emailed` is not a fault; it is an inbound-first thread.
+
 ## 7. Verification before push (hard-learned)
 
 - `python3 -m compileall backend` (lazy imports hide f-string syntax errors),
