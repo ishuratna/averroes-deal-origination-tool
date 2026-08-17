@@ -228,6 +228,49 @@ export interface RespondedCompany extends CompanyTarget {
   last_direction?: string;
   last_msg_at?: string;
   days_since_reply?: number;
+  // Set when the user answered "keep it in Responded" to the reply-rule prompt:
+  // a genuine reply exists that the mailbox has no record of.
+  reply_exempt_at?: string;
+  reply_exempt_by?: string;
+}
+
+// ── THE REPLY RULE ──────────────────────────────────────────────────────────
+//
+//   Qualified = promoted from the Master Universe, no outreach sent yet
+//   Contacted = we emailed them, no genuine reply has come back yet
+//   Responded = we emailed them AND they genuinely replied
+//
+// An out-of-office autoresponder is not a reply, so it returns the company to
+// Contacted and only defers the follow-up reminder.
+//
+// The Pipeline's Responded column and the Responded page render the SAME set,
+// selected on status, so the two counts always agree. Keeping status honest is
+// this rule's job.
+export const STAGE_MEANINGS: Record<string, string> = {
+  Qualified: 'Qualified from the Master Universe. No outreach sent yet.',
+  Contacted: 'We emailed them. No genuine reply yet — an out-of-office does not count.',
+  Responded: 'We emailed them and they genuinely replied.',
+};
+
+export interface ReplyRuleMove {
+  name: string;
+  from: string;
+  to: string;
+  moved_by?: string;
+  reason?: string;
+  last_reply_at?: string;
+}
+
+export interface ReplyRuleResult {
+  status: string;
+  dry_run: boolean;
+  counts: { promote: number; demote: number; needs_confirmation: number };
+  promote: ReplyRuleMove[];
+  demote: ReplyRuleMove[];
+  // No reply on record, but a person put them in Responded. Never moved without
+  // an explicit answer, because they may know the founder rang instead.
+  needs_confirmation: ReplyRuleMove[];
+  message?: string;
 }
 
 export interface RespondedResponse {

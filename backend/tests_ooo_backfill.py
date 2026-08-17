@@ -72,8 +72,8 @@ class StubHandler:
             {"name": "TestCo", "status": "Responded", "outreach_sent_at": "2026-08-01", "source": "Internal Test"},
         ]
 
-    def reconcile_unreplied_contacted(self, dry_run=False):
-        return []
+    def reconcile_reply_stages(self, dry_run=False, confirm_names=None):
+        return {"promote": [], "demote": [], "needs_confirmation": []}
 
 
 main.bq_handler = StubHandler()

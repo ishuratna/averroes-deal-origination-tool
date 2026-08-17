@@ -208,17 +208,20 @@ def compute_stats(bq_handler) -> Dict:
     #                    last_reply_at stamps)
     _EVIDENCE = {"Contacted": "emailed", "Responded": "replied"}
 
-    def _current(s: str) -> int:
-        if s == "Contacted":
-            return with_email.get(s, 0)
-        if s == "Responded":
-            return with_reply.get(s, 0)
-        return current.get(s, 0)
-
+    # CURRENT COUNTS COME STRAIGHT FROM STATUS, for every stage.
+    #
+    # This used to substitute email evidence for the Contacted and Responded
+    # counts, because status could not be trusted while the rename was half
+    # applied. That produced a THIRD number for Responded: the board counted
+    # status, the Responded page counted the email log, and this chart counted
+    # evidence, so no two agreed. Status is now kept honest by the reply rule
+    # (bq_handler.reconcile_reply_stages), so every surface reads status and the
+    # numbers reconcile. Rows whose evidence disagrees are reported below as
+    # inconsistencies rather than quietly changing the count.
     funnel = [{
         "stage": s,
         "ever": ever.get(_EVIDENCE.get(s, s), 0),
-        "current": _current(s),
+        "current": current.get(s, 0),
     } for s in FUNNEL_ORDER]
 
     # Stage/evidence disagreements, surfaced for the page (0 = clean):

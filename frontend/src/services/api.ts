@@ -1,4 +1,4 @@
-import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, RespondedResponse } from "../types";
+import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, RespondedResponse, ReplyRuleResult } from "../types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
@@ -75,6 +75,36 @@ export const dealApi = {
   async getResponded(): Promise<RespondedResponse> {
     const response = await apiFetch(`${API_BASE_URL}/responded`);
     if (!response.ok) throw new Error('Failed to load the Responded queue');
+    return await response.json();
+  },
+
+  // ── The reply rule ─────────────────────────────────────────────────────
+  // Qualified = not emailed. Contacted = emailed, no genuine reply yet.
+  // Responded = emailed and they replied. An out-of-office is not a reply.
+  //
+  // Defaults to a preview so a caller can show the user what would change
+  // before anything moves. `confirm` carries the names the user has agreed to.
+  async reconcileReplyRule(apply = false, confirm: string[] = []): Promise<ReplyRuleResult> {
+    const qs = new URLSearchParams({ dry_run: apply ? '0' : '1' });
+    if (confirm.length) qs.set('confirm', confirm.join(','));
+    const response = await apiFetch(`${API_BASE_URL}/reply-rule/reconcile?${qs}`, { method: 'POST' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to reconcile the reply rule');
+    }
+    return await response.json();
+  },
+
+  // "Keep it in Responded" — the user knows a reply exists that the mailbox
+  // does not. Pins the company so the rule never asks about it again.
+  async setReplyExempt(name: string, on = true): Promise<any> {
+    const response = await apiFetch(
+      `${API_BASE_URL}/company/${encodeURIComponent(name)}/reply-exempt?on=${on ? 1 : 0}`,
+      { method: 'PUT' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to record the confirmation');
+    }
     return await response.json();
   },
 

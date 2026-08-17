@@ -838,6 +838,7 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .rsp-sub { font-size: 0.7rem; color: #94a3b8; margin-top: 0.1rem; }
 .rsp-stale { color: #b91c1c; font-weight: 700; }
 .rsp-actions { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.rsp-actions { display: flex; align-items: center; gap: 0.5rem; }
 .rsp-btn { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 6px; padding: 0.22rem 0.5rem; font-size: 0.68rem; font-weight: 800; cursor: pointer; font-family: inherit; }
 .rsp-btn:hover:not(:disabled) { border-color: #94a3b8; background: #f8fafc; }
 .rsp-btn:disabled { opacity: 0.5; cursor: default; }

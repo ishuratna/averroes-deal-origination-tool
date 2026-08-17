@@ -7,6 +7,48 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+# ── THE REPLY RULE ───────────────────────────────────────────────────────────
+#
+#   Qualified  = promoted from the Master Universe. No outreach sent yet.
+#   Contacted  = we emailed them, no genuine reply has come back yet.
+#   Responded  = we emailed them AND they genuinely replied.
+#
+# An out-of-office autoresponder is not a reply: it leaves (or returns) the
+# company in Contacted and only defers the follow-up reminder.
+#
+# Deliberately a module-level pure function rather than inline in the query loop,
+# so the decision can be tested directly on every combination of inputs without a
+# BigQuery connection. reconcile_reply_stages() is its only caller, which keeps
+# one rule in one place.
+
+def classify_reply_stage(status: str, has_reply: bool, emailed: bool,
+                         moved_by: str = "", confirmed: bool = False):
+    """Return (action, target_stage) for one company, or (None, None) to leave it.
+
+    action is one of:
+      "promote" - a real reply is on record and status has not caught up.
+      "demote"  - no reply on record, and it is safe to correct automatically
+                  because email-sync made the move (the machine correcting
+                  itself) or the user has explicitly confirmed this company.
+      "ask"     - no reply on record but a PERSON moved it, or nothing records
+                  how it got there. Never moved silently: they may know the
+                  founder rang instead of writing.
+
+    Stages past Responded (Meeting / DD / Offer / Won / Lost) carry real work and
+    are never returned here at all.
+    """
+    if status == "Contacted" and has_reply:
+        return "promote", "Responded"
+    if status == "Responded" and not has_reply:
+        # No outreach ever sent means it should never have left Qualified.
+        target = "Contacted" if emailed else "Qualified"
+        if confirmed or moved_by == "email-sync":
+            return "demote", target
+        return "ask", target
+    return None, None
+
+
 class BigQueryHandler:
     """
     Handles read/write operations to Google BigQuery for the targets database.
@@ -84,6 +126,14 @@ class BigQueryHandler:
         ("responded_at", "TIMESTAMP"),
         ("ooo_until", "STRING"),
         ("ooo_note", "STRING"),
+        # Escape hatch for the reply rule. Normally the email log decides who is
+        # in Responded, but a founder can reply by phone or from an address we do
+        # not track. When the reconciler is about to demote such a company the UI
+        # asks, and a "keep it" answer stamps these two columns. From then on the
+        # email-log rule skips the company permanently, so the human answer is
+        # never re-litigated on the next nightly run.
+        ("reply_exempt_at", "TIMESTAMP"),
+        ("reply_exempt_by", "STRING"),
         ("owner", "STRING"),
         # 'A' = high fit, goes to Bea via the Thursday session.
         # 'B' = low/moderate fit or too early, associate call via Wednesday.
@@ -373,6 +423,45 @@ class BigQueryHandler:
     DEAL_STAGES = ["Scraped", "Uploaded", "Not a Fit", "Qualified", "Contacted",
                    "Responded", "Meeting", "DD", "Offer", "Won", "Lost"]
     ACTIVE_PIPELINE_STAGES = ("Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer")
+
+    # ── THE REPLY RULE ───────────────────────────────────────────────────────
+    #
+    #   Qualified  = promoted from the Master Universe. No outreach sent yet.
+    #   Contacted  = we emailed them, no genuine reply has come back yet.
+    #   Responded  = we emailed them AND they genuinely replied.
+    #
+    # An out-of-office autoresponder is NOT a reply, so it leaves (or returns)
+    # the company in Contacted and only defers the follow-up reminder.
+    #
+    # "Genuinely replied" has exactly ONE definition, below, and every caller
+    # must use it. It previously had two — the Pipeline column counted
+    # status='Responded' while the Responded page counted any inbound message in
+    # email_log, including autoresponders — so the two could never reconcile.
+    # Anything downstream of Responded (Meeting / DD / Offer / Won / Lost) is a
+    # human decision with real work behind it and is never touched by this rule.
+
+    def _genuine_reply_sql(self) -> str:
+        """The one definition of 'this company replied'. Returns a subquery
+        yielding one row per company that has at least one real inbound message.
+
+        Kept as a single fragment rather than repeated inline so a change to the
+        rule cannot land on one page and miss another.
+        """
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        return f"""
+            SELECT entity_name,
+                   COUNTIF(direction = 'sent')     AS sent_count,
+                   COUNTIF(direction = 'received'
+                           AND IFNULL(classification, '') != 'out_of_office') AS recv_count,
+                   MAX(sent_at) AS last_msg_at,
+                   MAX(IF(direction = 'received'
+                          AND IFNULL(classification, '') != 'out_of_office',
+                          sent_at, NULL)) AS last_reply_at,
+                   ARRAY_AGG(direction ORDER BY sent_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS last_direction
+            FROM `{log}`
+            WHERE entity_type = 'company'
+            GROUP BY entity_name
+        """
 
     def update_company_status(self, company_name: str, new_status: str, created_by: str = "Ishu Ratna") -> bool:
         """Update a company's status and log the change in activity_log."""
@@ -1123,45 +1212,45 @@ class BigQueryHandler:
         return int(job.num_dml_affected_rows or 0) > 0
 
     def get_responded(self) -> List[Dict]:
-        """Every company that has ever replied, with the email counts needed to
-        work out what it needs next.
+        """The Responded page: every company sitting at Responded or beyond.
 
-        Which email a reply is answering is DERIVED from email_log rather than
-        stored on the company: email_log already holds that fact, and a second
-        copy would be one more thing to keep in sync. sent_count tells us how
-        far down the sequence we are; last_direction tells us whether the ball
-        is with them or with us.
+        DRIVEN BY STATUS, not by the email log. That is the whole point — the
+        Pipeline's Responded column counts status, so if this page selected on a
+        different condition the two numbers could never agree, which is exactly
+        the bug that put companies on this page that the board did not show and
+        vice versa. The reconciler keeps status honest; this page then renders
+        whatever status says, so the counts reconcile by construction.
+
+        The email counts are still DERIVED from email_log rather than stored on
+        the company: email_log already holds that fact and a second copy would be
+        one more thing to keep in sync. sent_count says how far down the sequence
+        we are; last_direction says whether the ball is with them or with us. A
+        company kept in Responded by a human answer has no logged reply, so its
+        counts come back zero and null rather than the row disappearing.
         """
         if not self.client:
             return []
-        log = f"{self.project_id}.{self.dataset_id}.email_log"
         try:
             return self._run_query(f"""
-                WITH agg AS (
-                    SELECT entity_name,
-                           COUNTIF(direction = 'sent')     AS sent_count,
-                           COUNTIF(direction = 'received') AS recv_count,
-                           MAX(sent_at)                    AS last_msg_at,
-                           MAX(IF(direction = 'received', sent_at, NULL)) AS last_reply_at,
-                           ARRAY_AGG(direction ORDER BY sent_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS last_direction
-                    FROM `{log}`
-                    WHERE entity_type = 'company'
-                    GROUP BY entity_name
-                    HAVING recv_count > 0
-                )
+                WITH agg AS ({self._genuine_reply_sql()})
                 SELECT t.name, t.status, t.sector, t.website, t.contact_name, t.contact_email,
                        t.averroes_fit_score, t.revenue_band, t.revenue_estimate_m,
                        t.size_bucket, t.action_bucket, t.unfit_reason,
                        t.owner, t.track, CAST(t.triaged_at AS STRING) AS triaged_at,
-                       a.sent_count, a.recv_count, a.last_direction,
+                       CAST(t.reply_exempt_at AS STRING) AS reply_exempt_at,
+                       t.reply_exempt_by,
+                       IFNULL(a.sent_count, 0) AS sent_count,
+                       IFNULL(a.recv_count, 0) AS recv_count,
+                       a.last_direction,
                        CAST(a.last_msg_at AS STRING)   AS last_msg_at,
                        CAST(a.last_reply_at AS STRING) AS last_reply_at,
                        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), a.last_reply_at, DAY) AS days_since_reply
-                FROM agg a
-                JOIN `{self.table_id}` t ON t.name = a.entity_name
-                WHERE t.hidden_at IS NULL
+                FROM `{self.table_id}` t
+                LEFT JOIN agg a ON a.entity_name = t.name
+                WHERE t.status IN ('Responded', 'Meeting', 'DD', 'Offer')
+                  AND t.hidden_at IS NULL
                   AND IFNULL(t.source, '') != 'Internal Test'
-                ORDER BY a.last_reply_at DESC
+                ORDER BY a.last_reply_at DESC NULLS LAST, t.name
             """)
         except Exception as e:
             logger.error(f"get_responded failed: {e}")
@@ -1208,88 +1297,156 @@ class BigQueryHandler:
 
     def genuine_reply_names(self) -> set:
         """Companies with at least one inbound that is NOT an autoresponder.
-        Used to decide who may be pulled back and whose reply state must stay."""
+
+        Built on the shared predicate rather than its own copy of the WHERE
+        clause, so it cannot drift from what the reply rule considers a reply.
+        """
         if not self.client:
             return set()
-        log = f"{self.project_id}.{self.dataset_id}.email_log"
         try:
             rows = self.client.query(f"""
-                SELECT DISTINCT entity_name FROM `{log}`
-                WHERE entity_type = 'company' AND direction = 'received'
-                  AND IFNULL(classification, '') != 'out_of_office'
+                SELECT entity_name FROM ({self._genuine_reply_sql()})
+                WHERE recv_count > 0
             """).result()
             return {r.entity_name for r in rows}
         except Exception as e:
             logger.error(f"genuine_reply_names failed: {e}")
             return set()
 
-    def reconcile_unreplied_contacted(self, dry_run: bool = False) -> List[Dict]:
-        """Mirror of the sync's auto-advance: pull a company BACK out of
-        'Responded' when no reply actually exists.
+    def set_reply_exempt(self, name: str, by: str = "Ishu Ratna", on: bool = True) -> bool:
+        """Pin (or unpin) a company against the email-log reply rule.
 
-        WHY: sending outreach sets 'Contacted'; a synced reply advances it to
-        'Responded'. That advance was only ever one-way, so if the reply later
-        turns out not to exist (misattributed to the wrong company, deleted
-        from the mailbox, or advanced on a message that was not really a reply)
-        the company sat in Responded forever looking like it had answered.
-
-        Deliberately narrow, per the agreed rule:
-          * Only the Contacted -> Responded layer. Meeting / DD / Offer / Won are
-            human decisions with real work behind them and are never reversed.
-          * Only when EMAIL-SYNC made the move. A stage set by a human stands,
-            because they may have replied by phone or been advanced on purpose.
-          * email_log is the source of truth for whether a reply exists.
-
-        Demotes to 'Contacted' when we did email them, or back to 'Qualified'
-        when no outreach was ever sent (in which case it should never have left).
-        Returns [{name, from, to}] for the caller to report.
+        Set when the user answers "keep it in Responded" to the confirmation
+        prompt: they know something the mailbox does not, e.g. the founder rang
+        instead of replying. Recorded with who said so and when, so the decision
+        is auditable rather than an invisible exception.
         """
         if not self.client:
-            return []
-        log = f"{self.project_id}.{self.dataset_id}.email_log"
+            return False
+        job = self.client.query(
+            f"""UPDATE `{self.table_id}` SET
+                    reply_exempt_at = {"CURRENT_TIMESTAMP()" if on else "NULL"},
+                    reply_exempt_by = {"@by" if on else "NULL"}
+                WHERE LOWER(name) = LOWER(@name)""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("by", "STRING", by or "Ishu Ratna"),
+                bigquery.ScalarQueryParameter("name", "STRING", name),
+            ]))
+        job.result()
+        if on:
+            self.add_activity_note(
+                name, f"Kept in Responded by {by}: confirmed a genuine reply exists even though "
+                      f"none is on record in the email log. The reply rule will skip this company.",
+                created_by=by)
+        return int(job.num_dml_affected_rows or 0) > 0
+
+    def reconcile_reply_stages(self, dry_run: bool = False,
+                              confirm_names: Optional[List[str]] = None) -> Dict:
+        """Make status match the reply rule, in BOTH directions.
+
+            emailed + genuine reply     -> Responded
+            emailed + no genuine reply  -> Contacted
+
+        Returns {"promote": [...], "demote": [...], "needs_confirmation": [...]}.
+
+        WHY THIS REPLACED reconcile_unreplied_contacted: the old version could
+        only demote a company whose move into Responded had an activity_log entry
+        created_by 'email-sync'. In production 20 of 21 wrong rows had NO activity
+        entry at all, because they were moved by the raw-SQL stage-rename
+        migration, which logged nothing. The JOIN silently excluded exactly the
+        rows that needed fixing, so the preview came back empty while the board
+        stayed wrong. Auditing intent through the activity log was the mistake:
+        the log records what happened, not what is true now. Truth comes from
+        email_log, and a human who disagrees says so explicitly via
+        reply_exempt_at.
+
+        THREE OUTCOMES, not two:
+          * promote   — a real reply exists and status has not caught up. Safe and
+                        automatic: evidence is present.
+          * demote    — no reply on record and email-sync put it there. Safe and
+                        automatic: the machine is correcting the machine.
+          * needs_confirmation — no reply on record but a HUMAN moved it, or
+                        nothing records how it got there. Never silently
+                        demoted; returned for the UI to ask about. Pass those
+                        names back in confirm_names to demote them, or call
+                        set_reply_exempt to keep them.
+
+        Never touches Meeting / DD / Offer / Won / Lost: those carry real work and
+        are only ever changed by a person. Internal Test is excluded, and so is
+        any company already stamped reply_exempt_at.
+        """
+        empty = {"promote": [], "demote": [], "needs_confirmation": []}
+        if not self.client:
+            return empty
+        confirmed = {n.strip().lower() for n in (confirm_names or []) if n and n.strip()}
         try:
             rows = list(self.client.query(f"""
-                WITH replied AS (
-                    -- Out-of-office autoresponders are excluded: they are not
-                    -- replies, so one must never shield a company from being
-                    -- pulled back out of Responded.
-                    SELECT DISTINCT entity_name
-                    FROM `{log}`
-                    WHERE entity_type = 'company' AND direction = 'received'
-                      AND IFNULL(classification, '') != 'out_of_office'
-                ),
+                WITH agg AS ({self._genuine_reply_sql()}),
+                -- Who last put this company into Responded, if anyone recorded it.
+                -- Used ONLY to decide automatic vs ask-first, never to decide
+                -- whether the row is wrong.
                 last_move AS (
-                    SELECT company_name, created_by,
-                           ROW_NUMBER() OVER (PARTITION BY company_name
-                                              ORDER BY created_at DESC) AS rn
-                    FROM `{self.activity_table_id}`
-                    WHERE action_type = 'status_change' AND new_status = 'Responded'
+                    SELECT company_name, created_by
+                    FROM (
+                        SELECT company_name, created_by,
+                               ROW_NUMBER() OVER (PARTITION BY company_name
+                                                  ORDER BY created_at DESC) AS rn
+                        FROM `{self.activity_table_id}`
+                        WHERE action_type = 'status_change' AND new_status = 'Responded'
+                    ) WHERE rn = 1
                 )
-                SELECT t.name,
-                       IF(t.outreach_sent_at IS NULL, 'Qualified', 'Contacted') AS target
+                SELECT t.name, t.status,
+                       IFNULL(a.recv_count, 0) AS recv_count,
+                       t.outreach_sent_at IS NOT NULL AS emailed,
+                       IFNULL(m.created_by, '') AS moved_by,
+                       CAST(t.last_reply_at AS STRING) AS last_reply_at
                 FROM `{self.table_id}` t
-                JOIN last_move m ON m.company_name = t.name AND m.rn = 1
-                LEFT JOIN replied r ON r.entity_name = t.name
-                WHERE t.status = 'Responded'
-                  AND r.entity_name IS NULL
-                  AND m.created_by = 'email-sync'
+                LEFT JOIN agg a ON a.entity_name = t.name
+                LEFT JOIN last_move m ON m.company_name = t.name
+                WHERE t.status IN ('Contacted', 'Responded')
+                  AND t.hidden_at IS NULL
+                  AND t.reply_exempt_at IS NULL
                   AND IFNULL(t.source, '') != 'Internal Test'
             """).result())
         except Exception as e:
-            logger.error(f"reconcile_unreplied_contacted query failed: {e}")
-            return []
+            logger.error(f"reconcile_reply_stages query failed: {e}")
+            return empty
+
+        buckets = {"promote": [], "demote": [], "ask": []}
+        for r in rows:
+            has_reply = int(r.recv_count or 0) > 0
+            action, target = classify_reply_stage(
+                r.status, has_reply, bool(r.emailed),
+                moved_by=r.moved_by or "",
+                confirmed=r.name.strip().lower() in confirmed)
+            if not action:
+                continue
+            buckets[action].append({
+                "name": r.name, "from": r.status, "to": target,
+                "moved_by": r.moved_by or "(no record)",
+                "reason": (f"{r.recv_count} genuine repl(y/ies) on record" if action == "promote"
+                           else "no genuine reply in the email log"),
+                "last_reply_at": r.last_reply_at,
+            })
+        promote, demote, ask = buckets["promote"], buckets["demote"], buckets["ask"]
 
         if dry_run:
-            return [{"name": r.name, "from": "Responded", "to": r.target,
-                     "would_change": True} for r in rows]
+            return {"promote": promote, "demote": demote, "needs_confirmation": ask}
 
-        changed = []
-        for r in rows:
+        for item in promote:
             try:
-                # Clear everything that was premised on a reply existing. Left
-                # in place these would keep the company looking like it had
-                # answered (reply chip on the card, an action bucket, a
-                # suggested reply drafted from a message that is not there).
+                self.update_company_status(item["name"], "Responded", created_by="reply-rule")
+                self.add_activity_note(
+                    item["name"],
+                    f"Advanced to Responded: {item['reason']}.", created_by="reply-rule")
+            except Exception as e:
+                logger.warning(f"Promote failed for {item['name']}: {e}")
+        for item in demote:
+            try:
+                # Clear everything premised on a reply existing. Left in place
+                # these keep the company looking answered: a reply chip on the
+                # card, an action bucket, a suggested reply drafted from a
+                # message that is not there.
                 self.client.query(
                     f"""UPDATE `{self.table_id}` SET
                             last_reply_at = NULL, reply_classification = NULL,
@@ -1298,19 +1455,17 @@ class BigQueryHandler:
                             action_reply_subject = NULL, action_reply_body = NULL
                         WHERE name = @name""",
                     job_config=bigquery.QueryJobConfig(query_parameters=[
-                        bigquery.ScalarQueryParameter("name", "STRING", r.name),
+                        bigquery.ScalarQueryParameter("name", "STRING", item["name"]),
                     ])).result()
-                self.update_company_status(r.name, r.target, created_by="email-sync")
+                self.update_company_status(item["name"], item["to"], created_by="reply-rule")
                 self.add_activity_note(
-                    r.name,
-                    f"Pulled back to {r.target}: no reply from this company exists in the email log, "
-                    f"and the move to Responded was made automatically by email-sync.",
-                    created_by="email-sync")
-                changed.append({"name": r.name, "from": "Responded", "to": r.target})
-                logger.info(f"[sync] pulled {r.name} back: Responded -> {r.target} (no reply on record)")
+                    item["name"],
+                    f"Moved back to {item['to']}: no genuine reply from this company exists in "
+                    f"the email log. An out-of-office autoresponder does not count as a reply.",
+                    created_by="reply-rule")
             except Exception as e:
-                logger.warning(f"Pull-back failed for {r.name}: {e}")
-        return changed
+                logger.warning(f"Demote failed for {item['name']}: {e}")
+        return {"promote": promote, "demote": demote, "needs_confirmation": ask}
 
     def hide_companies(self, names: List[str], by: str = "") -> int:
         """SOFT delete: stamp hidden_at so the row drops out of the Master

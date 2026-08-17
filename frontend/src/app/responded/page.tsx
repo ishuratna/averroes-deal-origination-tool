@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import SideNav from '../../components/SideNav';
 import CompanyProfile from '../../components/CompanyProfile';
 import OwnerTag from '../../components/OwnerTag';
+import ReplyRuleButton from '../../components/ReplyRuleButton';
 import { dealApi } from '../../services/api';
 import {
   RESPONDED_QUEUES, CALL_ASSOCIATES, DEAL_OWNERS,
@@ -127,9 +128,15 @@ export default function RespondedPage() {
               Emails go out from Bea&apos;s mailbox; Ishu triages each Email 2 reply.
             </p>
           </div>
-          <button className="rsp-btn" onClick={load} disabled={loading}>
-            {loading ? 'Loading…' : 'Reload'}
-          </button>
+          <div className="rsp-actions">
+            {/* Same component as the Pipeline header: one implementation of the
+                reply rule, so this page's count and the board's Responded
+                column can never drift apart. */}
+            <ReplyRuleButton onDone={load} />
+            <button className="rsp-btn" onClick={load} disabled={loading}>
+              {loading ? 'Loading…' : 'Reload'}
+            </button>
+          </div>
         </header>
 
         {error && <div className="rsp-empty" style={{ borderColor: '#f0cdd5', color: '#8c1d2a' }}>{error}</div>}

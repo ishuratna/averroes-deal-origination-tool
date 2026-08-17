@@ -25,9 +25,45 @@ Read this before building anything. These rules are binding for all future work.
     (`frontend/src/components/OutreachModal.tsx`) + `outreachButtonState()`
     (`frontend/src/lib/outreach.ts`) on both Universe and Pipeline.
   - Sync Emails → `SyncEmailsButton` component, both headers.
+  - Check stages → `ReplyRuleButton` component, Pipeline + Responded headers.
   - Stage changes → PUT `/company/{name}/status` (never raw SQL from a page).
 - Never fork logic per page. If styling must differ, share the logic and vary
   only the CSS.
+
+## 2a. THE REPLY RULE (stage definitions are fixed)
+
+- `Qualified` = promoted from the Master Universe. No outreach sent yet.
+- `Contacted` = we emailed them, no genuine reply has come back yet.
+- `Responded` = we emailed them AND they genuinely replied.
+- An out-of-office autoresponder is NOT a reply. It leaves (or returns) the
+  company in Contacted and only defers the follow-up reminder.
+- "Genuinely replied" has exactly ONE definition, `_genuine_reply_sql()` in
+  `bq_handler.py`: an `email_log` row with `direction='received'`,
+  `entity_type='company'`, `classification != 'out_of_office'`. Every caller
+  uses that fragment. Never inline a second copy of the predicate.
+- The decision is `classify_reply_stage()` — a module-level PURE function, so it
+  is testable without BigQuery. `reconcile_reply_stages()` is its only caller.
+- The Pipeline's Responded column and the Responded page MUST select on the same
+  condition (status). This was violated once: the board counted
+  `status='Responded'` while `get_responded()` counted any inbound message in
+  `email_log` including autoresponders, so the two could never reconcile and the
+  page showed companies the board did not. If the counts can differ, it is a bug.
+- Stages past Responded (Meeting / DD / Offer / Won / Lost) carry real work and
+  are NEVER changed automatically.
+- Three outcomes, not two. A wrong row is demoted automatically only when
+  email-sync made the move (the machine correcting itself). When a PERSON moved
+  it, or nothing records how it got there, it is returned as
+  `needs_confirmation` and the UI asks. "Keep it" stamps `reply_exempt_at` /
+  `reply_exempt_by` and the rule skips that company permanently.
+- NEVER gate a correction on the presence of an `activity_log` row. That mistake
+  cost real data integrity: `reconcile_unreplied_contacted()` INNER JOINed the
+  activity log and demoted only rows moved by `email-sync`. Of 21 wrongly
+  Responded companies, 20 had no activity row at all (the raw-SQL stage-rename
+  migration logged nothing), so the join silently dropped exactly the rows that
+  needed fixing and every preview came back empty while the board stayed wrong.
+  The activity log records what happened, not what is true now.
+- Any migration that writes `status` with raw SQL MUST also write an
+  `activity_log` row, or it creates rows no reconciliation can reason about.
 
 ## 3. Event truth
 

@@ -35,8 +35,13 @@ interface Analytics {
   };
 }
 
-const STAGE_LABELS: Record<string, string> = { Contacted: 'Responded' };
-const label = (s: string) => STAGE_LABELS[s] || s;
+// Stage names read the same everywhere. This page used to relabel Contacted as
+// "Responded" — a leftover from the old naming, where the stored value
+// 'Contacted' meant "they replied". After the rename that translation INVERTED
+// the chart: companies we had emailed with no reply were shown under Responded.
+// Never translate a stage name for display. Contacted = we emailed them,
+// Responded = they replied, on every page.
+const label = (s: string) => s;
 
 export default function Analytics() {
   return <AuthGate><AnalyticsInner /></AuthGate>;

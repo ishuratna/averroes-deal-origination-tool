@@ -3488,10 +3488,16 @@ def _responded_group(r: dict) -> str:
     status = r.get("status") or ""
     owner = (r.get("owner") or "").strip()
     sent = int(r.get("sent_count") or 0)
+    recv = int(r.get("recv_count") or 0)
 
     if status in ("Lost", "Not a Fit") or track == "kill":
         return "closed"
     if not track:
+        # No reply in the log at all: the company is here because a person put it
+        # in Responded and confirmed a reply exists off-record (a phone call).
+        # Email counts cannot say what it needs, so a human decides.
+        if recv == 0:
+            return "needs_triage"
         # Not triaged yet. One email out means they answered Email 1 and are
         # owed Email 2; two or more means they answered the real ask.
         return "needs_email_2" if sent <= 1 else "needs_triage"
@@ -3904,7 +3910,7 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
             "would_pull_back": sum(1 for p in plan if p["pull_back_to"]),
             "ai_calls_used": ai_used,
             "companies": sorted(plan, key=lambda p: (not p["pull_back_to"], p["name"])),
-            "stale_contacted_no_reply": bq_handler.reconcile_unreplied_contacted(dry_run=True),
+            "reply_rule_preview": bq_handler.reconcile_reply_stages(dry_run=True),
             "message": ("Nothing was changed. Re-run with dry_run=0 to apply."),
         }
 
@@ -3946,7 +3952,7 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
         except Exception as e:
             logger.warning(f"[OOO backfill] {name} failed: {e}")
 
-    stale = bq_handler.reconcile_unreplied_contacted()
+    stale = bq_handler.reconcile_reply_stages()
 
     return {
         "status": "Success",
@@ -3957,11 +3963,13 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
         "messages_marked": marked,
         "companies_updated": len(applied),
         "pulled_back": pulled,
-        "stale_contacted_pulled_back": stale,
+        "reply_rule": stale,
         "ai_calls_used": ai_used,
         "message": (f"Scanned {len(rows)} logged inbound messages, found {len(hits)} autoresponders, "
                     f"marked {marked}, updated {len(applied)} companies, pulled {len(pulled)} back "
-                    f"out of Responded, plus {len(stale)} with no reply on record at all."),
+                    f"out of Responded. The reply rule then advanced {len(stale['promote'])}, moved "
+                    f"{len(stale['demote'])} back, and left {len(stale['needs_confirmation'])} "
+                    f"awaiting your confirmation."),
     }
 
 
@@ -4185,6 +4193,61 @@ async def ooo_backfill(request: Request,
     return _stream_json(lambda: _ooo_backfill(bool(dry_run),
                                               max(0, min(ai_budget, 200)),
                                               max(1, min(limit, 20000))))
+
+
+# ── The reply rule ───────────────────────────────────────────────────────────
+# Qualified = not yet emailed. Contacted = emailed, no genuine reply yet.
+# Responded = emailed and they replied. An out-of-office is not a reply.
+#
+# This endpoint is the only way to bring status back in line with that rule, and
+# the nightly email sync calls the same handler method, so there is exactly one
+# implementation. Meeting / DD / Offer / Won / Lost are never touched.
+
+@app.post("/reply-rule/reconcile")
+async def reply_rule_reconcile(
+        dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
+        confirm: str = Query("", description="Comma-separated company names the user has agreed to move back")):
+    """Reconcile Contacted/Responded against the email log.
+
+    Defaults to a PREVIEW. Returns three lists:
+
+      promote            - a real reply exists, status had not caught up. Applied
+                           automatically: the evidence is there.
+      demote             - no reply on record and email-sync made the move.
+                           Applied automatically: the machine corrects itself.
+      needs_confirmation - no reply on record but a person moved it, or nothing
+                           records how it got there. NEVER moved silently. The UI
+                           asks; a yes comes back through `confirm`, a no calls
+                           /company/{name}/reply-exempt to pin it instead.
+    """
+    names = [n.strip() for n in (confirm or "").split(",") if n.strip()]
+    out = bq_handler.reconcile_reply_stages(dry_run=bool(dry_run), confirm_names=names)
+    return {
+        "status": "Success",
+        "dry_run": bool(dry_run),
+        "counts": {k: len(v) for k, v in out.items()},
+        **out,
+        "message": ("Nothing was changed. Re-run with dry_run=0 to apply."
+                    if dry_run else
+                    f"Advanced {len(out['promote'])}, moved {len(out['demote'])} back, "
+                    f"{len(out['needs_confirmation'])} still need your confirmation."),
+    }
+
+
+@app.put("/company/{company_name}/reply-exempt")
+async def set_reply_exempt(company_name: str,
+                           on: int = Query(1, description="1 = keep in Responded regardless of the email log, 0 = clear"),
+                           by: str = Query("Ishu Ratna", description="Who confirmed it")):
+    """Answer 'keep it' to the confirmation prompt.
+
+    Records that a genuine reply exists even though the mailbox has no record of
+    one (a phone call, or a reply from an address we do not track). The rule then
+    skips this company permanently, so the same question is never asked twice.
+    """
+    ok = bq_handler.set_reply_exempt(company_name, by=by, on=bool(on))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found.")
+    return {"status": "Success", "company": company_name, "reply_exempt": bool(on)}
 
 
 @app.post("/email/sync")
@@ -4478,17 +4541,20 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             except Exception as e:
                 logger.warning(f"Self-heal advance failed for {ename}: {e}")
 
-    # Reverse pass: the mirror of the advance above. A company sitting in
-    # Responded with NO reply on record gets pulled back to where it belongs
-    # (Contacted if we emailed it, Qualified if we never did). Runs AFTER the
-    # advances so a reply logged moments ago is already visible and the company
-    # is not pulled back and pushed forward in the same run. Only reverses
-    # moves that email-sync itself made; a human's stage change always stands.
-    pulled_back = []
+    # THE REPLY RULE, applied in both directions. Runs AFTER the advances above
+    # so a reply logged moments ago is already visible and no company is pulled
+    # back and pushed forward in the same run.
+    #
+    # Anything with no reply on record that a HUMAN moved is not touched here: it
+    # comes back under needs_confirmation for the UI to ask about, because they
+    # may know the founder rang instead of writing. Everything else is corrected
+    # automatically, so the board and the Responded page always agree.
+    reply_rule = {"promote": [], "demote": [], "needs_confirmation": []}
     try:
-        pulled_back = bq_handler.reconcile_unreplied_contacted()
+        reply_rule = bq_handler.reconcile_reply_stages()
     except Exception as e:
-        logger.warning(f"Pull-back reconciliation failed (non-fatal): {e}")
+        logger.warning(f"Reply-stage reconciliation failed (non-fatal): {e}")
+    pulled_back = reply_rule["demote"]
 
     # Retro bucketing: companies with a logged reply but no action bucket yet
     # (replies synced before buckets existed, or a call failed). Reads from
@@ -4573,6 +4639,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         "replies_classified": classified,
         "auto_advanced": advanced,
         "pulled_back": pulled_back,
+        # Companies the rule wants to move back but will not without a human
+        # answer, because a person put them in Responded. The UI prompts on these.
+        "needs_confirmation": reply_rule["needs_confirmation"],
         "reclassified": reclassified,
         "action_buckets": bucketed,
         "bucket_errors": bucket_errors[:10],
