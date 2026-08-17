@@ -2856,6 +2856,112 @@ async def smartfill_eligible():
     }
 
 
+# ── Auto bulk SmartFill (the 8 PM job) ───────────────────────────────────────
+# Enriches the backlog unattended: Cloud Scheduler ticks every 12 minutes from
+# 20:00 Europe/London, each tick processes one small batch, and every tick asks
+# "how many SmartFills have run today, manual included?" and stops at the target.
+# So a heavy manual day means a light night, and the total can never exceed the
+# target. 250/day = ~1,000 grounded requests, well inside the 1,500/day free
+# search-grounding allowance with headroom left for daytime memos and lookups.
+#
+# Batches are deliberately small (15): a tick finishes in ~6 minutes, safely
+# inside the 12-minute spacing, so ticks never overlap and no company is
+# processed twice. The backlog (~11k companies) clears in ~6-7 weeks, after
+# which each night finds only newly ingested companies and costs pennies.
+
+AUTO_SMARTFILL_TARGET = int(os.getenv("AUTO_SMARTFILL_TARGET", "250"))
+AUTO_SMARTFILL_BATCH = int(os.getenv("AUTO_SMARTFILL_BATCH", "15"))
+
+
+def _auto_smartfill_rank(c: dict) -> tuple:
+    """Best prospects first. Pure and import-safe, so it is testable directly.
+
+    Unenriched rows have no fit score yet (SmartFill is what computes it), so
+    the ranking uses what IS already stored as a proxy for prospect quality:
+    real financials from an upload beat a bare scraped name, and a row with a
+    website and a substantive description is more likely to be a live company
+    whose enrichment money is well spent. The thin rows still get done — last,
+    by which point the hard-filter gate has binned much of the junk for free.
+
+    Returns a sort key (higher = sooner). Ties break alphabetically so the
+    order is stable across ticks and nothing is skipped or repeated.
+    """
+    score = 0
+    if c.get("revenue_y1") or c.get("revenue_estimate_m"):
+        score += 3          # real financials on file (usually an Inven upload)
+    if c.get("employees") or c.get("employees_ch"):
+        score += 2
+    if (c.get("website") or "").strip():
+        score += 2          # a live site is both a signal and what SmartFill reads
+    if len((c.get("description") or "").strip()) >= 200:
+        score += 1
+    src = (c.get("source") or "").lower()
+    if "inven" in src:
+        score += 2          # curated dataset, richest starting point
+    elif any(k in src for k in ("conference", "saastock", "event")):
+        score += 1          # someone met them or they showed up somewhere real
+    return (-score, (c.get("name") or "").lower())
+
+
+@app.get("/smartfill/auto-run")   # GET alias so a scheduler URL is enough
+@app.post("/smartfill/auto-run")
+async def smartfill_auto_run(request: Request):
+    """One tick of the nightly bulk SmartFill. Token-gated (Cloud Scheduler
+    cannot hold a browser session).
+
+    Idempotent by construction: the daily count INCLUDES manual runs, so
+    target minus used-today can only shrink. Re-running a tick after the
+    target is met does nothing and costs nothing.
+    """
+    _require_token(request)
+    used = bq_handler.count_smartfills_today()
+    remaining = AUTO_SMARTFILL_TARGET - used
+    if remaining <= 0:
+        return {"status": "Done", "used_today": used, "target": AUTO_SMARTFILL_TARGET,
+                "message": f"Daily target of {AUTO_SMARTFILL_TARGET} already met ({used} run today). Nothing to do."}
+
+    # Same eligibility as the manual bulk button: never-SmartFilled, passes all
+    # three hard filters on stored data, not hidden. ZERO AI spent choosing.
+    eligible = []
+    for c in bq_handler.get_universe():
+        if c.get("hidden_at") or c.get("last_smartfill_at"):
+            continue
+        if c.get("source") == "Internal Test":
+            continue
+        qual = qualify_company(c)
+        if not qual["is_uk_ireland"] or not qual["is_tech"]:
+            continue
+        if qual.get("size_qualified") is False:
+            continue
+        eligible.append(c)
+    eligible.sort(key=_auto_smartfill_rank)
+
+    batch = [c["name"] for c in eligible[:min(AUTO_SMARTFILL_BATCH, remaining)]]
+    processed, failed = [], []
+    for name in batch:
+        try:
+            await smartfill_company(name, bulk=True)
+            processed.append(name)
+        except HTTPException as e:
+            if e.status_code == 429:
+                # The hard daily cap (a separate, higher guard) said stop.
+                break
+            failed.append(f"{name}: {e.detail}")
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+
+    return {
+        "status": "Success",
+        "used_today_before": used,
+        "target": AUTO_SMARTFILL_TARGET,
+        "backlog": len(eligible),
+        "processed": processed,
+        "failed": failed,
+        "message": (f"Processed {len(processed)} of a {len(eligible)}-company backlog "
+                    f"({used + len(processed)}/{AUTO_SMARTFILL_TARGET} today, manual runs included)."),
+    }
+
+
 @app.post("/smartenrich/{company_name}")
 async def smartenrich_company(company_name: str):
     """
