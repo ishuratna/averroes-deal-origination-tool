@@ -66,6 +66,30 @@ Read this before building anything. These rules are binding for all future work.
   `activity_log` row — migrations AND the send path. Without it the row is
   invisible to reconciliation.
 
+### Renaming a stored VALUE: gate the migration on evidence, never on the old value
+
+This cost 18 wrong rows and is the subtlest failure in this codebase so far.
+
+`/admin/stage-rename` mapped old `Contacted` → `Responded`, because under the old
+scheme `Contacted` meant "they replied". Correct in principle. But the SEND PATH
+had already been updated to write `Contacted` with its NEW meaning ("we emailed
+them"), so every company emailed between the code change and the data migration
+held a `Contacted` row that meant the new thing. The migration read the value,
+could not know which meaning was intended, and promoted 18 freshly-emailed
+companies to Responded. Every one had `we_sent = 1, all_inbound = 0`: not even an
+autoresponder.
+
+The rule that follows: when a migration renames a stored value whose meaning has
+changed, the WHERE clause must test the underlying evidence, not just the old
+value — here, `old status = 'Contacted' AND a genuine reply exists`. Rows failing
+that test keep the new meaning. A value rename is only safe when no live code path
+can already be writing the new meaning, and during a deploy there is always a
+window where one can.
+
+Corollary: such a migration must be re-runnable and must log `status_change`, so a
+mistake is both visible and correctable. This one logged nothing, which is why
+`reconcile_unreplied_contacted()` could not see the damage.
+
 ## 2b. THE OUTREACH LIFECYCLE (the whole loop, in order)
 
 1. Outreach sent → `Qualified` → `Contacted`. Stamps `outreach_sent_at`,

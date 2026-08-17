@@ -147,6 +147,23 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
                     If they replied by phone, or from an address we do not track, keep
                     them and the rule will not ask again.
                   </p>
+                  {/* Answering one at a time is right when the cases differ, but a
+                      value-rename migration mislabels whole batches identically, so
+                      the honest answer is often the same for every row. */}
+                  {ambiguous.length > 1 && (
+                    <div className="bulk">
+                      <span>Same answer for all {ambiguous.length}?</span>
+                      <button onClick={() => setAnswers(Object.fromEntries(
+                        ambiguous.map(m => [m.name, 'move' as const])))}>
+                        Move all back
+                      </button>
+                      <button className="keep" onClick={() => setAnswers(Object.fromEntries(
+                        ambiguous.map(m => [m.name, 'keep' as const])))}>
+                        Keep all
+                      </button>
+                      <button className="plain" onClick={() => setAnswers({})}>Clear</button>
+                    </div>
+                  )}
                   <ul>
                     {ambiguous.map(m => (
                       <li key={m.name} className="row">
@@ -239,6 +256,19 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
         }
         .ask h4 span { background: #fef3c7; color: #92400e; }
         .why { margin: 0 0 0.6rem; font-size: 0.76rem; color: #64748b; line-height: 1.5; }
+        .bulk {
+          display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+          margin-bottom: 0.6rem; font-size: 0.74rem; color: #64748b;
+        }
+        .bulk span { margin-right: 0.2rem; }
+        .bulk button {
+          padding: 0.28rem 0.6rem; border: 1px solid #cbd5e1; background: #fff;
+          border-radius: 6px; font-size: 0.73rem; font-weight: 700; color: #334155;
+          cursor: pointer; font-family: inherit;
+        }
+        .bulk button:hover { border-color: #94a3b8; background: #f8fafc; }
+        .bulk button.keep { color: #047857; border-color: #bcd9c8; }
+        .bulk button.plain { font-weight: 500; color: #94a3b8; border-color: #e2e8f0; }
         ul { list-style: none; margin: 0; padding: 0; }
         li {
           padding: 0.5rem 0.7rem; border: 1px solid #eef2f7; border-radius: 8px;
