@@ -69,3 +69,20 @@ Read this before building anything. These rules are binding for all future work.
 - Deploy checks against the live service must cache-bust (`?v=N`) — the fetch
   layer caches responses.
 - Cloud Run env vars: ALWAYS `--update-env-vars`, NEVER `--set-env-vars`.
+
+## 8. Git remotes + credentials (hard-learned)
+
+- `origin` has ONE fetch url and TWO push urls: `averroescapital/...` (canonical)
+  and `ishuratna/...` (mirror). One `git push` goes to both.
+- NEVER embed a token in a remote url. It lands in `.git/config` in plaintext,
+  GitHub's secret scanning revokes it, and every push then dies with
+  "Invalid username or token". Credentials live in the macOS keychain
+  (`git config --global credential.helper osxkeychain`).
+- `git remote set-url` only changes the FETCH url. When pushurls exist they
+  override it silently, so a "fixed" url can still push to the old target. Debug
+  with `git remote -v` and read which line says `(push)`; fix with
+  `git config --unset-all remote.origin.pushurl` then re-add.
+- The PAT must have access to BOTH repos. A fine-grained token scoped to the org
+  only will push to `averroescapital` and fail on the mirror.
+- Pushes now come from Ishu's terminal, not the sandbox: the keychain is not
+  reachable from the Linux sandbox, so Claude commits and Ishu pushes.
