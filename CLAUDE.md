@@ -39,8 +39,11 @@ Read this before building anything. These rules are binding for all future work.
   company in Contacted and only defers the follow-up reminder.
 - "Genuinely replied" has exactly ONE definition, `_genuine_reply_sql()` in
   `bq_handler.py`: an `email_log` row with `direction='received'`,
-  `entity_type='company'`, `classification != 'out_of_office'`. Every caller
-  uses that fragment. Never inline a second copy of the predicate.
+  `entity_type='company'`, and `classification NOT IN NON_REPLY_CLASSES`
+  (`out_of_office`, `bounce`). Every caller uses that fragment — the pipeline, the
+  Responded page, the follow-up queue AND the analytics ledger. Never inline a
+  second copy of the predicate: the analytics layer held its own version without
+  the filter, and that inflated the headline response rate with autoresponders.
 - The decision is `classify_reply_stage()` — a module-level PURE function, so it
   is testable without BigQuery. `reconcile_reply_stages()` is its only caller.
 - The Pipeline's Responded column and the Responded page MUST select on the same
