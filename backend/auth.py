@@ -37,8 +37,15 @@ ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").spl
 
 # /ch-watch/run is exempt from Google auth but guarded by its own shared
 # token (WATCH_TOKEN) — Cloud Scheduler cannot present a user session.
-EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run", "/email/deep-sync/run", "/investor-mine/run", "/investors/gcs-refill/run", "/diag/verify-email", "/diag/source-counts", "/diag/ch-match-audit", "/smartfill/run-by-number", "/email/ooo-backfill", "/admin/stage-rename", "/admin/archive/run", "/admin/backup/export", "/delivery/verify"}
-EXEMPT_PREFIXES = ("/ch-pdf/", "/diag/deep/", "/admin/archive/history/")  # diag is token-guarded inside the handler
+EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-oneoff/run", "/prequalify/run", "/email/deep-sync/run", "/investor-mine/run", "/investors/gcs-refill/run", "/diag/verify-email", "/diag/source-counts", "/diag/ch-match-audit", "/smartfill/run-by-number", "/email/ooo-backfill", "/admin/stage-rename", "/admin/archive/run", "/admin/backup/export", "/delivery/verify", "/admin/reply-rule/reconcile"}
+# Every prefix here MUST be token-guarded inside its handler (see
+# _require_token in main.py) — exempting a path skips sign-in entirely.
+# tests_auth_exempt.py enforces that pairing.
+# "/ch-pdf/" was REMOVED: it served a stored filing PDF to anyone who
+# guessed a company name, revealing which companies are in the pipeline. It
+# was exempt only because a plain <a href> cannot carry an auth header; the
+# frontend now fetches it via dealApi.openChFilingPdf and opens a blob.
+EXEMPT_PREFIXES = ("/diag/deep/", "/admin/archive/history/")
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────
 # Google ID tokens expire after 1 hour, which interrupted long bulk runs.

@@ -692,13 +692,22 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   </div>
                 </div>
                 <div className="cp-card">
-                  <a className="cp-chip-btn" style={{ textDecoration: 'none', display: 'inline-block' }}
-                    href={company.ch_pdf_path
-                      ? `${process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app'}/ch-pdf/${encodeURIComponent(company.name)}`
-                      : `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(company.ch_company_number)}/filing-history`}
-                    target="_blank" rel="noreferrer">
-                    {company.ch_pdf_path ? 'View filed accounts PDF' : 'View filings on Companies House'}
-                  </a>
+                  {/* Our own stored PDF goes through the authenticated fetch (see
+                      dealApi.openChFilingPdf); the Companies House register is
+                      public, so that stays an ordinary link. */}
+                  {company.ch_pdf_path ? (
+                    <button className="cp-chip-btn"
+                      onClick={() => dealApi.openChFilingPdf(company.name)
+                        .catch(e => alert(e.message))}>
+                      View filed accounts PDF
+                    </button>
+                  ) : (
+                    <a className="cp-chip-btn" style={{ textDecoration: 'none', display: 'inline-block' }}
+                      href={`https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(company.ch_company_number)}/filing-history`}
+                      target="_blank" rel="noreferrer">
+                      View filings on Companies House
+                    </a>
+                  )}
                 </div>
               </>
             ) : <p className="cp-empty">Not matched to a Companies House record yet — run SmartFill.</p>

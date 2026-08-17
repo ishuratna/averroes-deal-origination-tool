@@ -222,14 +222,15 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
                     {company.ch_pdf_path ? (
                       <div className="detail-row">
                         <span className="detail-label">Filed Accounts</span>
-                        <a
-                          href={`${process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app'}/ch-pdf/${encodeURIComponent(company.name)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        {/* Authenticated fetch, not a bare link: see
+                            dealApi.openChFilingPdf. */}
+                        <button
+                          onClick={() => dealApi.openChFilingPdf(company.name)
+                            .catch(e => alert(e.message))}
                           className="ch-pdf-link"
                         >
                           View CH Filing PDF
-                        </a>
+                        </button>
                       </div>
                     ) : company.ch_company_number ? (
                       <div className="detail-row">
@@ -1142,10 +1143,14 @@ export default function CompanyDrawer({ company, onClose, onStatusChange }: Comp
         .drawer-body :global(.detail-value.highlight) { color: #2563eb; font-weight: 700; }
         .drawer-body :global(.detail-link) { color: #2563eb; text-decoration: none; }
         .drawer-body :global(.detail-link:hover) { text-decoration: underline; }
+        /* Applied to both an <a> (the public Companies House register) and a
+           <button> (our stored PDF, fetched with auth), so it resets the button
+           defaults to keep the two looking identical. */
         .drawer-body :global(.ch-pdf-link) {
           font-size: 0.8rem; font-weight: 600; color: #2563eb; text-decoration: none;
           display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.6rem;
           border-radius: 6px; background: #eff6ff; transition: all 0.15s;
+          border: none; cursor: pointer; font-family: inherit; line-height: inherit;
         }
         .drawer-body :global(.ch-pdf-link:hover) { background: #dbeafe; }
 

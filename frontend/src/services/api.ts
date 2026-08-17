@@ -78,6 +78,26 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Open a stored Companies House filing PDF.
+  //
+  // Fetched through the authenticated layer and opened as a blob, NOT linked
+  // directly. A plain <a href> cannot send our auth header, which is why
+  // /ch-pdf/ used to be exempt from sign-in — leaving an endpoint that revealed
+  // which companies are in the pipeline to anyone who guessed a name. Fetching it
+  // here keeps the endpoint behind sign-in and still opens in a new tab.
+  async openChFilingPdf(name: string): Promise<void> {
+    const response = await apiFetch(`${API_BASE_URL}/ch-pdf/${encodeURIComponent(name)}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Could not load the filing PDF');
+    }
+    const url = URL.createObjectURL(await response.blob());
+    window.open(url, '_blank', 'noopener,noreferrer');
+    // Give the new tab time to load before releasing the object URL; revoking it
+    // immediately leaves a blank tab.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+
   // ── The reply rule ─────────────────────────────────────────────────────
   // Qualified = not emailed. Contacted = emailed, no genuine reply yet.
   // Responded = emailed and they replied. An out-of-office is not a reply.

@@ -4357,8 +4357,24 @@ async def ooo_backfill(request: Request,
 # the nightly email sync calls the same handler method, so there is exactly one
 # implementation. Meeting / DD / Offer / Won / Lost are never touched.
 
+def _require_token(request: Request) -> None:
+    """Guard for endpoints listed in auth.py EXEMPT_PATHS.
+
+    Exempting a path skips Google sign-in, so WITHOUT this the endpoint is open to
+    the internet. Every exempt path must call this. The two lists are a matched
+    pair: add to EXEMPT_PATHS, add this call, or the endpoint is either
+    unreachable from a terminal or unprotected. Getting that pairing wrong is the
+    single easiest way to expose a data-mutating endpoint in this codebase.
+    """
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+
+
 @app.post("/delivery/verify")
 async def delivery_verify(
+        request: Request,
         dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
         window_days: int = Query(30, description="Only judge sends inside the period the sync has scanned"),
         grace_hours: int = Query(12, description="Ignore sends newer than this — Gmail files to Sent with a lag")):
@@ -4371,12 +4387,15 @@ async def delivery_verify(
     Also classifies bounce messages in email_log as 'bounce', so a mailer-daemon
     report can never be counted as a genuine reply.
     """
+    _require_token(request)
     return _stream_json(lambda: _verify_delivery(
         bool(dry_run), max(1, min(window_days, 3650)), max(0, min(grace_hours, 240))))
 
 
-@app.post("/reply-rule/reconcile")
+@app.post("/reply-rule/reconcile")          # browser: Google sign-in (the UI button)
+@app.post("/admin/reply-rule/reconcile")    # terminal: WATCH_TOKEN (ops, sign-in exempt)
 async def reply_rule_reconcile(
+        request: Request,
         dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
         confirm: str = Query("", description="Comma-separated company names the user has agreed to move back")):
     """Reconcile Contacted/Responded against the email log.
@@ -4391,7 +4410,15 @@ async def reply_rule_reconcile(
                            records how it got there. NEVER moved silently. The UI
                            asks; a yes comes back through `confirm`, a no calls
                            /company/{name}/reply-exempt to pin it instead.
+
+    TWO PATHS, ONE HANDLER. The browser hits /reply-rule/reconcile and is covered
+    by Google sign-in. A terminal cannot hold a session, so the /admin/ alias is
+    exempt from sign-in and requires WATCH_TOKEN instead. Same function either
+    way — an ops copy of this logic would be a second implementation of the reply
+    rule and would eventually disagree with the button.
     """
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
     names = [n.strip() for n in (confirm or "").split(",") if n.strip()]
     out = bq_handler.reconcile_reply_stages(dry_run=bool(dry_run), confirm_names=names)
     return {

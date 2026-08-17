@@ -139,6 +139,29 @@ Read this before building anything. These rules are binding for all future work.
   interest, likely under NDA) lives in
   `draft_outreach_email`; change structure only there.
 
+## 6a. Auth: EXEMPT_PATHS and the token check are a matched pair
+
+- `auth.py` `EXEMPT_PATHS` / `EXEMPT_PREFIXES` skip Google sign-in, because
+  Cloud Scheduler and a terminal cannot hold a browser session. The guard then
+  lives INSIDE the handler: `_require_token(request)` in `main.py`.
+- Exempt without a token check = OPEN TO THE INTERNET. This happened:
+  `/delivery/verify` was exempted while its handler checked nothing, leaving an
+  endpoint that rewrites company stages callable by anyone.
+- Token check without exemption = unreachable from a terminal, and the failure
+  ("Sign in required") is indistinguishable from a genuine auth error.
+- `tests_auth_exempt.py` reads the live route table and the real handler source
+  and enforces BOTH directions. Public-by-design paths are an explicit,
+  documented allowlist in that test.
+- A missing route also returns "Sign in required", because the middleware runs
+  before routing. When a fresh endpoint says that, check the deploy first.
+- Never exempt a path just because the browser cannot send a header on it. That
+  is why `/ch-pdf/` was public and leaking which companies are in the pipeline;
+  the fix was `dealApi.openChFilingPdf` fetching it with auth and opening a blob,
+  not an exemption.
+- A UI action that ops also needs runs as TWO routes on ONE handler: the plain
+  path (session) and an `/admin/...` alias (token). Never a second copy of the
+  logic.
+
 ## 7. Verification before push (hard-learned)
 
 - `python3 -m compileall backend` (lazy imports hide f-string syntax errors),
