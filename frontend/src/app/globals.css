@@ -809,6 +809,7 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 /* ── Responded page ──────────────────────────────────────────────────────── */
 .rsp-load { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
 .rsp-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin-bottom: 1.1rem; }
+.rsp-group-empty { padding: 0.7rem 0.9rem; font-size: 0.76rem; color: #94a3b8; }
 .rsp-stat { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.7rem 0.85rem; }
 .rsp-stat-n { font-size: 1.35rem; font-weight: 800; color: #0f172a; line-height: 1.1; }
 .rsp-stat-l { font-size: 0.68rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.15rem; }

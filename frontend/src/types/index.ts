@@ -218,7 +218,11 @@ export const RESPONDED_QUEUES = [
   { key: 'track_b_assigned',          label: 'Assigned — call pending',  hint: 'An associate owns it and Email 4 has gone out.',                              tone: 'amber' },
   { key: 'track_a_call_done',         label: 'Track A — call happened',  hint: 'Moved past the first call with Bea.',                                         tone: 'teal'  },
   { key: 'track_b_call_done',         label: 'Track B — call happened',  hint: 'Moved past the associate call.',                                              tone: 'amber' },
-  { key: 'closed',                    label: 'Closed',                   hint: 'Killed or declined. Kept for the record.',                                    tone: 'grey'  },
+  // Always rendered, never hidden behind a toggle. A killed company keeps its
+  // Responded status (they DID reply; killing it is our decision, not a change
+  // of fact), so the Pipeline column still counts it. This section is what makes
+  // that reconcile on sight: live queues + Killed = the board's Responded count.
+  { key: 'closed',                    label: 'Killed',                   hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.', tone: 'grey' },
 ] as const;
 
 export interface RespondedCompany extends CompanyTarget {

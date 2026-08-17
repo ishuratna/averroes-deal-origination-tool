@@ -31,7 +31,6 @@ export default function RespondedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string>('');          // company currently being written
-  const [showClosed, setShowClosed] = useState(false);
   const [search, setSearch] = useState('');
   // Index into the flat visible list, so the profile's prev/next arrows walk
   // the same order the page shows.
@@ -99,8 +98,11 @@ export default function RespondedPage() {
   const assign = (c: RespondedCompany, owner: DealOwner | '') =>
     act(() => dealApi.setCompanyOwner(c.name, owner), c.name);
 
-  const visibleQueues = RESPONDED_QUEUES.filter(q =>
-    showClosed ? true : q.key !== 'closed');
+  // Every queue is always visible, Killed included. It used to hide behind a
+  // "Show closed" toggle, which made a kill look like a deletion and left the
+  // page total unable to reconcile with the Pipeline's Responded column at a
+  // glance. Live queues + Killed = the board's count, always on screen.
+  const visibleQueues = RESPONDED_QUEUES;
 
   // Flat list in the exact order rendered below, so the profile drawer's
   // prev/next moves through what the user is actually looking at.
@@ -160,6 +162,13 @@ export default function RespondedPage() {
                 <div className="rsp-stat-n">{liveTotal}</div>
                 <div className="rsp-stat-l">Live conversations</div>
               </div>
+              {/* Live + killed = the Pipeline's Responded-and-beyond count, by
+                  construction: both read the same status. Shown so the
+                  reconciliation is a glance, not an act of faith. */}
+              <div className="rsp-stat">
+                <div className="rsp-stat-n">{byQueue['closed']?.length || 0}</div>
+                <div className="rsp-stat-l">Killed</div>
+              </div>
             </div>
 
             <div className="rsp-load-panel">
@@ -187,19 +196,17 @@ export default function RespondedPage() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
-              <button
-                className={`rsp-chip ${showClosed ? 'on' : ''}`}
-                onClick={() => setShowClosed(v => !v)}
-              >
-                {showClosed ? 'Hiding nothing' : 'Show closed'}
-              </button>
             </div>
 
             {loading && !data && <div className="rsp-empty">Loading the queue…</div>}
 
             {visibleQueues.map(q => {
               const rows = byQueue[q.key] || [];
-              if (!rows.length) return null;
+              const isKilled = q.key === 'closed';
+              // Live queues disappear when empty; the Killed section is ALWAYS
+              // rendered, even at zero, so the reconciliation with the Pipeline
+              // count is visible rather than implied.
+              if (!rows.length && !isKilled) return null;
               const isTriage = q.key === 'needs_triage';
               const isAllocate = q.key === 'track_b_awaiting_wednesday';
               return (
@@ -209,6 +216,10 @@ export default function RespondedPage() {
                     <span className="rsp-group-n">{rows.length}</span>
                     <span className="rsp-group-hint">{q.hint}</span>
                   </div>
+                  {isKilled && !rows.length && (
+                    <div className="rsp-group-empty">Nothing killed. Every replied-to company above is live.</div>
+                  )}
+                  {rows.length > 0 && (
                   <table className="rsp-table">
                     <thead>
                       <tr>
@@ -231,7 +242,11 @@ export default function RespondedPage() {
                           <td>{displayStatus(c.status)}</td>
                           <td>{c.averroes_fit_score != null ? Number(c.averroes_fit_score).toFixed(1) : '—'}</td>
                           <td>{c.revenue_band || '—'}</td>
-                          <td className={(c.days_since_reply ?? 0) >= 14 ? 'rsp-stale' : ''}>
+                          {/* Red at 7 days, matching the agreed Responded reminder
+                              (their message last + 7 days) — this used to turn at
+                              14, so a reply could be overdue for a week while the
+                              page still showed it calm. Killed rows never redden. */}
+                          <td className={!isKilled && (c.days_since_reply ?? 0) >= 7 ? 'rsp-stale' : ''}>
                             {c.days_since_reply != null ? `${c.days_since_reply}d ago` : '—'}
                           </td>
                           <td><OwnerTag owner={c.owner} /></td>
@@ -268,16 +283,37 @@ export default function RespondedPage() {
                                   ))}
                                 </select>
                               )}
-                              {!isTriage && !isAllocate && (
-                                <select
-                                  className="rsp-assign"
-                                  value={c.owner || ''}
-                                  disabled={busy === c.name}
-                                  onChange={e => assign(c, e.target.value as DealOwner | '')}
-                                >
-                                  <option value="">Unassigned</option>
-                                  {DEAL_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                                </select>
+                              {!isTriage && !isAllocate && !isKilled && (
+                                <>
+                                  <select
+                                    className="rsp-assign"
+                                    value={c.owner || ''}
+                                    disabled={busy === c.name}
+                                    onChange={e => assign(c, e.target.value as DealOwner | '')}
+                                  >
+                                    <option value="">Unassigned</option>
+                                    {DEAL_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                  </select>
+                                  {/* A conversation can die at any point, not only at
+                                      triage: Bea can pass on a Thursday name, an
+                                      associate call can end it. Kill is therefore
+                                      available in every live queue. */}
+                                  <button className="rsp-btn kill" disabled={busy === c.name}
+                                          onClick={() => triage(c, 'kill')}
+                                          title="Close out. Stays in the Killed section below and in the Pipeline's Responded count.">
+                                    Kill
+                                  </button>
+                                </>
+                              )}
+                              {isKilled && (
+                                /* A kill is a tag, not a fact, so it is reversible.
+                                   Restore clears the track and the company flows
+                                   back into whichever queue the evidence puts it. */
+                                <button className="rsp-btn" disabled={busy === c.name}
+                                        onClick={() => triage(c, '')}
+                                        title="Undo the kill — returns to the live queues">
+                                  Restore
+                                </button>
                               )}
                             </div>
                           </td>
@@ -285,6 +321,7 @@ export default function RespondedPage() {
                       ))}
                     </tbody>
                   </table>
+                  )}
                 </section>
               );
             })}

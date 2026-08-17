@@ -1535,7 +1535,7 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
             ),
             calc AS (
                 SELECT t.name, t.status, t.contact_name, t.averroes_fit_score,
-                       t.action_bucket, NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note,
+                       t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note,
                        s.sent_at AS last_sent_at, s.subject AS sent_subject,
                        s.snippet AS sent_snippet, s.counterparty_email AS sent_to,
                        r.sent_at AS last_recv_at, r.subject AS recv_subject,
@@ -1584,7 +1584,12 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 -- are excluded: intentional silence must never nag.
                 (owed
                  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), last_recv_at, DAY) >= @reply_days
-                 AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close'))
+                 -- Deliberate silence never nags: parked action buckets AND a
+                 -- kill. A killed company keeps status Responded (they did
+                 -- reply; killing is our decision), so without this it would
+                 -- reappear here every 7 days forever.
+                 AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close')
+                 AND IFNULL(track, '') != 'kill')
                 OR
                 -- THE BALL IS WITH THEM: silence since our email, reminder due.
                 -- Contacted = 14 days, overridden by the out-of-office rule above.

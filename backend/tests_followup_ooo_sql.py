@@ -42,7 +42,7 @@ last_recv AS (
     ) WHERE rn = 1
 ),
 calc AS (
-    SELECT t.name, t.action_bucket, NULLIF(t.ooo_until, '') AS ooo_until,
+    SELECT t.name, t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until,
            s.sent_at AS last_sent_at, r.sent_at AS last_recv_at,
            CASE WHEN TRY_CAST(NULLIF(t.ooo_until, '') AS DATE) IS NOT NULL
                      AND DATE_DIFF('day', CAST(s.sent_at AS DATE),
@@ -63,7 +63,8 @@ SELECT name,
 FROM (SELECT *, last_recv_at IS NOT NULL AND last_recv_at > last_sent_at AS owed FROM calc)
 WHERE (
     (owed AND DATE_DIFF('day', last_recv_at, TIMESTAMP '{NOW}') >= {REPLY_DAYS}
-       AND COALESCE(action_bucket,'') NOT IN ('not_fit_no_respond','declined_close'))
+       AND COALESCE(action_bucket,'') NOT IN ('not_fit_no_respond','declined_close')
+       AND COALESCE(track,'') != 'kill')
     OR (NOT owed AND TIMESTAMP '{NOW}' >= due_at)
 )
 ORDER BY name
@@ -72,15 +73,15 @@ ORDER BY name
 db = duckdb.connect()
 db.execute("""
 CREATE TABLE targets (name VARCHAR, status VARCHAR, source VARCHAR,
-                      ooo_until VARCHAR, action_bucket VARCHAR);
+                      ooo_until VARCHAR, action_bucket VARCHAR, track VARCHAR);
 CREATE TABLE email_log (entity_name VARCHAR, entity_type VARCHAR, direction VARCHAR,
                         subject VARCHAR, snippet VARCHAR, counterparty_email VARCHAR,
                         sent_at TIMESTAMP, classification VARCHAR);
 """)
 
 
-def company(name, ooo=None, status="Contacted", source="Conference", bucket=None):
-    db.execute("INSERT INTO targets VALUES (?,?,?,?,?)", [name, status, source, ooo, bucket])
+def company(name, ooo=None, status="Contacted", source="Conference", bucket=None, track=None):
+    db.execute("INSERT INTO targets VALUES (?,?,?,?,?,?)", [name, status, source, ooo, bucket, track])
 
 
 def mail(name, direction, when, cls=None):
@@ -139,6 +140,11 @@ mail("NeverAnsweredThem", "received", D(2026, 7, 25))
 #     would look like the ball is with us, and we would chase a dead mailbox.
 company("Bounced"); mail("Bounced", "sent", D(2026, 7, 20))
 mail("Bounced", "received", D(2026, 7, 20, 1), cls="bounce")
+# 15. A KILLED company never nags, however long its reply sits unanswered. It
+#     keeps status Responded (they did reply; the kill is our decision), so
+#     without the track filter it would reappear every run forever.
+company("Killed", status="Responded", track="kill")
+mail("Killed", "sent", D(2026, 7, 20)); mail("Killed", "received", D(2026, 7, 25))
 
 rows = {r[0]: {"type": r[1], "threshold": r[2], "due_on": r[3]} for r in db.execute(SQL).fetchall()}
 
@@ -174,6 +180,10 @@ chk("...as we_owe_reply", rows.get("ReplyDay7", {}).get("type"), "we_owe_reply")
 chk("never answered them since their reply shows",
     "NeverAnsweredThem" in rows, True)
 chk("...also as we_owe_reply", rows.get("NeverAnsweredThem", {}).get("type"), "we_owe_reply")
+
+print()
+print("── A kill silences the reminder for good ──")
+chk("a killed company never appears", "Killed" in rows, False)
 
 print()
 print("── A bounce is not a reply ──")
