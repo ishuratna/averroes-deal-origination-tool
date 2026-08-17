@@ -3893,6 +3893,9 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
             "message": ("Nothing was changed. Re-run with dry_run=0 to apply."),
         }
 
+    # About to clear reply state and pull stages back on real rows.
+    archive = _archive_before("out-of-office backfill")
+
     marked = bq_handler.mark_emails_classification(to_mark, "out_of_office") if to_mark else 0
 
     applied, pulled = [], []
@@ -3933,6 +3936,7 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
     return {
         "status": "Success",
         "dry_run": False,
+        "archive_snapshot": archive,
         "scanned_messages": len(rows),
         "autoresponders_found": len(hits),
         "messages_marked": marked,
@@ -3944,6 +3948,81 @@ def _ooo_backfill(dry_run: bool, ai_budget: int, limit: int) -> dict:
                     f"marked {marked}, updated {len(applied)} companies, pulled {len(pulled)} back "
                     f"out of Responded, plus {len(stale)} with no reply on record at all."),
     }
+
+
+# ── Append-only archive + off-site backup ────────────────────────────────────
+# The live tables are mutable by design; these two are how the 12,000 companies
+# and their enrichment survive a bad job or a lost dataset. See
+# services/archive_service.py for the doctrine: the archive is WRITE-ONLY for
+# the application and is never read to decide what is currently true.
+
+BACKUP_BUCKET = os.getenv("BACKUP_BUCKET", "averroes-deal-archive")
+
+
+@app.post("/admin/archive/run")
+async def archive_run(request: Request,
+                      dry_run: int = Query(0, description="1 = report what would be appended, write nothing"),
+                      force: int = Query(0, description="1 = re-archive every row, not just changed ones"),
+                      note: str = Query("", description="Why this snapshot was taken")):
+    """Append the current state of every changed company to targets_archive.
+
+    Appends only. Nothing existing is ever modified or removed. Run it before
+    anything destructive, and on a daily schedule.
+    """
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    from services.archive_service import archive_targets
+    return _stream_json(lambda: archive_targets(
+        bq_handler, change_note=note or "manual run",
+        force=bool(force), dry_run=bool(dry_run)))
+
+
+@app.post("/admin/backup/export")
+async def backup_export(request: Request,
+                        bucket: str = Query("", description="Override the backup bucket"),
+                        prefix: str = Query("bigquery", description="Path prefix inside the bucket")):
+    """Export every table to the backup bucket as gzipped newline JSON.
+
+    Protects against losing BigQuery itself, which the archive table cannot.
+    Dated, timestamped paths mean an export can never overwrite an earlier one.
+    """
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    from services.archive_service import export_tables_to_gcs
+    target = bucket or BACKUP_BUCKET
+    return _stream_json(lambda: export_tables_to_gcs(bq_handler, target, prefix))
+
+
+@app.get("/admin/archive/history/{company_name}")
+async def archive_history(company_name: str, request: Request,
+                          limit: int = Query(50, description="Max versions to return")):
+    """Every archived version of one company, newest first, with a field-level
+    diff against the version before it."""
+    token = request.headers.get("X-Watch-Token", "") or request.query_params.get("token", "")
+    expected = os.getenv("WATCH_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    from services.archive_service import company_history
+    versions = company_history(bq_handler, company_name, limit=limit)
+    return {"company": company_name, "versions_held": len(versions), "history": versions}
+
+
+def _archive_before(note: str) -> dict:
+    """Snapshot before a destructive rewrite. Best-effort: a failure here must
+    not block the migration, but it IS reported so a migration that ran without
+    a restore point behind it is never silent."""
+    try:
+        from services.archive_service import archive_targets
+        res = archive_targets(bq_handler, change_note=f"pre-migration: {note}", force=True)
+        return {"ok": True, "appended": res.get("appended"), "note": res.get("message")}
+    except Exception as e:
+        logger.error(f"[Archive] pre-migration snapshot FAILED for '{note}': {e}")
+        return {"ok": False, "error": str(e),
+                "warning": "This migration ran WITHOUT a fresh archive snapshot behind it."}
 
 
 def _stage_rename(dry_run: bool) -> dict:
@@ -4006,6 +4085,10 @@ def _stage_rename(dry_run: bool) -> dict:
                         "promoted to Responded."),
         }
 
+    # Every stage value is about to be rewritten. Snapshot first so the
+    # previous state of all 12,000 rows is preserved before anything moves.
+    archive = _archive_before("stage rename (Engaged -> Contacted -> Responded)")
+
     steps = []
     # ── STEP 1: they-replied moves out of the way FIRST ──
     for label, sql in [
@@ -4042,6 +4125,7 @@ def _stage_rename(dry_run: bool) -> dict:
     return {
         "status": "Success",
         "dry_run": False,
+        "archive_snapshot": archive,
         "before": before,
         "steps": steps,
         "after": after,
