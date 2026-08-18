@@ -4925,6 +4925,27 @@ async def set_reply_exempt(company_name: str,
     return {"status": "Success", "company": company_name, "reply_exempt": bool(on)}
 
 
+@app.get("/email/sync/run")   # GET alias so a scheduler URL is enough
+@app.post("/email/sync/run")
+async def email_sync_run(request: Request,
+                         days: int = Query(7, description="How many days back to scan")):
+    """The 6 AM sync: same pipeline as the UI button, token-gated for Cloud
+    Scheduler (which cannot hold a browser session).
+
+    One run does the whole morning routine in order: read the mailbox, log new
+    messages, classify replies, verify delivery (bounces classified BEFORE the
+    reply rule reads the log), apply the reply rule in both directions, detect
+    out-of-office deferrals. By the time anyone opens the board, yesterday's
+    replies are already reflected in it.
+
+    A 7-day window is plenty for a daily run (each scan overlaps the last six)
+    while keeping the IMAP pass fast; the delivery check widens itself to 30
+    days internally.
+    """
+    _require_token(request)
+    return await sync_emails(days=max(1, min(days, 365)))
+
+
 @app.post("/email/sync")
 async def sync_emails(days: int = Query(30, description="How many days back to scan"),
                       deep: bool = Query(False, description="Search per known contact — captures full history from the start")):
