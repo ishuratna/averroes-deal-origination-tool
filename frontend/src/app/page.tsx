@@ -642,38 +642,26 @@ function HomeInner() {
                               </div>
                             )}
 
-                            {/* Row 3 — financial snapshot */}
+                            {/* Row 3 — financial snapshot. One quiet line, not a
+                                dashboard: the card is a queue item, the profile
+                                is where analysis lives. */}
                             {(() => {
                               const revM = company.revenue_y1 ? company.revenue_y1 / 1e6 : company.revenue_m || null;
                               const revEst = !revM && company.revenue_estimate_m ? company.revenue_estimate_m : null;
                               const team = company.employees || company.employees_ch || null;
-                              if (!revM && !revEst && !company.estimated_ebitda && !team) return null;
-                              return (
-                                <div className="kc-metrics">
-                                  {(revM || revEst) && (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">Revenue</span>
-                                      <span className="kc-metric-value">{revM ? `£${revM.toFixed(1)}M` : `~£${revEst!.toFixed(1)}M`}{revEst ? <em className="kc-est"> est.</em> : null}</span>
-                                    </span>
-                                  )}
-                                  {company.estimated_ebitda ? (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">EBITDA</span>
-                                      <span className="kc-metric-value">&pound;{company.estimated_ebitda}M</span>
-                                    </span>
-                                  ) : null}
-                                  {team ? (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">Team</span>
-                                      <span className="kc-metric-value">{team}</span>
-                                    </span>
-                                  ) : null}
-                                </div>
-                              );
+                              const parts: string[] = [];
+                              if (revM) parts.push(`£${revM.toFixed(1)}M rev`);
+                              else if (revEst) parts.push(`~£${revEst.toFixed(1)}M rev est.`);
+                              if (company.estimated_ebitda) parts.push(`£${company.estimated_ebitda}M EBITDA`);
+                              if (team) parts.push(`${team} team`);
+                              return parts.length ? <div className="kc-fin">{parts.join(' · ')}</div> : null;
                             })()}
 
-                            {/* Row 4 — contact */}
-                            {sanitizeContact(company.contact_name) && (
+                            {/* Row 4 — contact. Not shown on Contacted cards: the
+                                outreach already went to this person, so the name
+                                repeats what the stage says while the reply is
+                                what actually matters. Profile has the details. */}
+                            {company.status !== 'Contacted' && sanitizeContact(company.contact_name) && (
                               <div className="kc-contact-row">
                                 <span className="kc-avatar">{sanitizeContact(company.contact_name)!.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase()}</span>
                                 <span className="kc-contact">{sanitizeContact(company.contact_name)}</span>
@@ -713,13 +701,21 @@ function HomeInner() {
                                   catch (e: any) { alert(e?.message || 'IC memo generation failed'); }
                                   finally { setMemoBusy(''); }
                                 }}>
-                                {memoBusy === company.name ? 'Generating memo…' : company.ic_memo ? '📄 IC Memo' : 'Generate IC Memo'}
+                                {memoBusy === company.name ? 'Generating memo…' : company.ic_memo ? 'IC Memo' : 'Generate IC Memo'}
                               </button>
                             )}
 
-                            {/* Row 6 — secondary actions */}
+                            {/* Row 6 — secondary actions.
+                                Contacted cards carry NO stage controls at all:
+                                Contacted -> Responded is the reply rule's move
+                                (a genuine reply, detected by the sync), so a
+                                manual advance would only create a row the rule
+                                immediately disputes. And losing/killing happens
+                                after a reply, from the Responded page. The one
+                                thing a human does here is follow up, which is
+                                the primary button above. */}
                             <div className="kc-actions">
-                              {nextStage && (
+                              {nextStage && company.status !== 'Contacted' && (
                                 <button
                                   className="kc-advance"
                                   onClick={() => handleAdvanceStage(company.name, nextStage)}
@@ -732,11 +728,13 @@ function HomeInner() {
                               <button className="kc-note" onClick={() => setNoteModal({ company: company.name })}>
                                 + Note
                               </button>
-                              <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating} title="Mark Lost">
-                                &times;
-                              </button>
+                              {company.status !== 'Contacted' && (
+                                <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating} title="Mark Lost">
+                                  &times;
+                                </button>
+                              )}
                               <button className="kc-remove" onClick={() => handleRemoveFromPipeline(company.name)} disabled={isUpdating} title="Remove from pipeline">
-                                &#128465;
+                                Remove
                               </button>
                             </div>
                           </div>
@@ -1249,18 +1247,23 @@ function HomeInner() {
           overflow-y: auto;
         }
 
+        /* CARD DESIGN PRINCIPLE: a card is a queue item, not a dashboard. One
+           identity line, one quiet meta line, badges only where they change a
+           decision, one primary action. Typography carries the hierarchy
+           (weight and colour, not size jumps), and everything non-essential
+           lives in the profile, one click away. */
         .kanban-card {
           background: #fff;
           border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: 0.9rem 0.95rem 0.75rem;
+          border-radius: 8px;
+          padding: 0.65rem 0.75rem 0.55rem;
           cursor: grab;
-          transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+          transition: box-shadow 0.15s, border-color 0.15s;
           user-select: none;
           box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
-        .kanban-card:hover { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08); border-color: #cbd5e1; transform: translateY(-1px); }
-        .kanban-card.dragging { opacity: 0.5; transform: rotate(2deg); }
+        .kanban-card:hover { box-shadow: 0 3px 10px rgba(15, 23, 42, 0.07); border-color: #cbd5e1; }
+        .kanban-card.dragging { opacity: 0.5; }
 
         .skeleton-kanban { height: 120px; background: #e2e8f0; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -1268,15 +1271,15 @@ function HomeInner() {
         .kc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.4rem; }
         .kc-header-badges { display: flex; gap: 0.3rem; align-items: center; flex-shrink: 0; }
         .kc-name {
-          font-size: 0.9rem;
-          font-weight: 800;
+          font-size: 0.82rem;
+          font-weight: 700;
           color: #0f172a;
           background: none;
           border: none;
           padding: 0;
           cursor: pointer;
           text-align: left;
-          line-height: 1.25;
+          line-height: 1.3;
           letter-spacing: -0.01em;
         }
         .kc-name:hover { color: #2563eb; }
@@ -1286,7 +1289,10 @@ function HomeInner() {
         .kanban-card.stale { border-left: 3px solid #dc2626; }
         .kanban-card.test-card { background: #fffbeb; border-color: #f59e0b; }
 
-        .kc-meta { font-size: 0.68rem; color: #94a3b8; font-weight: 700; margin: 0.15rem 0 0; text-transform: uppercase; letter-spacing: 0.06em; }
+        /* Sector and city: sentence case, small and grey. The uppercase
+           letterspaced treatment shouted for attention that a location line
+           has not earned. */
+        .kc-meta { font-size: 0.62rem; color: #94a3b8; font-weight: 500; margin: 0.1rem 0 0; }
 
         .kc-badge-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
         .kc-fit-badge { font-size: 0.62rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; color: white; letter-spacing: 0.02em; }
@@ -1298,19 +1304,10 @@ function HomeInner() {
         .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
         .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
 
-        .kc-metrics {
-          display: flex;
-          gap: 0;
-          margin-top: 0.6rem;
-          padding: 0.45rem 0;
-          border-top: 1px solid #f1f5f9;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .kc-metric { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 0.6rem; border-left: 1px solid #f1f5f9; }
-        .kc-metric:first-child { padding-left: 0; border-left: none; }
-        .kc-metric-label { font-size: 0.58rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.1rem; }
-        .kc-metric-value { font-size: 0.84rem; font-weight: 800; color: #0f172a; white-space: nowrap; }
-        .kc-est { font-size: 0.62rem; color: #94a3b8; font-weight: 600; font-style: normal; }
+        /* Financials as one quiet line ("£4.2M rev · 38 team") instead of a
+           three-column mini-dashboard with labels. Same information, a third
+           of the height, and the numbers stop competing with the name. */
+        .kc-fin { font-size: 0.68rem; color: #475569; font-weight: 600; margin-top: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         .kc-contact-row { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.55rem; }
         .kc-avatar {
@@ -1321,10 +1318,10 @@ function HomeInner() {
         .kc-contact { font-size: 0.74rem; color: #475569; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .kc-outreach {
-          display: block; width: 100%; margin-top: 0.6rem;
+          display: block; width: 100%; margin-top: 0.5rem;
           background: transparent; border: 1px solid #d97706; color: #d97706;
-          padding: 0.35rem 0.5rem; border-radius: 6px;
-          font-size: 0.7rem; font-weight: 800; cursor: pointer; text-align: center;
+          padding: 0.28rem 0.5rem; border-radius: 6px;
+          font-size: 0.66rem; font-weight: 700; cursor: pointer; text-align: center;
           transition: background 0.15s, color 0.15s;
         }
         .kc-outreach:hover { background: #d97706; color: #fff; }
@@ -1333,16 +1330,21 @@ function HomeInner() {
         .kc-outreach.sent { border-color: #bbf7d0; color: #16a34a; background: #f0fdf4; }
         .kc-outreach.sent:hover { background: #dcfce7; }
 
-        .kc-actions { display: flex; gap: 0.35rem; align-items: center; margin-top: 0.5rem; }
+        /* Secondary actions sit quiet until the card is hovered: they are
+           always available, never shouting. justify-content keeps the row
+           right-aligned on Contacted cards, where + Note and Remove are all
+           that remains. */
+        .kc-actions { display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end; margin-top: 0.45rem; opacity: 0.55; transition: opacity 0.15s; }
+        .kanban-card:hover .kc-actions { opacity: 1; }
         .kc-advance {
           flex: 1;
           background: none;
           border: none;
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           font-weight: 700;
           cursor: pointer;
           text-align: left;
-          padding: 0.2rem 0;
+          padding: 0.15rem 0;
         }
         .kc-advance:hover { text-decoration: underline; }
         .kc-advance:disabled { opacity: 0.4; cursor: wait; }
@@ -1371,8 +1373,9 @@ function HomeInner() {
         }
         .kc-lost:hover { border-color: #ef4444; color: #ef4444; }
         .kc-remove {
-          background: none; border: 1px solid #e2e8f0; color: #cbd5e1;
-          border-radius: 4px; padding: 0.2rem 0.35rem; font-size: 0.7rem; cursor: pointer;
+          background: none; border: 1px solid #e2e8f0; color: #94a3b8;
+          border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.62rem;
+          font-weight: 600; cursor: pointer;
         }
         .kc-remove:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
 
