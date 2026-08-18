@@ -59,8 +59,16 @@ export default function OutreachModal({
     setDraft(null);
     setSent(false);
     if (mode === 'compose') {
-      // Blank on purpose: mid-conversation, the tool has no business guessing.
-      setDraft({ to: company.contact_email || '', subject: '', body: '', company: company.name });
+      // Recipient and subject come from the conversation itself: the address
+      // their last genuine reply came FROM (contact_email can lag it when a
+      // founder answers from a personal address), threaded as Re: under their
+      // last subject. Only the body is blank — the words are Ishu's.
+      setLoading(true);
+      dealApi.getComposeDraft(company.name)
+        .then(d => setDraft({ to: d.to || company.contact_email || '', subject: d.subject || '',
+                              body: '', company: company.name }))
+        .catch(() => setDraft({ to: company.contact_email || '', subject: '', body: '', company: company.name }))
+        .finally(() => setLoading(false));
       return;
     }
     if (mode === 'followup') {

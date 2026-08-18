@@ -109,6 +109,18 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Compose (Responded and beyond): recipient and subject come from the
+  // CONVERSATION — the address their last genuine reply came from, threaded
+  // under its subject. Body stays blank; only Ishu knows what to say next.
+  async getComposeDraft(name: string): Promise<{ to: string; subject: string; body: string }> {
+    const response = await apiFetch(`${API_BASE_URL}/outreach/compose-draft/${encodeURIComponent(name)}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to load the compose draft');
+    }
+    return await response.json();
+  },
+
   // ── The reply rule ─────────────────────────────────────────────────────
   // Qualified = not emailed. Contacted = emailed, no genuine reply yet.
   // Responded = emailed and they replied. An out-of-office is not a reply.

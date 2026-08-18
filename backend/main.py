@@ -3552,6 +3552,52 @@ async def outreach_followup_draft(company_name: str):
     return result
 
 
+@app.get("/outreach/compose-draft/{company_name}")
+async def outreach_compose_draft(company_name: str):
+    """Pre-fill for the blank compose (Responded and beyond): the CONVERSATION
+    decides the recipient and the subject, not the stored contact.
+
+    * To: the address their latest genuine reply came FROM. Founders often
+      answer from a personal or direct address after we wrote to a shared
+      inbox, and replying anywhere else forks the thread. Falls back to the
+      stored contact_email when no reply is on record (reply-exempt companies).
+    * Subject: Re: their latest message's subject, so the reply threads under
+      what they actually said. Falls back to the original outreach subject.
+    * Body: blank on purpose. Mid-conversation, the tool has no business
+      guessing the words.
+    """
+    company_data = {"name": company_name}
+    for c in bq_handler.get_universe():
+        if c.get("name") == company_name:
+            company_data = c
+            break
+
+    to_addr = company_data.get("contact_email") or ""
+    subject = (company_data.get("outreach_draft_subject") or "").strip()
+    try:
+        from google.cloud import bigquery as bq_lib
+        log = f"{bq_handler.project_id}.{bq_handler.dataset_id}.email_log"
+        excluded = ", ".join(f"'{c}'" for c in bq_handler.NON_REPLY_CLASSES)
+        rows = bq_handler._run_query(f"""
+            SELECT counterparty_email, subject FROM `{log}`
+            WHERE entity_type = 'company' AND entity_name = @name
+              AND direction = 'received'
+              AND IFNULL(classification, '') NOT IN ({excluded})
+            ORDER BY sent_at DESC LIMIT 1
+        """, params=[bq_lib.ScalarQueryParameter("name", "STRING", company_name)])
+        if rows:
+            to_addr = (rows[0].get("counterparty_email") or "").strip() or to_addr
+            subject = (rows[0].get("subject") or "").strip() or subject
+    except Exception as e:
+        logger.warning(f"compose-draft log read failed for {company_name} (non-fatal): {e}")
+
+    if subject and not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    if company_data.get("source") == "Internal Test":
+        to_addr = TEST_RECIPIENT
+    return {"to": to_addr, "subject": subject, "body": "", "company": company_name}
+
+
 @app.post("/outreach/send")
 async def send_outreach(req: OutreachSendRequest):
     """Send an outreach email via Gmail SMTP."""
