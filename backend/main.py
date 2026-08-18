@@ -3458,19 +3458,96 @@ async def draft_outreach(company_name: str):
     return result
 
 
+# ── The send is the truth about the contact ──────────────────────────────────
+# Ishu double-checks every outreach before sending and sometimes corrects the
+# recipient address or the name in the greeting. Those corrections are the most
+# reliable contact data the system ever sees: a human verified them at the
+# moment of sending. So the send ADOPTS them — the stored contact follows what
+# was actually sent, rather than the correction living only in one email.
+
+_GREETING_RE = re.compile(
+    r"^\s*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))[\s,]+"
+    r"([A-Z][\w'’-]+(?:\s+[A-Z][\w'’-]+)?)\s*[,!.—-]?\s*$",
+    re.IGNORECASE)
+
+# Greeting words that are not a person. "Hi there," must never become a contact.
+_NOT_A_NAME = {"there", "team", "all", "both", "everyone", "folks", "guys",
+               "sir", "madam", "friend", "friends", "hiring", "support", "sales"}
+
+
+def greeting_name(body: str) -> str:
+    """The person the email actually addresses, read from its first line.
+
+    Pure and conservative: returns '' unless the first non-empty line is a
+    recognisable greeting naming a plausible person. A wrong '' costs nothing
+    (no update happens); a wrong NAME would corrupt a verified contact, so
+    every doubtful shape returns ''.
+    """
+    for line in (body or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _GREETING_RE.match(line)
+        if not m:
+            return ""            # first real line is not a greeting: stop, never scan deeper
+        name = m.group(1).strip()
+        # IGNORECASE makes the greeting words match in any case, but it also
+        # makes [A-Z] match lowercase, so capitalisation must be re-checked
+        # here: "hi again," is not addressed to a Mr Again.
+        if not name[:1].isupper():
+            return ""
+        if name.lower() in _NOT_A_NAME:
+            return ""
+        return name
+    return ""
+
+
+def contact_adoption(stored_email: str, stored_name: str,
+                     sent_to: str, body_name: str,
+                     is_test: bool = False, bounced_email: str = "") -> dict:
+    """What the send teaches us about the contact. Pure, so it is testable.
+
+    Returns {"email": new_or_None, "name": new_or_None}.
+
+      * EMAIL: the address actually sent to wins whenever it differs. Except the
+        Internal Test row (its recipient is force-overridden to the test inbox,
+        which says nothing about the real contact) and an address already known
+        to bounce (a dead address must never be re-adopted).
+      * NAME: the greeting wins only when it names a DIFFERENT person. A first
+        name matching the stored contact's first name is the same person, and
+        keeping the stored full name preserves the surname the greeting lacks.
+    """
+    out = {"email": None, "name": None}
+    if is_test:
+        return out
+    to = (sent_to or "").strip().lower()
+    if to and to != (stored_email or "").strip().lower() \
+            and to != (bounced_email or "").strip().lower():
+        out["email"] = to
+    if body_name:
+        stored_first = ((stored_name or "").strip().split() or [""])[0].lower()
+        new_first = body_name.strip().split()[0].lower()
+        if new_first and new_first != stored_first:
+            out["name"] = body_name.strip()
+    return out
+
+
 @app.post("/outreach/send")
 async def send_outreach(req: OutreachSendRequest):
     """Send an outreach email via Gmail SMTP."""
     # Internal test company: force the recipient to the test inbox, even if
     # the To field was edited — a test email must never reach a real founder.
     to_addr = req.to
-    # Read the stage BEFORE the send so the status_change below can record what it
-    # moved from. Same pass as the test-recipient check, so no extra query.
+    # Read the stage and the stored contact BEFORE the send, in one pass: the
+    # status_change needs the old stage, and contact adoption below needs the
+    # stored contact to compare the actually-sent details against.
     prev_status = ""
+    stored = {}
     if req.company_name:
         try:
             for c in bq_handler.get_universe():
                 if c.get("name") == req.company_name:
+                    stored = c
                     prev_status = c.get("status") or ""
                     if c.get("source") == "Internal Test" and to_addr != TEST_RECIPIENT:
                         logger.info(f"Test company send: recipient '{to_addr}' overridden to {TEST_RECIPIENT}")
@@ -3505,6 +3582,39 @@ async def send_outreach(req: OutreachSendRequest):
     except Exception as e:
         logger.warning(f"Failed to update status after outreach: {e}")
 
+    # Adopt Ishu's pre-send corrections as the stored contact. He verifies the
+    # address and the greeting before every send, so what was ACTUALLY sent is
+    # better contact data than what the waterfall guessed. Never for the test
+    # row, and a known-bounced address is never re-adopted.
+    if req.company_name and stored:
+        try:
+            adopt = contact_adoption(
+                stored.get("contact_email") or "", stored.get("contact_name") or "",
+                req.to or "", greeting_name(req.body or ""),
+                is_test=stored.get("source") == "Internal Test",
+                bounced_email=stored.get("bounced_email") or "")
+            sets, params, changes = [], [], []
+            if adopt["email"]:
+                sets.append("contact_email = @ce")
+                params.append(bq_lib.ScalarQueryParameter("ce", "STRING", adopt["email"]))
+                changes.append(f"email {stored.get('contact_email') or '(none)'} -> {adopt['email']}")
+            if adopt["name"]:
+                sets.append("contact_name = @cn")
+                params.append(bq_lib.ScalarQueryParameter("cn", "STRING", adopt["name"]))
+                changes.append(f"name {stored.get('contact_name') or '(none)'} -> {adopt['name']}")
+            if sets:
+                params.append(bq_lib.ScalarQueryParameter("name", "STRING", req.company_name))
+                bq_handler.client.query(
+                    f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+                bq_handler.add_activity_note(
+                    req.company_name,
+                    f"Contact adopted from the send ({', '.join(changes)}): what was "
+                    f"actually sent is verified contact data.",
+                    created_by="outreach-send")
+        except Exception as e:
+            logger.warning(f"Contact adoption failed for {req.company_name} (non-fatal): {e}")
+
     # Activity log: BOTH rows, and both matter.
     #
     # The note is for a human reading the outreach tab. The status_change is for
@@ -3526,6 +3636,94 @@ async def send_outreach(req: OutreachSendRequest):
         except Exception as e:
             logger.warning(f"Failed to log send activity: {e}")
     return result
+
+
+@app.post("/admin/contacts/sync-from-sends")
+async def contacts_sync_from_sends(request: Request,
+                                   dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
+    """Retro-apply the send-time contact rule to everything already sent.
+
+    Same rule the send path now applies live (contact_adoption): the LATEST
+    outbound email per company is a human-verified statement of who the contact
+    is, so the stored contact_email follows its To address and contact_name
+    follows its greeting. Corrections made by hand before this rule existed are
+    recovered from email_log rather than lost.
+
+    Skips the Internal Test row and never re-adopts a known-bounced address.
+    Defaults to a PREVIEW listing every change it would make.
+    """
+    _require_token(request)
+
+    def _run():
+        log = f"{bq_handler.project_id}.{bq_handler.dataset_id}.email_log"
+        rows = bq_handler._run_query(f"""
+            WITH latest_sent AS (
+                SELECT * EXCEPT(rn) FROM (
+                    SELECT entity_name, counterparty_email, snippet, sent_at,
+                           ROW_NUMBER() OVER (PARTITION BY entity_name
+                                              ORDER BY sent_at DESC) AS rn
+                    FROM `{log}`
+                    WHERE entity_type = 'company' AND direction = 'sent'
+                ) WHERE rn = 1
+            )
+            SELECT t.name, IFNULL(t.contact_email, '') AS contact_email,
+                   IFNULL(t.contact_name, '') AS contact_name,
+                   IFNULL(t.bounced_email, '') AS bounced_email,
+                   IFNULL(t.source, '') AS source,
+                   s.counterparty_email AS sent_to, s.snippet,
+                   CAST(s.sent_at AS STRING) AS sent_at
+            FROM latest_sent s
+            JOIN `{bq_handler.table_id}` t ON t.name = s.entity_name
+            WHERE t.hidden_at IS NULL
+        """)
+
+        plan = []
+        for r in rows:
+            adopt = contact_adoption(
+                r["contact_email"], r["contact_name"],
+                r["sent_to"] or "", greeting_name(r["snippet"] or ""),
+                is_test=r["source"] == "Internal Test",
+                bounced_email=r["bounced_email"])
+            if adopt["email"] or adopt["name"]:
+                plan.append({"name": r["name"], "sent_at": r["sent_at"],
+                             "email_from": r["contact_email"], "email_to": adopt["email"],
+                             "name_from": r["contact_name"], "name_to": adopt["name"]})
+
+        if dry_run:
+            return {"status": "Preview", "dry_run": True,
+                    "companies_with_sends": len(rows), "would_update": len(plan),
+                    "changes": sorted(plan, key=lambda p: p["name"]),
+                    "message": "Nothing was changed. Re-run with dry_run=0 to apply."}
+
+        from google.cloud import bigquery as bq_lib
+        applied = []
+        for p in plan:
+            try:
+                sets, params, changes = [], [], []
+                if p["email_to"]:
+                    sets.append("contact_email = @ce")
+                    params.append(bq_lib.ScalarQueryParameter("ce", "STRING", p["email_to"]))
+                    changes.append(f"email {p['email_from'] or '(none)'} -> {p['email_to']}")
+                if p["name_to"]:
+                    sets.append("contact_name = @cn")
+                    params.append(bq_lib.ScalarQueryParameter("cn", "STRING", p["name_to"]))
+                    changes.append(f"name {p['name_from'] or '(none)'} -> {p['name_to']}")
+                params.append(bq_lib.ScalarQueryParameter("name", "STRING", p["name"]))
+                bq_handler.client.query(
+                    f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+                bq_handler.add_activity_note(
+                    p["name"],
+                    f"Contact retro-synced from the last outreach actually sent "
+                    f"({', '.join(changes)}).", created_by="contact-sync")
+                applied.append(p["name"])
+            except Exception as e:
+                logger.warning(f"[Contact sync] {p['name']} failed: {e}")
+        return {"status": "Success", "dry_run": False,
+                "companies_with_sends": len(rows), "updated": applied,
+                "message": f"Updated {len(applied)} contacts from what was actually sent."}
+
+    return _stream_json(_run)
 
 
 # ── Deal Intelligence Chat ───────────────────────────────────────────────────
