@@ -2243,7 +2243,12 @@ async def smartfill_run_by_number(request: Request,
                 skipped.append(c["name"])
                 continue
             try:
-                await smartfill_company(c["name"])
+                # bulk=False EXPLICITLY: omitted, the Query(False) marker object
+                # is truthy and this run-by-number path (a deliberate, targeted
+                # rerun) would silently get bulk semantics, skipping web-search
+                # scoring for Too Large companies - the opposite of the point of
+                # rerunning them by registration number.
+                await smartfill_company(c["name"], bulk=False)
                 done.append(c["name"])
             except HTTPException as e:
                 if e.status_code == 429:
@@ -5021,8 +5026,14 @@ async def email_sync_run(request: Request,
     while keeping the IMAP pass fast; the delivery check widens itself to 30
     days internally.
     """
+    # deep=False EXPLICITLY. When an endpoint function is called directly (not
+    # via HTTP), an omitted Query parameter is not its declared default but the
+    # Query(...) marker object itself - which is truthy. Every scheduled sync
+    # was therefore silently running in deep mode (scanned_days: 3650 in the
+    # response gave it away). Same trap as everywhere we call handlers as
+    # functions: pass every flag explicitly.
     _require_token(request)
-    return await sync_emails(days=max(1, min(days, 365)))
+    return await sync_emails(days=max(1, min(days, 365)), deep=False)
 
 
 @app.post("/email/sync")
