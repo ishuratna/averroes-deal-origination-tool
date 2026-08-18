@@ -568,7 +568,6 @@ function HomeInner() {
                       [1, 2].map(i => <div key={i} className="kanban-card skeleton-kanban" />)
                     ) : pageDeals.length > 0 ? (
                       pageDeals.map(company => {
-                        const nextStage = getNextStage(company.status);
                         const isUpdating = updatingStatus === company.name;
                         const stageSince = company.stage_entered_at || company.ingested_at;
                         const daysInStage = stageSince
@@ -678,16 +677,11 @@ function HomeInner() {
                               );
                             })()}
 
-                            {/* Row 4 — contact. Not shown on Contacted cards: the
-                                outreach already went to this person, so the name
-                                repeats what the stage says while the reply is
-                                what actually matters. Profile has the details. */}
-                            {company.status !== 'Contacted' && sanitizeContact(company.contact_name) && (
-                              <div className="kc-contact-row">
-                                <span className="kc-avatar">{sanitizeContact(company.contact_name)!.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase()}</span>
-                                <span className="kc-contact">{sanitizeContact(company.contact_name)}</span>
-                              </div>
-                            )}
+                            {/* No contact row on ANY card (per Ishu: absolute
+                                consistency, the Contacted template everywhere).
+                                The name is one click away in the profile, and
+                                on the card it only repeated what the stage
+                                already implies. */}
 
                             {/* Row 5 — primary action: always the shared outreach
                                 button (Outreach / Follow up / Email by stage).
@@ -720,34 +714,19 @@ function HomeInner() {
                               </button>
                             )}
 
-                            {/* Row 6 — secondary actions.
-                                Contacted cards carry NO stage controls at all:
-                                Contacted -> Responded is the reply rule's move
-                                (a genuine reply, detected by the sync), so a
-                                manual advance would only create a row the rule
-                                immediately disputes. And losing/killing happens
-                                after a reply, from the Responded page. The one
-                                thing a human does here is follow up, which is
-                                the primary button above. */}
+                            {/* Row 6 — secondary actions: + Note and Remove,
+                                IDENTICAL on every card in every column (per
+                                Ishu: absolute consistency). No advance button
+                                anywhere — Contacted -> Responded belongs to the
+                                reply rule, and every other move is drag or the
+                                profile's stage control, both still available.
+                                No Mark Lost / Not a Fit here either: closing a
+                                company out is a decision for the profile or the
+                                Responded page, not a stray click on a card. */}
                             <div className="kc-actions">
-                              {nextStage && company.status !== 'Contacted' && (
-                                <button
-                                  className="kc-advance"
-                                  onClick={() => handleAdvanceStage(company.name, nextStage)}
-                                  disabled={isUpdating}
-                                  style={{ color: stageColor(nextStage) }}
-                                >
-                                  {isUpdating ? '...' : `${STAGE_LABELS[nextStage]}`} &rarr;
-                                </button>
-                              )}
                               <button className="kc-note" onClick={() => setNoteModal({ company: company.name })}>
                                 + Note
                               </button>
-                              {company.status !== 'Contacted' && (
-                                <button className="kc-lost" onClick={() => handleMarkLost(company.name)} disabled={isUpdating} title="Mark Lost">
-                                  &times;
-                                </button>
-                              )}
                               <button className="kc-remove" onClick={() => handleRemoveFromPipeline(company.name)} disabled={isUpdating} title="Remove from pipeline">
                                 Remove
                               </button>
@@ -1337,14 +1316,6 @@ function HomeInner() {
         .kc-metric-value { font-size: 0.78rem; font-weight: 700; color: #0f172a; white-space: nowrap; }
         .kc-est { font-size: 0.6rem; color: #94a3b8; font-weight: 600; font-style: normal; }
 
-        .kc-contact-row { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.55rem; }
-        .kc-avatar {
-          width: 20px; height: 20px; border-radius: 50%; background: #eff6ff; color: #2563eb;
-          font-size: 0.55rem; font-weight: 800; display: inline-flex; align-items: center;
-          justify-content: center; flex-shrink: 0; letter-spacing: 0.02em;
-        }
-        .kc-contact { font-size: 0.74rem; color: #475569; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
         .kc-outreach {
           display: block; width: 100%; margin-top: 0.5rem;
           background: transparent; border: 1px solid #d97706; color: #d97706;
@@ -1358,53 +1329,24 @@ function HomeInner() {
         .kc-outreach.sent { border-color: #bbf7d0; color: #16a34a; background: #f0fdf4; }
         .kc-outreach.sent:hover { background: #dcfce7; }
 
-        /* Secondary actions sit quiet until the card is hovered: they are
-           always available, never shouting. justify-content keeps the row
-           right-aligned on Contacted cards, where + Note and Remove are all
-           that remains. */
+        /* Secondary actions: + Note and Remove, and NOTHING else, identical on
+           every card. One shared size (same font, padding, radius) so the row
+           is pixel-for-pixel the same in every column. Quiet until the card is
+           hovered: always available, never shouting. */
         .kc-actions { display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end; margin-top: 0.45rem; opacity: 0.55; transition: opacity 0.15s; }
         .kanban-card:hover .kc-actions { opacity: 1; }
-        .kc-advance {
-          flex: 1;
-          background: none;
-          border: none;
-          font-size: 0.68rem;
-          font-weight: 700;
-          cursor: pointer;
-          text-align: left;
-          padding: 0.15rem 0;
-        }
-        .kc-advance:hover { text-decoration: underline; }
-        .kc-advance:disabled { opacity: 0.4; cursor: wait; }
-
-        .kc-note {
+        .kc-note, .kc-remove {
           background: none;
           border: 1px solid #e2e8f0;
           color: #94a3b8;
           padding: 0.15rem 0.4rem;
           border-radius: 4px;
-          font-size: 0.65rem;
+          font-size: 0.62rem;
           font-weight: 600;
+          line-height: 1.4;
           cursor: pointer;
         }
         .kc-note:hover { border-color: #2563eb; color: #2563eb; }
-
-        .kc-lost {
-          background: none;
-          border: 1px solid #e2e8f0;
-          color: #cbd5e1;
-          padding: 0.15rem 0.35rem;
-          border-radius: 4px;
-          font-size: 0.75rem;
-          cursor: pointer;
-          line-height: 1;
-        }
-        .kc-lost:hover { border-color: #ef4444; color: #ef4444; }
-        .kc-remove {
-          background: none; border: 1px solid #e2e8f0; color: #94a3b8;
-          border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.62rem;
-          font-weight: 600; cursor: pointer;
-        }
         .kc-remove:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
 
         .kanban-empty {
