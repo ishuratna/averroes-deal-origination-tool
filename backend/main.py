@@ -3532,6 +3532,26 @@ def contact_adoption(stored_email: str, stored_name: str,
     return out
 
 
+@app.get("/outreach/followup-draft/{company_name}")
+async def outreach_followup_draft(company_name: str):
+    """The 14-day follow-up, pre-filled from the approved template. Zero AI.
+
+    Not persisted to outreach_draft_*: those columns hold the FIRST email,
+    whose subject this follow-up threads under. Overwriting them would break
+    the threading of every later follow-up.
+    """
+    company_data = {"name": company_name}
+    for c in bq_handler.get_universe():
+        if c.get("name") == company_name:
+            company_data = c
+            break
+    from services.outreach_service import draft_followup_email
+    result = draft_followup_email(company_data)
+    if company_data.get("source") == "Internal Test":
+        result["to"] = TEST_RECIPIENT
+    return result
+
+
 @app.post("/outreach/send")
 async def send_outreach(req: OutreachSendRequest):
     """Send an outreach email via Gmail SMTP."""
@@ -3564,15 +3584,32 @@ async def send_outreach(req: OutreachSendRequest):
     # Log the sent email in BQ (best-effort)
     try:
         from google.cloud import bigquery as bq_lib
-        # The Internal Test row is exempt from the Not-a-Fit guard: sending a
-        # test email always moves it to Contacted so the full loop can be tested
-        # from any starting state.
+        # STAGE RULE FOR SENDS. Sending an email only ever moves a company
+        # FORWARD to Contacted, never backward: a follow-up to a Contacted
+        # company keeps it Contacted, and an email to a Responded (or later)
+        # company must NOT demote it. This mattered the moment sends stopped
+        # being first-outreach-only: replying to a founder from the Responded
+        # column would otherwise have yanked the company back to Contacted,
+        # which the reply rule would then immediately dispute (a genuine reply
+        # exists) and re-promote, thrashing the activity log.
+        #
+        # outreach_sent_at is refreshed on EVERY send: it is "our last outbound",
+        # which is exactly what the 14-day follow-up clock runs from.
+        #
+        # The Internal Test row is exempt from all of it: a test send always
+        # moves it to Contacted so the full loop is testable from any state.
         query = f"""UPDATE `{bq_handler.table_id}`
-                    SET stage_entered_at = CASE WHEN IFNULL(status, '') != 'Contacted' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    SET stage_entered_at = CASE
+                            WHEN source = 'Internal Test' THEN CURRENT_TIMESTAMP()
+                            WHEN status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost', 'Contacted') THEN stage_entered_at
+                            ELSE CURRENT_TIMESTAMP() END,
                         contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
                         outreach_sent_at = CURRENT_TIMESTAMP(),
                         outreach_draft_to = @to_addr,
-                        status = 'Contacted'
+                        status = CASE
+                            WHEN source = 'Internal Test' THEN 'Contacted'
+                            WHEN status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost') THEN status
+                            ELSE 'Contacted' END
                     WHERE name = @name AND (status != 'Not a Fit' OR source = 'Internal Test')"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("to_addr", "STRING", req.to or ""),
@@ -3629,7 +3666,11 @@ async def send_outreach(req: OutreachSendRequest):
             bq_handler._log_activity(
                 req.company_name, "outreach_sent", "system",
                 note_text=f"Outreach email sent to {req.to} — subject: \"{req.subject}\"")
-            if (prev_status or "") != "Contacted":
+            # A status_change row only when the status actually changed: sends
+            # from Responded or later keep their stage (see the CASE above), so
+            # logging a move would record something that did not happen.
+            if (prev_status or "") not in ("Contacted", "Responded", "Meeting",
+                                           "DD", "Offer", "Won", "Lost"):
                 bq_handler._log_activity(
                     req.company_name, "status_change", "outreach-send",
                     old_status=prev_status or "", new_status="Contacted")

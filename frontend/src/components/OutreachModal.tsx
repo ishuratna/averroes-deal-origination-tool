@@ -1,14 +1,24 @@
 'use client';
 
 // Shared founder-outreach modal — used by both the Universe table and the
-// Pipeline kanban. Behaviour contract:
-//   • A previously saved draft opens instantly for review (no AI regeneration)
-//   • "Generate New Draft" explicitly replaces it (uses AI credits)
-//   • Only SEND changes the company's stage (backend moves it to Contacted);
-//     drafting alone never touches the stage.
+// Pipeline kanban. Three modes, decided by outreachMode() from the SAME fields
+// that drive the button, so button and modal can never disagree:
+//   outreach  first email: AI-drafted, personalised, saved for review
+//   followup  Contacted + no reply yet: the approved 14-day template, in the
+//             SAME thread (Re: the original subject), zero AI
+//   compose   Responded and beyond: a blank draft — the conversation is live
+//             and only Ishu knows what to say next
+// Behaviour contract:
+//   • A previously saved first draft opens instantly for review (no AI rerun)
+//   • "Generate New Draft" explicitly replaces it (uses AI credits) — first
+//     email only; a template needs no regenerating and a blank has nothing to
+//   • Sending only ever moves a company FORWARD (backend rule): a first send
+//     sets Contacted, a follow-up keeps Contacted, a send from Responded or
+//     later never changes the stage.
 
 import { useState, useEffect, useCallback } from 'react';
 import { dealApi } from '@/services/api';
+import { outreachMode } from '@/lib/outreach';
 
 interface Draft { to: string; subject: string; body: string; company: string; }
 
@@ -42,10 +52,26 @@ export default function OutreachModal({
     } finally { setLoading(false); }
   }, [onClose]);
 
+  const mode = company ? outreachMode(company) : 'outreach';
+
   useEffect(() => {
     if (!company) return;
     setDraft(null);
     setSent(false);
+    if (mode === 'compose') {
+      // Blank on purpose: mid-conversation, the tool has no business guessing.
+      setDraft({ to: company.contact_email || '', subject: '', body: '', company: company.name });
+      return;
+    }
+    if (mode === 'followup') {
+      setLoading(true);
+      dealApi.getFollowupDraft(company.name)
+        .then(d => setDraft({ to: d.to || company.contact_email || '', subject: d.subject || '',
+                              body: d.body || '', company: company.name }))
+        .catch((err: any) => { alert(`Failed to load the follow-up template: ${err.message}`); onClose(); })
+        .finally(() => setLoading(false));
+      return;
+    }
     // A previously generated draft opens instantly for review — no regeneration
     if (company.outreach_drafted_at && company.outreach_draft_body) {
       setDraft({
@@ -84,7 +110,7 @@ export default function OutreachModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content outreach-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>Outreach — {company.name}</h3>
+          <h3>{mode === 'followup' ? 'Follow up' : mode === 'compose' ? 'Email' : 'Outreach'} — {company.name}</h3>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
         <div className="modal-body">
@@ -99,7 +125,13 @@ export default function OutreachModal({
               <div className="sent-icon">&#10003;</div>
               <h4>Email Sent</h4>
               <p>Sent to <strong>{draft?.to}</strong> from Beatrice Carrara &lt;beatrice@averroescapital.com&gt;.</p>
-              <p className="sent-sub">The company&apos;s stage has moved to Contacted.</p>
+              <p className="sent-sub">
+                {mode === 'compose'
+                  ? 'The stage is unchanged — a send never moves a company backward.'
+                  : mode === 'followup'
+                    ? 'Still Contacted; the 14-day follow-up clock has restarted from this send.'
+                    : "The company's stage has moved to Contacted."}
+              </p>
             </div>
           ) : draft ? (
             <div className="outreach-form">
@@ -138,10 +170,14 @@ export default function OutreachModal({
             <>
               <button className="outreach-cancel-btn" onClick={onClose}>Cancel</button>
               <button className="outreach-copy-btn" onClick={handleCopy}>Copy Draft</button>
-              <button className="outreach-copy-btn" onClick={() => generateDraft(company)} disabled={sending}
-                title="Discard this draft and generate a fresh one (uses AI credits)">
-                Generate New Draft
-              </button>
+              {/* Regeneration is a first-email concept: the follow-up is a fixed
+                  template and compose is deliberately blank. */}
+              {mode === 'outreach' && (
+                <button className="outreach-copy-btn" onClick={() => generateDraft(company)} disabled={sending}
+                  title="Discard this draft and generate a fresh one (uses AI credits)">
+                  Generate New Draft
+                </button>
+              )}
               <button className="outreach-send-btn" onClick={handleSend} disabled={!draft.to || sending}
                 title={!draft.to ? 'No recipient email — type one above or run SmartFill to find contacts' : ''}>
                 {sending ? 'Sending…' : 'Send Email'}

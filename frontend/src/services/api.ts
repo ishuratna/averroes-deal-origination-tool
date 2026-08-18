@@ -98,6 +98,17 @@ export const dealApi = {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
 
+  // The 14-day follow-up: the approved fixed template, threaded under the
+  // original outreach subject. Zero AI, so opening it costs nothing.
+  async getFollowupDraft(name: string): Promise<{ to: string; subject: string; body: string }> {
+    const response = await apiFetch(`${API_BASE_URL}/outreach/followup-draft/${encodeURIComponent(name)}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to load the follow-up template');
+    }
+    return await response.json();
+  },
+
   // ── The reply rule ─────────────────────────────────────────────────────
   // Qualified = not emailed. Contacted = emailed, no genuine reply yet.
   // Responded = emailed and they replied. An out-of-office is not a reply.

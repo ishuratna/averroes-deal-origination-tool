@@ -118,6 +118,45 @@ def _recipient_note(company_data: Dict) -> str:
     return f"{founder or 'the founder'} directly."
 
 
+def draft_followup_email(company_data: Dict) -> Dict[str, str]:
+    """The 14-day follow-up. A fixed template, zero AI calls.
+
+    Wording approved by Ishu (18 Aug 2026). Deliberately NOT model-generated:
+    the first email carries the personalisation, and a follow-up that suddenly
+    knows new things about the company reads as automated. A short, identical,
+    human nudge is the point.
+
+    Replies in the SAME THREAD: the subject is "Re:" plus the original subject,
+    so the first email sits directly underneath and the founder needs no
+    context. Ends with "Best," and no name, because send_email appends the
+    full signature beneath it, exactly like the first email.
+    """
+    first, _ = _greeting_for(company_data)
+    greeting = f"Hi {first}," if first else "Hello,"
+    company = company_data.get("name", "your company")
+
+    original_subject = (company_data.get("outreach_draft_subject") or "").strip()
+    if original_subject:
+        subject = original_subject if original_subject.lower().startswith("re:") \
+            else f"Re: {original_subject}"
+    else:
+        subject = f"Averroes Capital, {company}"
+
+    body = (
+        f"{greeting}\n\n"
+        "I wanted to come back to my note from a couple of weeks ago. I know how "
+        "busy things get, so no concern at all if it slipped past.\n\n"
+        "In short, we are Averroes Capital, a growth equity investor in UK software "
+        f"companies, and {company} stood out to us. I would love to hear how you "
+        "think about the business and where it is heading.\n\n"
+        "If now is not the right time, that is completely understood. I would be "
+        "glad to stay in touch either way.\n\n"
+        "Best,"
+    )
+    return {"to": company_data.get("contact_email", ""), "subject": subject,
+            "body": body, "company": company_data.get("name", "")}
+
+
 def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, str]:
     """
     Use Gemini to draft a personalised outreach email from stored BQ data,
