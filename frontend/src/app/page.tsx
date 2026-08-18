@@ -10,7 +10,7 @@ import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
 import SyncEmailsButton from "../components/SyncEmailsButton";
 import ReplyRuleButton from "../components/ReplyRuleButton";
-import { outreachButtonState } from "../lib/outreach";
+import { outreachButtonState, owesReply } from "../lib/outreach";
 import SideNav from '../components/SideNav';
 import OwnerTag from '../components/OwnerTag';
 
@@ -569,20 +569,32 @@ function HomeInner() {
                     ) : pageDeals.length > 0 ? (
                       pageDeals.map(company => {
                         const isUpdating = updatingStatus === company.name;
-                        // The clock a Contacted card shows is "days since OUR
-                        // last email", not days in stage: a follow-up restarts
-                        // the wait (and clears the red stale outline with it),
-                        // exactly like the backend's 14-day reminder clock,
-                        // which also runs from the last send. Other stages
-                        // keep days-in-stage.
+                        // CONVERSATION CLOCKS, matching the backend reminders,
+                        // so a card's red warning and the follow-up queue can
+                        // never disagree:
+                        //   Contacted  days since OUR last email, red past 10
+                        //              (reminder fires at 14) — a follow-up
+                        //              resets it.
+                        //   Responded  if THEY wrote last: days since their
+                        //              message, red at 7 (we owe the reply).
+                        //              If WE wrote last: days since our send,
+                        //              never red — the ball is with them, and
+                        //              intentional silence never nags.
+                        //   Elsewhere  plain days-in-stage, red past 10.
                         const isContacted = company.status === 'Contacted';
+                        const owed = company.status === 'Responded' && owesReply(company);
                         const stageSince = (isContacted && company.outreach_sent_at)
                           ? company.outreach_sent_at
-                          : (company.stage_entered_at || company.ingested_at);
+                          : company.status === 'Responded'
+                            ? (owed ? company.last_reply_at : (company.outreach_sent_at || company.stage_entered_at))
+                            : (company.stage_entered_at || company.ingested_at);
                         const daysInStage = stageSince
                           ? Math.floor((Date.now() - new Date(stageSince).getTime()) / (1000 * 60 * 60 * 24))
                           : null;
-                        const isStale = daysInStage !== null && daysInStage > 10;
+                        const isStale = daysInStage !== null && (
+                          company.status === 'Responded'
+                            ? (owed && daysInStage >= 7)
+                            : daysInStage > 10);
 
                         return (
                           <div
@@ -607,7 +619,11 @@ function HomeInner() {
                                   <span className={`kc-days ${isStale ? 'stale' : ''}`}
                                     title={isContacted
                                       ? (isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
-                                      : (isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`)}>
+                                      : company.status === 'Responded'
+                                        ? (owed
+                                            ? `${daysInStage} days since their message — ${isStale ? 'reply overdue' : 'we owe the reply'}`
+                                            : `${daysInStage} days since our reply — ball is with them`)
+                                        : (isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`)}>
                                     {isStale ? '⚠ ' : ''}{daysInStage}d
                                   </span>
                                 )}

@@ -44,14 +44,41 @@ export function hasFollowedUp(company: {
        - new Date(company.contacted_at).getTime() > 60_000;
 }
 
+// Does the company await OUR answer? Derived from the two stamps the sync and
+// the send path already maintain: their last genuine reply vs our last send.
+// Same comparison the backend's 7-day reminder makes, so the card and the
+// follow-up queue can never disagree about who owes whom.
+export function owesReply(company: {
+  last_reply_at?: string;
+  outreach_sent_at?: string;
+}): boolean {
+  if (!company.last_reply_at) return false;
+  if (!company.outreach_sent_at) return true;
+  return new Date(company.last_reply_at).getTime()
+       > new Date(company.outreach_sent_at).getTime();
+}
+
 export function outreachButtonState(company: {
   status?: string;
   outreach_drafted_at?: string;
   outreach_sent_at?: string;
   contacted_at?: string;
+  last_reply_at?: string;
 }): OutreachButtonState {
   const mode = outreachMode(company);
   if (mode === 'compose') {
+    // Same principle as the Contacted column: amber = the ball is with us,
+    // green = we answered and the ball is with them. On Responded cards the
+    // distinction is "Reply" vs "Email"; deeper stages just say Email, since
+    // conversations there are managed by their owner, not by this button.
+    if (company.status === 'Responded' && owesReply(company)) {
+      return {
+        state: 'compose',
+        cls: 'followup',
+        label: '↩ Reply',
+        title: 'They wrote last and we have not answered — opens a reply in their thread (their address, their subject).',
+      };
+    }
     return {
       state: 'compose',
       cls: 'sent',
