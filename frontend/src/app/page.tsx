@@ -607,12 +607,14 @@ function HomeInner() {
                               {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
                             </p>
 
-                            {/* Action bucket chip only for cards where the bucket
-                                is NOT already the primary button (post-Responded
-                                stages keep their own primary action) */}
+                            {/* Action-bucket chip: Meeting and beyond only, per
+                                Ishu. On Contacted and Responded cards the
+                                recommendation boxes were clutter; the suggested
+                                action still lives in the profile's Outreach tab
+                                and drives the Responded page queues. */}
                             {(() => {
                               const b = actionBucketInfo(company.action_bucket);
-                              if (!b || company.status === 'Contacted') return null;
+                              if (!b || ['Contacted', 'Responded'].includes(company.status)) return null;
                               return (
                                 <div className={`kc-bucket bucket-${b.tone}`}
                                   title={`${company.action_rationale || ''}${company.action_follow_up_date ? ` · Follow up: ${company.action_follow_up_date}` : ''}`}>
@@ -642,19 +644,38 @@ function HomeInner() {
                               </div>
                             )}
 
-                            {/* Row 3 — financial snapshot. One quiet line, not a
-                                dashboard: the card is a queue item, the profile
-                                is where analysis lives. */}
+                            {/* Row 3 — financial snapshot. The labelled columns
+                                are back by request: with the buckets and memo
+                                button gone the card has room, and Revenue /
+                                EBITDA / Team scan better as a labelled row than
+                                as one line of prose. */}
                             {(() => {
                               const revM = company.revenue_y1 ? company.revenue_y1 / 1e6 : company.revenue_m || null;
                               const revEst = !revM && company.revenue_estimate_m ? company.revenue_estimate_m : null;
                               const team = company.employees || company.employees_ch || null;
-                              const parts: string[] = [];
-                              if (revM) parts.push(`£${revM.toFixed(1)}M rev`);
-                              else if (revEst) parts.push(`~£${revEst.toFixed(1)}M rev est.`);
-                              if (company.estimated_ebitda) parts.push(`£${company.estimated_ebitda}M EBITDA`);
-                              if (team) parts.push(`${team} team`);
-                              return parts.length ? <div className="kc-fin">{parts.join(' · ')}</div> : null;
+                              if (!revM && !revEst && !company.estimated_ebitda && !team) return null;
+                              return (
+                                <div className="kc-metrics">
+                                  {(revM || revEst) && (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">Revenue</span>
+                                      <span className="kc-metric-value">{revM ? `£${revM.toFixed(1)}M` : `~£${revEst!.toFixed(1)}M`}{revEst ? <em className="kc-est"> est.</em> : null}</span>
+                                    </span>
+                                  )}
+                                  {company.estimated_ebitda ? (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">EBITDA</span>
+                                      <span className="kc-metric-value">&pound;{company.estimated_ebitda}M</span>
+                                    </span>
+                                  ) : null}
+                                  {team ? (
+                                    <span className="kc-metric">
+                                      <span className="kc-metric-label">Team</span>
+                                      <span className="kc-metric-value">{team}</span>
+                                    </span>
+                                  ) : null}
+                                </div>
+                              );
                             })()}
 
                             {/* Row 4 — contact. Not shown on Contacted cards: the
@@ -668,20 +689,12 @@ function HomeInner() {
                               </div>
                             )}
 
-                            {/* Row 5 — primary action. Responded cards with an
-                                action bucket show the bucket as the button ("Email
-                                Sent" is redundant once they replied) — it opens the
-                                profile directly on the Outreach tab. Everything
-                                else keeps the shared outreach button. */}
+                            {/* Row 5 — primary action: always the shared outreach
+                                button (Outreach / Follow up / Email by stage).
+                                It used to swap itself for the AI-recommended
+                                action on Contacted cards, which made the primary
+                                button unpredictable; one button, one meaning. */}
                             {(() => {
-                              const b = actionBucketInfo(company.action_bucket);
-                              if (company.status === 'Contacted' && b) return (
-                                <button className={`kc-outreach kc-bucket-btn bucket-${b.tone}`}
-                                  title={company.action_rationale || b.label}
-                                  onClick={() => openProfile(company.name, 'Outreach')}>
-                                  {b.label}
-                                </button>
-                              );
                               const ob = outreachButtonState(company); return (
                               <button className={`kc-outreach ${ob.cls}`} title={ob.title}
                                 onClick={() => setOutreachTarget(company)}>
@@ -689,9 +702,11 @@ function HomeInner() {
                               </button>
                             ); })()}
 
-                            {/* IC Memo — Contacted and later: the associate's
-                                one-pager for the committee */}
-                            {['Contacted', 'Responded', 'Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
+                            {/* IC Memo — Meeting and beyond only, per Ishu: the
+                                committee one-pager belongs to deals with a call
+                                booked, not to everything that was ever emailed.
+                                Earlier stages reach it from the profile. */}
+                            {['Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
                               <button className="kc-icmemo" disabled={memoBusy === company.name}
                                 title={company.ic_memo ? 'Open the stored IC memo' : 'Generate a one-page IC memo from the verified record'}
                                 onClick={async () => {
@@ -1304,10 +1319,23 @@ function HomeInner() {
         .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
         .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
 
-        /* Financials as one quiet line ("£4.2M rev · 38 team") instead of a
-           three-column mini-dashboard with labels. Same information, a third
-           of the height, and the numbers stop competing with the name. */
-        .kc-fin { font-size: 0.68rem; color: #475569; font-weight: 600; margin-top: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* Labelled financial columns, restored by request: with the bucket
+           chips and the memo button gone the card has the room, and Revenue /
+           EBITDA / Team scan better labelled than as one prose line. Sizes sit
+           slightly under the originals to match the tightened card. */
+        .kc-metrics {
+          display: flex;
+          gap: 0;
+          margin-top: 0.5rem;
+          padding: 0.4rem 0;
+          border-top: 1px solid #f1f5f9;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .kc-metric { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 0.55rem; border-left: 1px solid #f1f5f9; }
+        .kc-metric:first-child { padding-left: 0; border-left: none; }
+        .kc-metric-label { font-size: 0.56rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.1rem; }
+        .kc-metric-value { font-size: 0.78rem; font-weight: 700; color: #0f172a; white-space: nowrap; }
+        .kc-est { font-size: 0.6rem; color: #94a3b8; font-weight: 600; font-style: normal; }
 
         .kc-contact-row { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.55rem; }
         .kc-avatar {
