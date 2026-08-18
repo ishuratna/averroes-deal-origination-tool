@@ -1458,6 +1458,25 @@ class BigQueryHandler:
             logger.error(f"unverified_sends failed: {e}")
             return []
 
+    def get_message_id_entity_map(self) -> Dict[str, Dict]:
+        """Every real logged Message-ID -> its entity, for thread matching in
+        the sync. Synthetic dedup ids (no '<' prefix) are excluded: they never
+        appear in a real reply's References header, so mapping them would only
+        bloat the dict."""
+        if not self.client:
+            return {}
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            rows = self.client.query(f"""
+                SELECT message_id, entity_type, entity_name FROM `{log}`
+                WHERE message_id LIKE '<%' AND IFNULL(entity_name, '') != ''
+            """).result()
+            return {r.message_id: {"type": r.entity_type, "name": r.entity_name}
+                    for r in rows}
+        except Exception as e:
+            logger.error(f"get_message_id_entity_map failed: {e}")
+            return {}
+
     def get_thread_ids(self, company_name: str) -> Dict:
         """The Message-IDs of the email thread with a company, for reply headers.
 

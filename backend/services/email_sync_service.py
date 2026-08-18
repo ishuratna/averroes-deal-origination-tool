@@ -71,14 +71,40 @@ def _body_snippet(msg, limit: int = 500) -> str:
     return html_fallback[:limit].strip()
 
 
+def _thread_refs(msg) -> List[str]:
+    """Every Message-ID this message claims to be replying to, from its
+    In-Reply-To and References headers. Pure parsing, testable directly."""
+    refs = []
+    for header in ("In-Reply-To", "References"):
+        raw = _decode(msg.get(header) or "")
+        for token in raw.split():
+            token = token.strip()
+            if token.startswith("<") and token.endswith(">") and token not in refs:
+                refs.append(token)
+    return refs
+
+
 def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict],
                   known_domains: Dict[str, dict] = None, addresses: List[str] = None,
-                  max_fetch: int = 500) -> List[dict]:
+                  max_fetch: int = 500, thread_map: Dict[str, dict] = None) -> List[dict]:
     """
     Fetch messages from one folder, keeping only known-contact exchanges.
     Direction is detected PER MESSAGE (From == our sender → 'sent', else
     'received') so scanning [Gmail]/All Mail catches replies that were
     archived or filtered out of the INBOX — those are otherwise invisible.
+
+    THREE matching rungs, in order:
+      1. exact sender address (known)
+      2. sender's domain (known_domains)
+      3. THREAD: the message's In-Reply-To/References name a Message-ID we have
+         logged (thread_map: message_id -> entity). This is what catches a
+         founder replying from a DIFFERENT domain — a personal address, a
+         parent company — which address matching can never see. Found in
+         production: ReadyGo's reply came from a foreign domain and was
+         invisible for a month. The reply headers are cryptographic-grade
+         evidence of which conversation a message belongs to.
+    Thread-matched entries carry matched_by='thread' so the caller can apply
+    the third-party guard before adopting the sender as the contact.
 
     Two modes:
     - Default: scan the newest messages in the window (bounded by max_fetch
@@ -126,9 +152,18 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             raw_addr = msg.get("To") if direction == "sent" else msg.get("From")
             counter_name, counter_email = email.utils.parseaddr(raw_addr or "")
             counter_email = (counter_email or "").lower()
+            matched_by = "address"
             entity = known.get(counter_email)
             if not entity and known_domains and "@" in counter_email:
                 entity = known_domains.get(counter_email.split("@")[-1])
+                if entity:
+                    matched_by = "domain"
+            if not entity and thread_map and direction == "received":
+                for ref in _thread_refs(msg):
+                    if ref in thread_map:
+                        entity = thread_map[ref]
+                        matched_by = "thread"
+                        break
             if not entity:
                 continue
 
@@ -146,6 +181,7 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 "counterparty_name": _decode(counter_name),
                 "entity_type": entity["type"],
                 "entity_name": entity["name"],
+                "matched_by": matched_by,
                 "subject": _decode(msg.get("Subject")),
                 "snippet": _body_snippet(msg),
                 "sent_at": sent_at,
@@ -168,7 +204,8 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
 
 def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
                  known_domains: Dict[str, dict] = None, deep: bool = False,
-                 deep_addresses: List[str] = None) -> List[dict]:
+                 deep_addresses: List[str] = None,
+                 thread_map: Dict[str, dict] = None) -> List[dict]:
     """
     Read Beatrice's mailbox (IMAP, same App Password as sending) and return
     entries for messages exchanged with known contacts only.
@@ -201,13 +238,13 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
         # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
         # one pass; direction is detected per message inside _fetch_folder.
         entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
-                                addresses=addresses, max_fetch=max_fetch)
+                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
         if not entries:
             # Fallback for non-Gmail IMAP layouts
             entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
-                                    addresses=addresses, max_fetch=max_fetch)
+                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
             entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
-                                     addresses=addresses, max_fetch=max_fetch)
+                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
         # Dedup by message id (All Mail + fallback can overlap)
         seen_ids, unique = set(), []
         for e in entries:
@@ -221,6 +258,62 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
             mail.logout()
         except Exception:
             pass
+
+
+def assess_sender_relation(company_name: str, sender_name: str, sender_email: str,
+                           subject: str, snippet: str) -> str:
+    """Who is this cross-domain sender to the company? 'company' | 'third_party'
+    | 'unknown'. Cheap ungrounded Gemini call, made ONLY for thread-matched
+    replies from unrecognised domains — a handful of messages, ever.
+
+    Decides whether the sender's address may be ADOPTED as the company contact.
+    A founder replying from a personal address is 'company' and worth adopting;
+    a lawyer, advisor, PR agency or someone the email was forwarded to is
+    'third_party' and must never overwrite the real contact. The reply itself is
+    logged either way; only the adoption hangs on this answer, so 'unknown'
+    (and any failure) safely means do not adopt.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key or not snippet:
+        return "unknown"
+    try:
+        from google import genai
+        from google.genai.types import GenerateContentConfig
+        client = genai.Client(api_key=api_key)
+        prompt = f"""We emailed the company "{company_name}". A reply arrived from an address
+whose domain we do not recognise.
+
+Sender name: {sender_name or 'unknown'}
+Sender address: {sender_email}
+Subject: {subject}
+Reply text:
+{snippet[:1200]}
+
+Is the SENDER someone AT the company (founder, executive, employee, or the
+company clearly speaking for itself, even from a personal address), or a THIRD
+PARTY (advisor, lawyer, accountant, PR or agency, investor, someone the email
+was forwarded to)?
+
+Signals for 'company': signs off with the company name or a role at it, says
+"we" about the company's business, personal address but same person we wrote to.
+Signals for 'third_party': names a different firm, says they act on behalf of or
+advise the company, a forwarding chain, a different person introducing themselves
+from elsewhere.
+
+Return ONLY valid JSON: {{"relation": "company" or "third_party" or "unknown",
+"reason": "one short sentence"}}"""
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt,
+            config=GenerateContentConfig(temperature=0.1),
+        )
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.strip("`").replace("json", "", 1).strip()
+        relation = (json.loads(text).get("relation") or "unknown").strip().lower()
+        return relation if relation in ("company", "third_party") else "unknown"
+    except Exception as e:
+        logger.warning(f"[EmailSync] sender relation check failed for {company_name}: {e}")
+        return "unknown"
 
 
 def classify_reply(subject: str, snippet: str, entity_name: str) -> dict:

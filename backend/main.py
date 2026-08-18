@@ -5111,9 +5111,21 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 deep_addresses.add(em)
         deep_addresses = sorted(deep_addresses)
 
+    # THREAD MAP: every Message-ID we have ever logged, mapped to its company.
+    # This is the third matching rung — it catches a reply from a DIFFERENT
+    # domain (a founder's personal address, a parent company) that address and
+    # domain matching can never see, because the reply's In-Reply-To/References
+    # headers name our own message. Found in production: ReadyGo replied from a
+    # foreign domain and was invisible for a month.
+    thread_map = {}
+    try:
+        thread_map = bq_handler.get_message_id_entity_map()
+    except Exception as e:
+        logger.warning(f"[EmailSync] thread map unavailable (address matching only): {e}")
+
     try:
         entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep,
-                               deep_addresses=deep_addresses)
+                               deep_addresses=deep_addresses, thread_map=thread_map)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -5166,6 +5178,47 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             r["classification"] = result.get("classification", "")
             r["summary"] = result.get("summary", "")
             classified += 1
+
+    # ── Cross-domain contact adoption (the ReadyGo rule) ─────────────────────
+    # A reply matched by THREAD came from an address on a domain we do not
+    # know. If a HUMAN at the company wrote it, that address is now the best
+    # contact we have and is adopted. The guard, per Ishu: never adopt a third
+    # party. One cheap relation check per such reply (a handful ever), and
+    # every uncertain answer means log-but-do-not-adopt — a wrong adoption
+    # would misdirect all future outreach, a missed one costs nothing.
+    contact_adopted = []
+    for r in replies:
+        if r.get("matched_by") != "thread" or r.get("entity_type") != "company":
+            continue
+        if r.get("classification") in bq_handler.NON_REPLY_CLASSES:
+            continue  # an autoresponder or bounce proves nothing about a person
+        from services.email_sync_service import assess_sender_relation
+        relation = assess_sender_relation(
+            r["entity_name"], r.get("counterparty_name", ""),
+            r["counterparty_email"], r.get("subject", ""), r.get("snippet", ""))
+        if relation != "company":
+            bq_handler.add_activity_note(
+                r["entity_name"],
+                f"Reply matched by thread from {r['counterparty_email']} (unknown domain) — "
+                f"sender judged {relation}, so the stored contact was NOT changed.",
+                created_by="email-sync")
+            continue
+        try:
+            bq_handler.client.query(
+                f"UPDATE `{bq_handler.table_id}` SET contact_email = @ce WHERE name = @name",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("ce", "STRING", r["counterparty_email"]),
+                    bq_lib.ScalarQueryParameter("name", "STRING", r["entity_name"]),
+                ])).result()
+            bq_handler.add_activity_note(
+                r["entity_name"],
+                f"Contact adopted from their reply: {r['counterparty_email']} "
+                f"(cross-domain, thread-matched, sender judged to be the company). "
+                f"Future emails go there.",
+                created_by="email-sync")
+            contact_adopted.append(f"{r['entity_name']} -> {r['counterparty_email']}")
+        except Exception as ex:
+            logger.warning(f"Cross-domain adoption failed for {r['entity_name']}: {ex}")
 
     # Second chance: already-logged replies whose company still shows no
     # classification (empty snippet at the time, or the AI call failed).
@@ -5427,6 +5480,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         # Companies the rule wants to move back but will not without a human
         # answer, because a person put them in Responded. The UI prompts on these.
         "needs_confirmation": reply_rule["needs_confirmation"],
+        "contact_adopted_from_replies": contact_adopted,
         "delivery": {k: delivery.get(k) for k in
                      ("bounces_found", "sends_missing_from_mailbox", "pulled_back")},
         "reclassified": reclassified,
