@@ -498,11 +498,19 @@ SIGNATURE_HTML = f"""
 """
 
 
-def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
+def send_email(to: str, subject: str, body: str,
+               in_reply_to: str = "", references: str = "") -> Dict[str, str]:
     """
     Send an email via Gmail SMTP using App Password. Beatrice's signature
     (name, title, phone, email, logo if configured) is appended automatically.
     Returns {"status": "sent"} or {"status": "error", "detail": "..."}.
+
+    THREADING IS HEADERS, NOT SUBJECTS. A "Re:" subject alone does not put a
+    message in the same conversation: Gmail threads on the In-Reply-To and
+    References headers carrying the previous message's Message-ID. Without
+    them a follow-up lands as a separate email and the founder loses the
+    context of the first one, which is the whole point of following up.
+    Callers pass the ids from email_log; blank means a fresh conversation.
     """
     if not SMTP_PASSWORD:
         return {"status": "error", "detail": "OUTREACH_SMTP_PASSWORD not configured. Set it as a Cloud Run env var."}
@@ -515,6 +523,10 @@ def send_email(to: str, subject: str, body: str) -> Dict[str, str]:
         msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
         msg["To"] = to
         msg["Subject"] = subject
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+        if references:
+            msg["References"] = references
 
         # Plain text version + signature
         msg.attach(MIMEText(body + SIGNATURE_TEXT, "plain"))

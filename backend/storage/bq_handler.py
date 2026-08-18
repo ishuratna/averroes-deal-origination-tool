@@ -1458,6 +1458,38 @@ class BigQueryHandler:
             logger.error(f"unverified_sends failed: {e}")
             return []
 
+    def get_thread_ids(self, company_name: str) -> Dict:
+        """The Message-IDs of the email thread with a company, for reply headers.
+
+        Returns {"in_reply_to": newest id, "references": chronological ids}.
+        Both empty when no thread exists.
+
+        Only REAL Message-IDs are returned (they start with '<'): when a mailbox
+        message had no Message-ID header the sync stores a synthetic fallback id
+        for dedup, and putting a synthetic id into an In-Reply-To header would
+        actively corrupt threading rather than merely miss it.
+        """
+        if not self.client:
+            return {"in_reply_to": "", "references": ""}
+        log = f"{self.project_id}.{self.dataset_id}.email_log"
+        try:
+            rows = self._run_query(f"""
+                SELECT message_id FROM `{log}`
+                WHERE entity_type = 'company' AND entity_name = @name
+                  AND message_id LIKE '<%'
+                ORDER BY sent_at ASC
+            """, params=[bigquery.ScalarQueryParameter("name", "STRING", company_name)])
+        except Exception as e:
+            logger.warning(f"get_thread_ids failed for {company_name}: {e}")
+            return {"in_reply_to": "", "references": ""}
+        ids = [r["message_id"] for r in rows if r.get("message_id")]
+        if not ids:
+            return {"in_reply_to": "", "references": ""}
+        # References carries the chain, oldest first. Capped: RFC 5322 header
+        # length limits are real, and old ids beyond the root add nothing.
+        refs = ids[:1] + ids[-7:] if len(ids) > 8 else ids
+        return {"in_reply_to": ids[-1], "references": " ".join(dict.fromkeys(refs))}
+
     def set_reply_exempt(self, name: str, by: str = "Ishu Ratna", on: bool = True) -> bool:
         """Pin (or unpin) a company against the email-log reply rule.
 

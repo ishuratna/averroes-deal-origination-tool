@@ -3623,8 +3623,27 @@ async def send_outreach(req: OutreachSendRequest):
             pass
     req.to = to_addr
 
-    logger.info(f"Sending outreach to: {req.to} (company: {req.company_name})")
-    result = send_email(req.to, req.subject, req.body)
+    # THREADING. A "Re:" subject signals this send continues the existing
+    # conversation, so it must carry In-Reply-To/References with the thread's
+    # real Message-IDs — Gmail threads on those headers, never on the subject.
+    # This was learned the hard way: a follow-up to a founder landed as a
+    # separate email because the subject said "Re:" and the headers said
+    # nothing. Keying on the subject also leaves Ishu in control: keep "Re:"
+    # to stay in the thread, change the subject to deliberately start afresh.
+    in_reply_to, references = "", ""
+    if req.company_name and (req.subject or "").strip().lower().startswith("re:"):
+        try:
+            thread = bq_handler.get_thread_ids(req.company_name)
+            in_reply_to, references = thread["in_reply_to"], thread["references"]
+            if not in_reply_to:
+                logger.warning(f"[Send] '{req.subject}' looks like a reply but no thread "
+                               f"Message-IDs exist for {req.company_name}; sending unthreaded.")
+        except Exception as e:
+            logger.warning(f"[Send] thread lookup failed for {req.company_name} (sending unthreaded): {e}")
+
+    logger.info(f"Sending outreach to: {req.to} (company: {req.company_name}, threaded: {bool(in_reply_to)})")
+    result = send_email(req.to, req.subject, req.body,
+                        in_reply_to=in_reply_to, references=references)
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result["detail"])
     # Log the sent email in BQ (best-effort)
