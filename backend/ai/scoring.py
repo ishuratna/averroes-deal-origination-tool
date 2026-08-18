@@ -38,6 +38,57 @@ def _growth_pct_to_score(growth_pct: float) -> float:
     return round(min(1.0, 0.9 + ((growth_pct - 50) / 100) * 0.1), 3)
 
 
+def _revenue_growth_score(growth_pct: float) -> float:
+    """Revenue growth → score. DIFFERENT from the shared employee curve on one
+    point, per Ishu (19 Aug 2026): ANY revenue decline scores zero. A growth
+    equity mandate has no thesis for shrinking revenue, so a soft landing
+    (the old 0.0-0.2 ramp for -20-0%) only flattered companies that should
+    stand out as failing the metric. Employee growth keeps the gentler curve:
+    headcount dips are noisier and not always bad (efficiency)."""
+    if growth_pct < 0:
+        return 0.0
+    return _growth_pct_to_score(growth_pct)
+
+
+def _compute_employee_growth_ch(company: dict) -> Optional[Dict]:
+    """Employee growth from Companies House filings (ch_history).
+
+    UK accounts state the average number of employees per period, and the
+    filing parser already stores every period on the row as ch_history JSON —
+    so this is FILED, audited-adjacent data at zero AI cost. Sits between
+    Inven and the web search in the waterfall: LinkedIn (Inven) is fresher,
+    filings are harder, a model's web judgement is last.
+
+    Takes the two most recent periods that state employees; YoY % between them.
+    """
+    raw = company.get("ch_history")
+    if not raw:
+        return None
+    try:
+        years = json.loads(raw).get("years") or []
+    except (ValueError, TypeError, AttributeError):
+        return None
+    staffed = [(y.get("period_end"), y.get("employees")) for y in years
+               if y.get("employees") is not None and y.get("period_end")]
+    if len(staffed) < 2:
+        return None
+    staffed.sort(key=lambda t: t[0], reverse=True)
+    (d1, e1), (d2, e2) = staffed[0], staffed[1]
+    try:
+        e1, e2 = float(e1), float(e2)
+    except (ValueError, TypeError):
+        return None
+    if e2 <= 0:
+        return None
+    growth_pct = ((e1 - e2) / e2) * 100
+    return {
+        "score": _growth_pct_to_score(growth_pct),
+        "value": round(growth_pct, 1),
+        "explanation": (f"Headcount {growth_pct:+.1f}% from filed accounts "
+                        f"({int(e2)} at {d2} → {int(e1)} at {d1}, Companies House)"),
+    }
+
+
 def _compute_employee_growth_local(company: dict) -> Optional[Dict]:
     """
     Employee growth from stored figures (Inven uploads) — replaces the
@@ -77,7 +128,7 @@ def _compute_revenue_growth(company: dict) -> Optional[Dict]:
             cagr = None
         if cagr is not None:
             return {
-                "score": _growth_pct_to_score(cagr),
+                "score": _revenue_growth_score(cagr),
                 "value": round(cagr, 1),
                 "explanation": f"Revenue 3yr CAGR {cagr:+.1f}% (Inven, local data)",
             }
@@ -94,24 +145,10 @@ def _compute_revenue_growth(company: dict) -> Optional[Dict]:
 
     growth_pct = ((rev_y1 - rev_y2) / abs(rev_y2)) * 100
 
-    # Score: 0-1 scale
-    # Negative growth = 0-0.2
-    # 0-10% = 0.2-0.5
-    # 10-25% = 0.5-0.75
-    # 25-50% = 0.75-0.9
-    # 50%+ = 0.9-1.0
-    if growth_pct < -20:
-        score = 0.0
-    elif growth_pct < 0:
-        score = 0.1 + (growth_pct + 20) / 200  # 0.0 to 0.2
-    elif growth_pct < 10:
-        score = 0.2 + (growth_pct / 10) * 0.3  # 0.2 to 0.5
-    elif growth_pct < 25:
-        score = 0.5 + ((growth_pct - 10) / 15) * 0.25  # 0.5 to 0.75
-    elif growth_pct < 50:
-        score = 0.75 + ((growth_pct - 25) / 25) * 0.15  # 0.75 to 0.9
-    else:
-        score = min(1.0, 0.9 + ((growth_pct - 50) / 100) * 0.1)  # 0.9 to 1.0
+    # Any decline scores zero (see _revenue_growth_score); positive growth uses
+    # the shared curve: 0-10% -> 0.2-0.5, 10-25% -> 0.5-0.75, 25-50% -> 0.75-0.9,
+    # 50%+ -> 0.9-1.0.
+    score = _revenue_growth_score(growth_pct)
 
     y1_date = company.get("revenue_y1_date", "latest")
     y2_date = company.get("revenue_y2_date", "prior")
@@ -279,6 +316,25 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
     return None
 
 
+def _revenue_size_score(rev_m: float) -> float:
+    """Revenue (£M) → fit score, Ishu's v4 step table. Kept as its own pure
+    function so the local rescore and fresh SmartFill scoring share one
+    definition and the steps are directly testable."""
+    if rev_m < 1:
+        return 0.3
+    if rev_m < 2.5:
+        return 0.5
+    if rev_m < 5:
+        return 0.8
+    if rev_m <= 10:
+        return 1.0
+    if rev_m <= 20:
+        return 0.7
+    if rev_m <= 40:
+        return 0.2
+    return 0.0
+
+
 def _compute_revenue_size(company: dict) -> Optional[Dict]:
     """
     Score revenue size — how well it fits the Averroes sweet spot.
@@ -296,28 +352,18 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
     if rev_m is None or rev_m <= 0:
         return None
 
-    # Score v3 — calibrated to the mandate: £15-40M equity cheques for
-    # majority or significant-minority (25%+) stakes implies investable
-    # equity values of ~£15-160M, i.e. revenue ~£5-40M at 4-6x. Core sweet
-    # spot £8-20M (EV ~£40-90M where both deal structures work comfortably).
-    # Under £2M  = 0.1-0.25 (far too early)
-    # £2-5M     = 0.25-0.7 (approaching, rising)
-    # £5-8M     = 0.7-1.0 (entering the band)
-    # £8-20M    = 1.0 (core sweet spot — all equal)
-    # £20-40M   = 1.0 declining to 0.5 (investable, needs minority structure)
-    # Over £40M = 0.2 (beyond the cheque even at 25%)
-    if rev_m < 2:
-        score = 0.1 + (rev_m / 2) * 0.15
-    elif rev_m < 5:
-        score = 0.25 + ((rev_m - 2) / 3) * 0.45
-    elif rev_m < 8:
-        score = 0.7 + ((rev_m - 5) / 3) * 0.3
-    elif rev_m <= 20:
-        score = 1.0
-    elif rev_m <= 40:
-        score = 1.0 - ((rev_m - 20) / 20) * 0.5
-    else:
-        score = 0.2
+    # Score v4 — Ishu's step table (19 Aug 2026). Flat steps, deliberately not
+    # interpolated: the bands ARE the judgement, and a step function makes two
+    # companies in the same band score identically instead of manufacturing
+    # false precision between £6.2M and £7.9M. Sweet spot £5-10M.
+    #   < £1M     = 0.3   (too early, but visible)
+    #   £1-2.5M   = 0.5
+    #   £2.5-5M   = 0.8   (approaching)
+    #   £5-10M    = 1.0   (core sweet spot)
+    #   £10-20M   = 0.7
+    #   £20-40M   = 0.2   (stretching the cheque)
+    #   > £40M    = 0.0   (beyond the mandate)
+    score = _revenue_size_score(rev_m)
 
     return {
         "score": round(score, 3),
@@ -415,8 +461,16 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
                 scores[metric] = gemini_scores[metric]["score"]
                 details[metric] = gemini_scores[metric]
 
-    # Local data beats web judgement: stored employee-growth figures (Inven)
-    # override the search-based score whenever they exist
+    # EMPLOYEE GROWTH WATERFALL — hard data beats web judgement, applied in
+    # ascending priority so the best source wins:
+    #   3. web search (from the Gemini call above, already in scores)
+    #   2. Companies House filed headcount (ch_history) overrides it
+    #   1. Inven's LinkedIn history overrides both (freshest real figures;
+    #      filings state period averages up to ~21 months old)
+    ch_emp = _compute_employee_growth_ch(company)
+    if ch_emp:
+        scores["employee_growth"] = ch_emp["score"]
+        details["employee_growth"] = ch_emp
     local_emp = _compute_employee_growth_local(company)
     if local_emp:
         scores["employee_growth"] = local_emp["score"]
@@ -467,6 +521,69 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
         "revenue_confidence": revenue_confidence,
         "metrics_available": available,
         "error": None,
+    }
+
+
+def rescore_company_local(company: dict) -> Optional[Dict]:
+    """Re-apply the CURRENT scoring rules to an already-scored company, with
+    ZERO AI calls.
+
+    Exists so a rule change (like the v4 size steps) can be rolled across the
+    whole book without re-running SmartFill: everything needed is already on
+    the row. Per metric:
+      revenue size    recomputed from the stored revenue value
+      revenue growth  recomputed from the stored growth % (decline now = 0)
+      employee growth recomputed through the local waterfall (Inven, then CH
+                      filings) — falls back to the stored web-search score
+      business fit    kept as stored (a web judgement; re-running would cost AI)
+      sentiment       kept as stored (same)
+    Composite = mean of available, same 4-of-5 rule as fresh scoring. A company
+    whose ch_history now yields employee growth can gain a metric and become
+    scoreable; nothing can silently lose one.
+
+    Returns the update fields, or None when the row has nothing to rescore.
+    """
+    try:
+        details = json.loads(company.get("score_details") or "{}")
+    except (ValueError, TypeError):
+        details = {}
+    if not details and company.get("averroes_fit_score") is None:
+        return None
+
+    scores: Dict[str, float] = {}
+
+    rs = details.get("revenue_size") or {}
+    if rs.get("value") is not None:
+        rs["score"] = round(_revenue_size_score(float(rs["value"])), 3)
+        details["revenue_size"] = rs
+        scores["revenue_size"] = rs["score"]
+
+    rg = details.get("revenue_growth") or {}
+    if rg.get("value") is not None:
+        rg["score"] = round(_revenue_growth_score(float(rg["value"])), 3)
+        details["revenue_growth"] = rg
+        scores["revenue_growth"] = rg["score"]
+
+    emp = _compute_employee_growth_local(company) or _compute_employee_growth_ch(company)
+    if emp:
+        details["employee_growth"] = emp
+        scores["employee_growth"] = emp["score"]
+    elif company.get("score_employee_growth") is not None:
+        scores["employee_growth"] = float(company["score_employee_growth"])
+
+    for col, key in (("score_business_fit", "business_fit"),
+                     ("score_market_sentiment", "market_sentiment")):
+        if company.get(col) is not None:
+            scores[key] = float(company[col])
+
+    composite = round(sum(scores.values()) / len(scores), 3) if len(scores) >= 4 else None
+    return {
+        "averroes_fit_score": composite,
+        "score_revenue_size": scores.get("revenue_size"),
+        "score_revenue_growth": scores.get("revenue_growth"),
+        "score_employee_growth": scores.get("employee_growth"),
+        "score_details": json.dumps(details),
+        "metrics_available": len(scores),
     }
 
 

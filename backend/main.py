@@ -3744,6 +3744,85 @@ async def send_outreach(req: OutreachSendRequest):
     return result
 
 
+@app.post("/admin/rescore-fit")
+async def admin_rescore_fit(request: Request,
+                            dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
+    """Re-apply the current fit-score rules to every already-scored company.
+    ZERO AI: recomputes from data stored on the rows (see
+    scoring.rescore_company_local). Preview reports the score movement so a
+    rule change can be sanity-checked before it rewrites the book.
+    """
+    _require_token(request)
+
+    def _run():
+        from ai.scoring import rescore_company_local
+        from google.cloud import bigquery as bq_lib
+        rows = bq_handler.get_universe()
+        plan = []
+        for c in rows:
+            if c.get("source") == "Internal Test":
+                continue
+            upd = rescore_company_local(c)
+            if not upd:
+                continue
+            old = c.get("averroes_fit_score")
+            new = upd["averroes_fit_score"]
+            if old is None and new is None:
+                continue
+            if old is not None and new is not None and abs(float(old) - new) < 0.0005 \
+                    and (upd["score_details"] == (c.get("score_details") or "")):
+                continue
+            plan.append({"name": c["name"], "old": old, "new": new, "upd": upd})
+
+        moved_up = sum(1 for p in plan if (p["old"] or 0) < (p["new"] or 0))
+        moved_down = sum(1 for p in plan if (p["old"] or 0) > (p["new"] or 0))
+        gained = sum(1 for p in plan if p["old"] is None and p["new"] is not None)
+        lost = sum(1 for p in plan if p["old"] is not None and p["new"] is None)
+        summary = {
+            "scored_companies_checked": len(rows),
+            "would_update": len(plan),
+            "moved_up": moved_up, "moved_down": moved_down,
+            "newly_scoreable": gained, "no_longer_scoreable": lost,
+            "biggest_moves": sorted(
+                [{"name": p["name"], "old": p["old"], "new": p["new"]} for p in plan
+                 if p["old"] is not None and p["new"] is not None],
+                key=lambda x: abs(x["new"] - x["old"]), reverse=True)[:15],
+        }
+        if dry_run:
+            return {"status": "Preview", "dry_run": True, **summary,
+                    "message": "Nothing was changed. Re-run with dry_run=0 to apply."}
+
+        applied, failures = [], []
+        for p in plan:
+            u = p["upd"]
+            try:
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET
+                            averroes_fit_score = @fit,
+                            score_revenue_size = @rs,
+                            score_revenue_growth = @rg,
+                            score_employee_growth = @eg,
+                            score_details = @sd
+                        WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("fit", "FLOAT64", u["averroes_fit_score"]),
+                        bq_lib.ScalarQueryParameter("rs", "FLOAT64", u["score_revenue_size"]),
+                        bq_lib.ScalarQueryParameter("rg", "FLOAT64", u["score_revenue_growth"]),
+                        bq_lib.ScalarQueryParameter("eg", "FLOAT64", u["score_employee_growth"]),
+                        bq_lib.ScalarQueryParameter("sd", "STRING", u["score_details"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", p["name"]),
+                    ])).result()
+                applied.append(p["name"])
+            except Exception as e:
+                failures.append(f"{p['name']}: {e}")
+        return {"status": "Success", "dry_run": False, **summary,
+                "updated": len(applied), "failed": failures,
+                "message": f"Rescored {len(applied)} companies under the v4 rules."
+                           + (f" {len(failures)} FAILED." if failures else "")}
+
+    return _stream_json(_run)
+
+
 @app.post("/admin/contacts/sync-from-sends")
 async def contacts_sync_from_sends(request: Request,
                                    dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
