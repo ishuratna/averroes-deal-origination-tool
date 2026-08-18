@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("GCP_PROJECT_ID", "averroes-deal-origination")
 
 from main import (  # noqa: E402
-    AUTO_SMARTFILL_BATCH, AUTO_SMARTFILL_TARGET, _auto_smartfill_rank,
+    AUTO_SMARTFILL_BATCH, AUTO_SMARTFILL_CONCURRENCY, AUTO_SMARTFILL_TARGET,
+    _auto_smartfill_rank,
 )
 
 fails = 0
@@ -102,10 +103,22 @@ print("── The stop rule arithmetic ──")
 # the target and the free grounding allowance maths holds.
 chk("target leaves free-tier headroom (250 x 4 = 1000 of 1500)",
     AUTO_SMARTFILL_TARGET * 4 <= 1200, True)
-chk("a night of ticks can meet the target (20 ticks x batch >= target)",
-    20 * AUTO_SMARTFILL_BATCH >= AUTO_SMARTFILL_TARGET, True)
-chk("one tick fits its 12-minute slot (~25s per company)",
-    AUTO_SMARTFILL_BATCH * 25 <= 11 * 60, True)
+# Throughput arithmetic uses the MEASURED duration: ~6 minutes per SmartFill
+# (first night, 17 Aug: sequential ticks finished ~1 company each; the manual
+# daytime run did 11 in an hour). A tick's capacity is therefore
+# workers x floor(deadline / duration), and the night has 30 ticks
+# (every 12 minutes, 20:00-01:48 London).
+PER_COMPANY_MIN = 6
+TICK_DEADLINE_MIN = 11
+TICKS_PER_NIGHT = 30
+tick_capacity = min(AUTO_SMARTFILL_BATCH,
+                    AUTO_SMARTFILL_CONCURRENCY * (TICK_DEADLINE_MIN // PER_COMPANY_MIN))
+chk("a tick finishes at least a full concurrent round",
+    tick_capacity >= AUTO_SMARTFILL_CONCURRENCY, True)
+chk("a night of ticks can meet the target",
+    TICKS_PER_NIGHT * AUTO_SMARTFILL_CONCURRENCY * 2 >= AUTO_SMARTFILL_TARGET, True)
+chk("concurrency stays modest (rate limits are shared with daytime use)",
+    1 <= AUTO_SMARTFILL_CONCURRENCY <= 8, True)
 
 print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")

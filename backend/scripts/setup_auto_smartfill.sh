@@ -4,15 +4,20 @@
 #
 #   bash backend/scripts/setup_auto_smartfill.sh
 #
-# One Cloud Scheduler job ticking every 12 minutes from 20:00 to 23:48
-# Europe/London. Each tick processes a batch of ~15 and stops for the night the
-# moment today's total (manual runs INCLUDED) reaches the 250 target, so the
-# job and a heavy manual day can never stack.
+# One Cloud Scheduler job ticking every 12 minutes from 20:00 to 01:48
+# Europe/London. Each tick processes a batch of ~15 with 5 concurrent workers
+# and stops for the night the moment today's total (manual runs INCLUDED)
+# reaches the 250 target, so the job and a heavy manual day can never stack.
 #
-# WHY TICKS AND NOT ONE 8 PM CALL: 250 SmartFills take ~2.5 hours and a
-# scheduled HTTP call cannot run that long. 20 ticks x 15 companies = 300
-# capacity per night, comfortably above the 250 target, and each ~6-minute
-# tick finishes inside the 12-minute spacing so ticks never overlap.
+# WHY TICKS AND NOT ONE 8 PM CALL: a scheduled HTTP call cannot run for hours.
+# WHY CONCURRENCY AND A LONGER WINDOW: measured on the first night, a real
+# SmartFill takes 5-6 minutes, so a sequential tick finished ~1 company and the
+# night produced 21 instead of ~240. Five workers x ~2 rounds per 11-minute
+# tick = ~8-10 companies; 30 ticks = 240-300 capacity against the 250 target.
+#
+# NOTE the window crosses midnight UTC, when the daily counter resets: ticks
+# from 00:00 count against the NEXT day's target, which only means the next
+# evening starts with a little less headroom. The hard cap still binds per day.
 #
 # COST: 250/day = ~1,000 grounded requests, inside the 1,500/day free
 # search-grounding allowance. Tokens only, ~£11/day while the backlog lasts
@@ -66,7 +71,7 @@ gcloud scheduler jobs describe "$NAME" --location="$SCHED_LOC" --project="$PROJE
 gcloud scheduler jobs "$ACTION" http "$NAME" \
   --location="$SCHED_LOC" \
   --project="$PROJECT" \
-  --schedule="*/12 20-23 * * *" \
+  --schedule="*/12 0-1,20-23 * * *" \
   --time-zone="$TZ_NAME" \
   --uri="${BASE}/smartfill/auto-run?token=${TOKEN}" \
   --http-method=POST \

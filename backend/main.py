@@ -2871,6 +2871,17 @@ async def smartfill_eligible():
 
 AUTO_SMARTFILL_TARGET = int(os.getenv("AUTO_SMARTFILL_TARGET", "250"))
 AUTO_SMARTFILL_BATCH = int(os.getenv("AUTO_SMARTFILL_BATCH", "15"))
+# MEASURED, not assumed: the first night (17 Aug) produced ~1 company per tick,
+# and the day's manual run did 11 in an hour — a real SmartFill takes 5-6
+# MINUTES (grounded enrichment + CH cap tables + contact waterfall + draft),
+# not the ~25 seconds the original batch sizing assumed. Sequential processing
+# therefore finishes 1-2 per 11-minute tick and the deadline cuts the rest.
+# Fix: run the batch with bounded concurrency. 5 workers x ~2 rounds inside the
+# deadline = ~8-10 companies per tick; 30 ticks (20:00-01:48) = 240-300/night.
+# The concurrency is deliberately modest: each worker holds Gemini + Companies
+# House + Hunter connections, and the point is to fill the tick, not to spike
+# rate limits.
+AUTO_SMARTFILL_CONCURRENCY = int(os.getenv("AUTO_SMARTFILL_CONCURRENCY", "5"))
 
 
 def _auto_smartfill_rank(c: dict) -> tuple:
@@ -2943,17 +2954,31 @@ async def smartfill_auto_run(request: Request):
 
     batch = [c["name"] for c in eligible[:min(AUTO_SMARTFILL_BATCH, remaining)]]
     processed, failed = [], []
-    for name in batch:
-        try:
-            await smartfill_company(name, bulk=True)
-            processed.append(name)
-        except HTTPException as e:
-            if e.status_code == 429:
-                # The hard daily cap (a separate, higher guard) said stop.
-                break
-            failed.append(f"{name}: {e.detail}")
-        except Exception as e:
-            failed.append(f"{name}: {e}")
+    # Bounded concurrency (see AUTO_SMARTFILL_CONCURRENCY above). A 429 from the
+    # hard daily cap flips stop_now so no NEW company starts, but workers already
+    # mid-company run to completion — a SmartFill is not safely interruptible
+    # halfway through its writes.
+    import asyncio
+    sem = asyncio.Semaphore(max(1, AUTO_SMARTFILL_CONCURRENCY))
+    stop_now = False
+
+    async def _one(name: str):
+        nonlocal stop_now
+        async with sem:
+            if stop_now:
+                return
+            try:
+                await smartfill_company(name, bulk=True)
+                processed.append(name)
+            except HTTPException as e:
+                if e.status_code == 429:
+                    stop_now = True
+                else:
+                    failed.append(f"{name}: {e.detail}")
+            except Exception as e:
+                failed.append(f"{name}: {e}")
+
+    await asyncio.gather(*[_one(n) for n in batch])
 
     return {
         "status": "Success",
