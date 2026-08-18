@@ -569,7 +569,16 @@ function HomeInner() {
                     ) : pageDeals.length > 0 ? (
                       pageDeals.map(company => {
                         const isUpdating = updatingStatus === company.name;
-                        const stageSince = company.stage_entered_at || company.ingested_at;
+                        // The clock a Contacted card shows is "days since OUR
+                        // last email", not days in stage: a follow-up restarts
+                        // the wait (and clears the red stale outline with it),
+                        // exactly like the backend's 14-day reminder clock,
+                        // which also runs from the last send. Other stages
+                        // keep days-in-stage.
+                        const isContacted = company.status === 'Contacted';
+                        const stageSince = (isContacted && company.outreach_sent_at)
+                          ? company.outreach_sent_at
+                          : (company.stage_entered_at || company.ingested_at);
                         const daysInStage = stageSince
                           ? Math.floor((Date.now() - new Date(stageSince).getTime()) / (1000 * 60 * 60 * 24))
                           : null;
@@ -595,7 +604,10 @@ function HomeInner() {
                                   </span>
                                 )}
                                 {daysInStage !== null && (
-                                  <span className={`kc-days ${isStale ? 'stale' : ''}`} title={isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`}>
+                                  <span className={`kc-days ${isStale ? 'stale' : ''}`}
+                                    title={isContacted
+                                      ? (isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
+                                      : (isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`)}>
                                     {isStale ? '⚠ ' : ''}{daysInStage}d
                                   </span>
                                 )}
@@ -1328,6 +1340,11 @@ function HomeInner() {
         .kc-outreach.drafted:hover { background: #f5f3ff; color: #7c3aed; }
         .kc-outreach.sent { border-color: #bbf7d0; color: #16a34a; background: #f0fdf4; }
         .kc-outreach.sent:hover { background: #dcfce7; }
+        /* Follow-up DUE: amber, an open action. Flips to the green .sent look
+           once the follow-up has gone out ("Followed up"), so the Contacted
+           column reads at a glance: amber = owes a nudge, green = nudged. */
+        .kc-outreach.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
+        .kc-outreach.followup:hover { background: #fef3c7; }
 
         /* Secondary actions: + Note and Remove, and NOTHING else, identical on
            every card. One shared size (same font, padding, radius) so the row

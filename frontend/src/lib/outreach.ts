@@ -29,10 +29,26 @@ export function outreachMode(company: {
   return 'outreach';
 }
 
+// Has a follow-up already gone out? DERIVED, never stored (doctrine: no second
+// copy of a fact): the first send stamps contacted_at and outreach_sent_at in
+// the same statement, so they are equal. Every later send refreshes only
+// outreach_sent_at. A meaningful gap between them therefore means at least one
+// follow-up has been sent. The 60s tolerance absorbs clock jitter without ever
+// mistaking a first send for a follow-up.
+export function hasFollowedUp(company: {
+  outreach_sent_at?: string;
+  contacted_at?: string;
+}): boolean {
+  if (!company.outreach_sent_at || !company.contacted_at) return false;
+  return new Date(company.outreach_sent_at).getTime()
+       - new Date(company.contacted_at).getTime() > 60_000;
+}
+
 export function outreachButtonState(company: {
   status?: string;
   outreach_drafted_at?: string;
   outreach_sent_at?: string;
+  contacted_at?: string;
 }): OutreachButtonState {
   const mode = outreachMode(company);
   if (mode === 'compose') {
@@ -44,9 +60,21 @@ export function outreachButtonState(company: {
     };
   }
   if (mode === 'followup') {
+    // Already followed up: say so, so the column reads at a glance who has had
+    // the nudge and who is still waiting for one. Still clickable — a second
+    // follow-up is a legitimate (if rare) move, and the modal opens the same
+    // template in the same thread.
+    if (hasFollowedUp(company)) {
+      return {
+        state: 'followup',
+        cls: 'sent',
+        label: '✓ Followed up',
+        title: `Followed up ${company.outreach_sent_at ? new Date(company.outreach_sent_at).toLocaleString('en-GB') : ''} — moves to Responded automatically if they reply. Click to send another follow-up in the same thread.`,
+      };
+    }
     return {
       state: 'followup',
-      cls: 'sent',
+      cls: 'followup',
       label: '↩ Follow up',
       title: `Email sent ${company.outreach_sent_at ? new Date(company.outreach_sent_at).toLocaleString('en-GB') : ''} — opens the follow-up template in the same thread, ready to review and send`,
     };

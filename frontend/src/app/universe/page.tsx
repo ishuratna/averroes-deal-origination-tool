@@ -1971,6 +1971,10 @@ function UniverseInner() {
         .outreach-btn.drafted:hover { background: #f5f3ff; }
         .outreach-btn.sent { border-color: #16a34a; color: #16a34a; background: #f0fdf4; }
         .outreach-btn.sent:hover { background: #dcfce7; }
+        /* Follow-up DUE (email sent, no reply, no nudge yet): amber, an open
+           action. Once followed up the button flips to the green .sent look. */
+        .outreach-btn.followup { border-color: #d97706; color: #d97706; background: #fffbeb; }
+        .outreach-btn.followup:hover { background: #fef3c7; }
         .smartfill-btn:hover:not(:disabled) { background: #2563eb; color: white; }
         .smartfill-btn.filling { opacity: 0.4; cursor: wait; }
         .outreach-btn { background: transparent; border: 1px solid #d97706; color: #d97706; padding: 0.3rem 0.65rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
