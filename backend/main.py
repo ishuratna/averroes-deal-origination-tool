@@ -3783,7 +3783,7 @@ async def contacts_sync_from_sends(request: Request,
                     "message": "Nothing was changed. Re-run with dry_run=0 to apply."}
 
         from google.cloud import bigquery as bq_lib
-        applied = []
+        applied, failures = [], []
         for p in plan:
             try:
                 sets, params, changes = [], [], []
@@ -3805,10 +3805,17 @@ async def contacts_sync_from_sends(request: Request,
                     f"({', '.join(changes)}).", created_by="contact-sync")
                 applied.append(p["name"])
             except Exception as e:
+                # In the RESPONSE, not only the server log. A company missing
+                # from `updated` with no stated reason cost a debugging round
+                # trip: it was unknowable from the outside whether it had failed
+                # here or been updated by an earlier, interrupted run.
                 logger.warning(f"[Contact sync] {p['name']} failed: {e}")
+                failures.append(f"{p['name']}: {e}")
         return {"status": "Success", "dry_run": False,
                 "companies_with_sends": len(rows), "updated": applied,
-                "message": f"Updated {len(applied)} contacts from what was actually sent."}
+                "failed": failures,
+                "message": (f"Updated {len(applied)} contacts from what was actually sent."
+                            + (f" {len(failures)} FAILED, see 'failed'." if failures else ""))}
 
     return _stream_json(_run)
 
