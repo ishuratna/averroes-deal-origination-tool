@@ -121,5 +121,18 @@ chk("concurrency stays modest (rate limits are shared with daytime use)",
     1 <= AUTO_SMARTFILL_CONCURRENCY <= 8, True)
 
 print()
+print("── Parallelism is real threads, not event-loop theatre ──")
+# Measured twice in production: sequential AND asyncio.gather-with-semaphore
+# both produced ~1 company per tick, because SmartFill's internals are blocking
+# calls that hold the event loop. Only threads overlap blocking I/O.
+import inspect  # noqa: E402
+import main  # noqa: E402
+src = inspect.getsource(main.smartfill_auto_run)
+chk("each company runs in a worker thread", "asyncio.to_thread" in src, True)
+chk("the gate is a THREADING semaphore (an asyncio one cannot gate threads)",
+    "threading.Semaphore" in src, True)
+chk("the stop signal is thread-safe", "threading.Event" in src, True)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

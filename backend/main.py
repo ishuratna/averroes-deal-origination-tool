@@ -2959,31 +2959,45 @@ async def smartfill_auto_run(request: Request):
 
     batch = [c["name"] for c in eligible[:min(AUTO_SMARTFILL_BATCH, remaining)]]
     processed, failed = [], []
-    # Bounded concurrency (see AUTO_SMARTFILL_CONCURRENCY above). A 429 from the
-    # hard daily cap flips stop_now so no NEW company starts, but workers already
-    # mid-company run to completion — a SmartFill is not safely interruptible
-    # halfway through its writes.
+    # THREADS, NOT ASYNC — measured, twice. The first version was sequential
+    # (~1 company per 11-minute tick). The second used asyncio.gather with a
+    # semaphore of 5 and produced EXACTLY THE SAME PACE, because SmartFill's
+    # internals (the Gemini SDK, Companies House HTTP, BigQuery writes) are
+    # blocking calls: async concurrency only parallelises work that yields, and
+    # blocking calls hold the event loop, so five "concurrent" workers queued
+    # behind each other single file. The semaphore was real, the parallelism
+    # was theatre.
+    #
+    # asyncio.to_thread gives each company a real worker thread, which is what
+    # actually overlaps blocking I/O. Each thread runs the async endpoint to
+    # completion in its own event loop (asyncio.run), safe because
+    # smartfill_company touches nothing loop-bound — its clients are the same
+    # thread-safe synchronous ones the rest of the app shares.
+    #
+    # A 429 from the hard daily cap flips stop_now so no NEW company starts,
+    # but workers already mid-company run to completion — a SmartFill is not
+    # safely interruptible halfway through its writes.
     import asyncio
-    sem = asyncio.Semaphore(max(1, AUTO_SMARTFILL_CONCURRENCY))
-    stop_now = False
+    import threading
+    gate = threading.Semaphore(max(1, AUTO_SMARTFILL_CONCURRENCY))
+    stop_now = threading.Event()
 
-    async def _one(name: str):
-        nonlocal stop_now
-        async with sem:
-            if stop_now:
+    def _one_blocking(name: str):
+        with gate:
+            if stop_now.is_set():
                 return
             try:
-                await smartfill_company(name, bulk=True)
+                asyncio.run(smartfill_company(name, bulk=True))
                 processed.append(name)
             except HTTPException as e:
                 if e.status_code == 429:
-                    stop_now = True
+                    stop_now.set()
                 else:
                     failed.append(f"{name}: {e.detail}")
             except Exception as e:
                 failed.append(f"{name}: {e}")
 
-    await asyncio.gather(*[_one(n) for n in batch])
+    await asyncio.gather(*[asyncio.to_thread(_one_blocking, n) for n in batch])
 
     return {
         "status": "Success",
