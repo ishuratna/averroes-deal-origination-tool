@@ -1179,7 +1179,16 @@ class BigQueryHandler:
     # rather than each page issuing its own SQL.
 
     OWNERS = ("Bea", "Ishu", "Issam", "Marianna")
-    TRACKS = ("A", "B", "kill")
+    # Stored track values. DISPLAY names differ and that is deliberate: the UI
+    # says "Pass to Bea" (A), "Pass to Issam/Marianna" (B), "Not interested"
+    # (kill) and "Talk later" (later). The stored values are never renamed —
+    # renaming a stored value while live code writes it is how the stage-rename
+    # migration corrupted 18 rows (see CLAUDE.md 2a).
+    #   later = warm but not now. Parked silently (no reminders), then
+    #   resurfaces on the Responded page for a fresh decision 6 months after
+    #   triaged_at — DERIVED from the timestamp at read time, no cron, no
+    #   second copy of the fact.
+    TRACKS = ("A", "B", "kill", "later")
 
     def set_owner(self, name: str, owner: str) -> bool:
         """Assign who is managing a company. One field, and it changes hands

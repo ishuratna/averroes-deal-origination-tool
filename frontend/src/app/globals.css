@@ -856,6 +856,10 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .rsp-btn.b:hover:not(:disabled) { background: #f6e5d1; }
 .rsp-btn.kill { border-color: #f0cdd5; color: #8c1d2a; background: #fdf1f4; }
 .rsp-btn.kill:hover:not(:disabled) { background: #fadfe5; }
+/* Talk later: deliberately quiet (slate, not a warm colour) — parking is the
+   calm middle ground between passing and closing. */
+.rsp-btn.later { border-color: #cbd5e1; color: #475569; background: #f8fafc; }
+.rsp-btn.later:hover:not(:disabled) { background: #eef2f6; }
 .rsp-assign { border: 1px solid #cbd5e1; border-radius: 6px; padding: 0.2rem 0.35rem; font-size: 0.7rem; font-weight: 700; color: #334155; background: #fff; cursor: pointer; font-family: inherit; }
 .rsp-empty { background: #fff; border: 1px dashed #cbd5e1; border-radius: 10px; padding: 1rem; font-size: 0.8rem; color: #94a3b8; text-align: center; }
 .rsp-filters { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }

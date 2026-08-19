@@ -24,7 +24,9 @@ import {
   displayStatus,
 } from '../../types';
 
-const LIVE_QUEUES: string[] = RESPONDED_QUEUES.filter(q => q.key !== 'closed').map(q => q.key);
+// Parked sections (asleep or closed) are not live conversations.
+const PARKED_QUEUES = ['closed', 'talk_later'];
+const LIVE_QUEUES: string[] = RESPONDED_QUEUES.filter(q => !PARKED_QUEUES.includes(q.key)).map(q => q.key);
 
 export default function RespondedPage() {
   const [data, setData] = useState<RespondedResponse | null>(null);
@@ -126,8 +128,8 @@ export default function RespondedPage() {
           <div>
             <h1>Responded</h1>
             <p className="page-sub">
-              Every company that has ever replied, grouped by what it needs next.
-              Emails go out from Bea&apos;s mailbox; Ishu triages each Email 2 reply.
+              Everyone who replied, grouped by what happens next: reply, decide,
+              or wait for the weekly sessions. All emails go out from Bea&apos;s mailbox.
             </p>
           </div>
           <div className="rsp-actions">
@@ -148,26 +150,30 @@ export default function RespondedPage() {
             <div className="rsp-summary">
               <div className="rsp-stat act">
                 <div className="rsp-stat-n">{needsAction}</div>
-                <div className="rsp-stat-l">Waiting on Ishu</div>
+                <div className="rsp-stat-l">Waiting on you</div>
               </div>
               <div className="rsp-stat">
                 <div className="rsp-stat-n">{byQueue['track_a_awaiting_thursday']?.length || 0}</div>
-                <div className="rsp-stat-l">For Thursday</div>
+                <div className="rsp-stat-l">Going to Bea (Thu)</div>
               </div>
               <div className="rsp-stat">
                 <div className="rsp-stat-n">{byQueue['track_b_awaiting_wednesday']?.length || 0}</div>
-                <div className="rsp-stat-l">For Wednesday</div>
+                <div className="rsp-stat-l">For Issam/Marianna (Wed)</div>
               </div>
               <div className="rsp-stat">
                 <div className="rsp-stat-n">{liveTotal}</div>
                 <div className="rsp-stat-l">Live conversations</div>
               </div>
-              {/* Live + killed = the Pipeline's Responded-and-beyond count, by
-                  construction: both read the same status. Shown so the
-                  reconciliation is a glance, not an act of faith. */}
+              <div className="rsp-stat">
+                <div className="rsp-stat-n">{byQueue['talk_later']?.length || 0}</div>
+                <div className="rsp-stat-l">Talk later</div>
+              </div>
+              {/* Live + parked + not interested = the Pipeline's
+                  Responded-and-beyond count, by construction: both read the same
+                  status. Shown so the reconciliation is a glance, not faith. */}
               <div className="rsp-stat">
                 <div className="rsp-stat-n">{byQueue['closed']?.length || 0}</div>
-                <div className="rsp-stat-l">Killed</div>
+                <div className="rsp-stat-l">Not interested</div>
               </div>
             </div>
 
@@ -203,6 +209,7 @@ export default function RespondedPage() {
             {visibleQueues.map(q => {
               const rows = byQueue[q.key] || [];
               const isKilled = q.key === 'closed';
+              const isParked = PARKED_QUEUES.includes(q.key);
               // Live queues disappear when empty; the Killed section is ALWAYS
               // rendered, even at zero, so the reconciliation with the Pipeline
               // count is visible rather than implied.
@@ -217,7 +224,7 @@ export default function RespondedPage() {
                     <span className="rsp-group-hint">{q.hint}</span>
                   </div>
                   {isKilled && !rows.length && (
-                    <div className="rsp-group-empty">Nothing killed. Every replied-to company above is live.</div>
+                    <div className="rsp-group-empty">Nothing closed out. Every replied-to company above is live or parked.</div>
                   )}
                   {rows.length > 0 && (
                   <table className="rsp-table">
@@ -246,7 +253,7 @@ export default function RespondedPage() {
                               (their message last + 7 days) — this used to turn at
                               14, so a reply could be overdue for a week while the
                               page still showed it calm. Killed rows never redden. */}
-                          <td className={!isKilled && (c.days_since_reply ?? 0) >= 7 ? 'rsp-stale' : ''}>
+                          <td className={!isParked && (c.days_since_reply ?? 0) >= 7 ? 'rsp-stale' : ''}>
                             {c.days_since_reply != null ? `${c.days_since_reply}d ago` : '—'}
                           </td>
                           <td><OwnerTag owner={c.owner} /></td>
@@ -255,16 +262,22 @@ export default function RespondedPage() {
                               {isTriage && (
                                 <>
                                   <button className="rsp-btn a" disabled={busy === c.name}
-                                          onClick={() => triage(c, 'A')} title="High fit — to Bea via the Thursday session">
-                                    Track A
+                                          onClick={() => triage(c, 'A')} title="High fit — Bea takes it in the Thursday session">
+                                    Pass to Bea
                                   </button>
                                   <button className="rsp-btn b" disabled={busy === c.name}
-                                          onClick={() => triage(c, 'B')} title="Low or moderate fit, or too early — associate call">
-                                    Track B
+                                          onClick={() => triage(c, 'B')} title="Issam or Marianna takes the call — allocated on Wednesday">
+                                    Pass to Issam/Marianna
+                                  </button>
+                                  <button className="rsp-btn later" disabled={busy === c.name}
+                                          onClick={() => triage(c, 'later')}
+                                          title="Warm but not now. No reminders; comes back here for a fresh decision in 6 months.">
+                                    Talk later
                                   </button>
                                   <button className="rsp-btn kill" disabled={busy === c.name}
-                                          onClick={() => triage(c, 'kill')} title="Close out with a decline from Bea's mailbox">
-                                    Kill
+                                          onClick={() => triage(c, 'kill')}
+                                          title="Close it out. Moves to the Not interested section below; reversible.">
+                                    Not interested
                                   </button>
                                 </>
                               )}
@@ -283,7 +296,7 @@ export default function RespondedPage() {
                                   ))}
                                 </select>
                               )}
-                              {!isTriage && !isAllocate && !isKilled && (
+                              {!isTriage && !isAllocate && !isParked && (
                                 <>
                                   <select
                                     className="rsp-assign"
@@ -294,25 +307,31 @@ export default function RespondedPage() {
                                     <option value="">Unassigned</option>
                                     {DEAL_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
                                   </select>
-                                  {/* A conversation can die at any point, not only at
-                                      triage: Bea can pass on a Thursday name, an
-                                      associate call can end it. Kill is therefore
-                                      available in every live queue. */}
+                                  {/* A conversation can end or pause at any point,
+                                      not only at the first decision: Bea can pass on
+                                      a Thursday name, an associate call can end it,
+                                      timing can be wrong. Both exits are therefore
+                                      available in every live section. */}
+                                  <button className="rsp-btn later" disabled={busy === c.name}
+                                          onClick={() => triage(c, 'later')}
+                                          title="Warm but not now. Parks it below; back for a fresh decision in 6 months.">
+                                    Talk later
+                                  </button>
                                   <button className="rsp-btn kill" disabled={busy === c.name}
                                           onClick={() => triage(c, 'kill')}
-                                          title="Close out. Stays in the Killed section below and in the Pipeline's Responded count.">
-                                    Kill
+                                          title="Close it out. Moves to Not interested below; reversible.">
+                                    Not interested
                                   </button>
                                 </>
                               )}
-                              {isKilled && (
-                                /* A kill is a tag, not a fact, so it is reversible.
-                                   Restore clears the track and the company flows
-                                   back into whichever queue the evidence puts it. */
+                              {(isKilled || q.key === 'talk_later') && (
+                                /* Both are tags, not facts, so both reverse cleanly:
+                                   clearing the tag returns the company to whichever
+                                   live section the evidence puts it in. */
                                 <button className="rsp-btn" disabled={busy === c.name}
                                         onClick={() => triage(c, '')}
-                                        title="Undo the kill — returns to the live queues">
-                                  Restore
+                                        title="Bring it back into the live sections now">
+                                  {q.key === 'talk_later' ? 'Wake it up now' : 'Restore'}
                                 </button>
                               )}
                             </div>

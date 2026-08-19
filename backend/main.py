@@ -1584,12 +1584,14 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 -- are excluded: intentional silence must never nag.
                 (owed
                  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), last_recv_at, DAY) >= @reply_days
-                 -- Deliberate silence never nags: parked action buckets AND a
-                 -- kill. A killed company keeps status Responded (they did
-                 -- reply; killing is our decision), so without this it would
-                 -- reappear here every 7 days forever.
+                 -- Deliberate silence never nags: parked action buckets, Not
+                 -- interested (kill) and Talk later. All keep status Responded
+                 -- (they did reply; parking is our decision), so without this
+                 -- they would reappear here every 7 days forever. Talk-later
+                 -- companies resurface on the Responded page after 6 months
+                 -- instead, which is the agreed re-engagement route.
                  AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close')
-                 AND IFNULL(track, '') != 'kill')
+                 AND IFNULL(track, '') NOT IN ('kill', 'later'))
                 OR
                 -- THE BALL IS WITH THEM: silence since our email, reminder due.
                 -- Contacted = 14 days, overridden by the out-of-office rule above.
@@ -4039,9 +4041,10 @@ class OwnerRequest(BaseModel):
 # table and the Pipeline board can never drift apart on who owns a company.
 
 _TRACK_LABELS = {
-    "A": "Track A (high fit, to Bea via Thursday)",
-    "B": "Track B (associate call, allocated Wednesday)",
-    "kill": "Killed (closed out)",
+    "A": "Passed to Bea (high fit, Thursday session)",
+    "B": "Passed to Issam/Marianna (associate call, allocated Wednesday)",
+    "kill": "Not interested (closed out)",
+    "later": "Talk later (parked, resurfaces for a decision in 6 months)",
 }
 
 
@@ -4092,6 +4095,9 @@ async def set_company_owner(company_name: str, req: OwnerRequest):
 _LIVE_CALL_STAGES = ("Responded", "Meeting", "DD", "Offer")
 
 
+TALK_LATER_DAYS = int(os.getenv("TALK_LATER_DAYS", "180"))
+
+
 def _responded_group(r: dict) -> str:
     track = (r.get("track") or "").strip()
     status = r.get("status") or ""
@@ -4101,6 +4107,20 @@ def _responded_group(r: dict) -> str:
 
     if status in ("Lost", "Not a Fit") or track == "kill":
         return "closed"
+    if track == "later":
+        # Asleep for 6 months from the decision, then RESURFACES for a fresh
+        # decision. Derived from triaged_at at read time — the company simply
+        # starts grouping as needs_triage again one morning, with no cron and
+        # no stored flag to get stale.
+        # Explicit falsy guard: _as_date falls back to today for unparseable
+        # input, which would make a missing timestamp look freshly parked and
+        # sleep the company forever.
+        raw = r.get("triaged_at")
+        t = _as_date(raw) if raw else None
+        from datetime import date as _date
+        if t and (_date.today() - t).days < TALK_LATER_DAYS:
+            return "talk_later"
+        return "needs_triage"
     if not track:
         # No reply in the log at all: the company is here because a person put it
         # in Responded and confirmed a reply exists off-record (a phone call).
@@ -4136,7 +4156,7 @@ async def get_responded():
     open_calls = {a: 0 for a in ("Bea", "Ishu", "Issam", "Marianna")}
     for r in rows:
         o = (r.get("owner") or "").strip()
-        if o in open_calls and r["queue"] not in ("closed",) and (r.get("status") or "") in _LIVE_CALL_STAGES:
+        if o in open_calls and r["queue"] not in ("closed", "talk_later") and (r.get("status") or "") in _LIVE_CALL_STAGES:
             open_calls[o] += 1
 
     return {

@@ -199,7 +199,10 @@ export type DealOwner = typeof DEAL_OWNERS[number];
 // balances between them. Bea takes Track A calls; Ishu takes none.
 export const CALL_ASSOCIATES = ['Issam', 'Marianna'] as const;
 
-export type DealTrack = 'A' | 'B' | 'kill' | '';
+// Stored values, never renamed (see CLAUDE.md 2a on value renames). The UI
+// shows: A = "Pass to Bea", B = "Pass to Issam/Marianna",
+// kill = "Not interested", later = "Talk later".
+export type DealTrack = 'A' | 'B' | 'kill' | 'later' | '';
 
 export const OWNER_ROLES: Record<DealOwner, string> = {
   Bea: 'Partner — takes Track A calls',
@@ -210,19 +213,28 @@ export const OWNER_ROLES: Record<DealOwner, string> = {
 
 // The six live queues on the Responded page, in the order they are worked.
 // Backend counterpart: main.py _responded_group().
+// PLAIN ENGLISH ON PURPOSE (per Ishu, 20 Aug 2026): every section says what a
+// company is WAITING FOR, in words a first-time reader understands. Internal
+// vocabulary (Email 2, triage, Track A/B, kill) stays in the process doc and
+// the stored values; it does not appear on screen. The order is the order of
+// urgency: things waiting on you first, things waiting on meetings next,
+// things asleep or closed last.
 export const RESPONDED_QUEUES = [
-  { key: 'needs_email_2',             label: 'Needs Email 2',            hint: 'Replied to Email 1. Ishu sends the growth-story ask in his next block.',      tone: 'plum'  },
-  { key: 'needs_triage',              label: 'Needs triage',             hint: 'Email 2 reply in. Ishu picks Track A, Track B or kill.',                      tone: 'plum'  },
-  { key: 'track_a_awaiting_thursday', label: 'Track A — awaiting Thursday', hint: 'High fit. Waiting for the fortnightly shortlist session.',                 tone: 'teal'  },
-  { key: 'track_b_awaiting_wednesday', label: 'Track B — awaiting Wednesday', hint: 'Low or moderate fit, or too early. Waiting to be allocated.',            tone: 'amber' },
-  { key: 'track_b_assigned',          label: 'Assigned — call pending',  hint: 'An associate owns it and Email 4 has gone out.',                              tone: 'amber' },
-  { key: 'track_a_call_done',         label: 'Track A — call happened',  hint: 'Moved past the first call with Bea.',                                         tone: 'teal'  },
-  { key: 'track_b_call_done',         label: 'Track B — call happened',  hint: 'Moved past the associate call.',                                              tone: 'amber' },
-  // Always rendered, never hidden behind a toggle. A killed company keeps its
-  // Responded status (they DID reply; killing it is our decision, not a change
+  { key: 'needs_email_2',             label: 'You owe them a reply',       hint: 'They answered your first email. Send them the next one from your usual block.', tone: 'plum'  },
+  { key: 'needs_triage',              label: 'Decide who takes it',        hint: 'The conversation is live. Pass it to Bea, pass it to Issam/Marianna, park it for later, or close it out.', tone: 'plum'  },
+  { key: 'track_a_awaiting_thursday', label: 'Going to Bea — Thursday session', hint: 'High fit. Bea picks these up in the fortnightly Thursday session.',        tone: 'teal'  },
+  { key: 'track_b_awaiting_wednesday', label: 'For Issam/Marianna — Wednesday', hint: 'Waiting for Wednesday’s call to decide which of the two takes it.',        tone: 'amber' },
+  { key: 'track_b_assigned',          label: 'With an associate — call pending', hint: 'Issam or Marianna owns it and the intro email has gone out.',             tone: 'amber' },
+  { key: 'track_a_call_done',         label: 'Bea’s call happened',        hint: 'Moved past the first call with Bea.',                                           tone: 'teal'  },
+  { key: 'track_b_call_done',         label: 'Associate call happened',    hint: 'Moved past the call with Issam or Marianna.',                                   tone: 'amber' },
+  // Asleep, not gone: parked companies resurface in "Decide who takes it"
+  // 6 months after the decision, automatically.
+  { key: 'talk_later',                label: 'Talk later',                 hint: 'Warm but not now. No reminders; each returns to "Decide who takes it" 6 months after you parked it.', tone: 'grey' },
+  // Always rendered, never hidden behind a toggle. A closed company keeps its
+  // Responded status (they DID reply; closing it is our decision, not a change
   // of fact), so the Pipeline column still counts it. This section is what makes
-  // that reconcile on sight: live queues + Killed = the board's Responded count.
-  { key: 'closed',                    label: 'Killed',                   hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.', tone: 'grey' },
+  // that reconcile on sight: live queues + these two = the board's count.
+  { key: 'closed',                    label: 'Not interested',             hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.', tone: 'grey' },
 ] as const;
 
 export interface RespondedCompany extends CompanyTarget {
