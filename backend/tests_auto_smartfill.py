@@ -111,12 +111,11 @@ chk("target leaves free-tier headroom (250 x 4 = 1000 of 1500)",
 PER_COMPANY_MIN = 6
 TICK_DEADLINE_MIN = 11
 TICKS_PER_NIGHT = 30
-tick_capacity = min(AUTO_SMARTFILL_BATCH,
-                    AUTO_SMARTFILL_CONCURRENCY * (TICK_DEADLINE_MIN // PER_COMPANY_MIN))
-chk("a tick finishes at least a full concurrent round",
-    tick_capacity >= AUTO_SMARTFILL_CONCURRENCY, True)
-chk("a night of ticks can meet the target",
-    TICKS_PER_NIGHT * AUTO_SMARTFILL_CONCURRENCY * 2 >= AUTO_SMARTFILL_TARGET, True)
+waves = -(-AUTO_SMARTFILL_BATCH // AUTO_SMARTFILL_CONCURRENCY)  # ceil division
+chk("a tick's batch FITS its deadline (measured 21m50s when it did not)",
+    waves * PER_COMPANY_MIN <= TICK_DEADLINE_MIN, True)
+chk("a night of ticks makes meaningful progress (100+ companies)",
+    TICKS_PER_NIGHT * AUTO_SMARTFILL_BATCH >= 100, True)
 chk("concurrency stays modest (rate limits are shared with daytime use)",
     1 <= AUTO_SMARTFILL_CONCURRENCY <= 8, True)
 

@@ -2877,7 +2877,14 @@ async def smartfill_eligible():
 # which each night finds only newly ingested companies and costs pennies.
 
 AUTO_SMARTFILL_TARGET = int(os.getenv("AUTO_SMARTFILL_TARGET", "250"))
-AUTO_SMARTFILL_BATCH = int(os.getenv("AUTO_SMARTFILL_BATCH", "15"))
+# ONE WAVE PER TICK. Batch was 15 with 5 workers = three ~6-minute waves =
+# ~18-22 minutes (measured: a manual tick ran 21m50s), which overruns the
+# scheduler's 11-minute deadline every time - the cut kills whatever wave is
+# mid-flight and the response is lost. Completed companies persist (each
+# commits as it finishes), but partially-processed ones are wasted work. A
+# batch equal to the worker count finishes in one wave, comfortably inside the
+# deadline. Throughput comes from tick COUNT, not tick size.
+AUTO_SMARTFILL_BATCH = int(os.getenv("AUTO_SMARTFILL_BATCH", "5"))
 # MEASURED, not assumed: the first night (17 Aug) produced ~1 company per tick,
 # and the day's manual run did 11 in an hour — a real SmartFill takes 5-6
 # MINUTES (grounded enrichment + CH cap tables + contact waterfall + draft),
