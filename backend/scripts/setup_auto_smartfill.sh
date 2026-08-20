@@ -73,7 +73,7 @@ gcloud scheduler jobs "$ACTION" http "$NAME" \
   --project="$PROJECT" \
   --schedule="*/12 0-1,20-23 * * *" \
   --time-zone="$TZ_NAME" \
-  --uri="${BASE}/smartfill/auto-run?token=${TOKEN}" \
+  --uri="${BASE}/smartfill/auto/run?token=${TOKEN}" \
   --http-method=POST \
   --attempt-deadline=11m \
   --max-retry-attempts=0 \
@@ -86,7 +86,7 @@ echo "Test one tick now without waiting for 8 PM:"
 echo "  gcloud scheduler jobs run $NAME --location=$SCHED_LOC --project=$PROJECT"
 echo
 echo "Watch what it did:"
-echo "  curl -s -X POST \"\$B/smartfill/auto-run?token=\$T\" | python3 -m json.tool"
+echo "  curl -s -X POST \"\$B/smartfill/auto/run?token=\$T\" | python3 -m json.tool"
 echo
 echo "Pause during quiet periods (saves the AI spend entirely):"
 echo "  gcloud scheduler jobs pause $NAME --location=$SCHED_LOC --project=$PROJECT"

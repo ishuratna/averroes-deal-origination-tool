@@ -2926,8 +2926,17 @@ def _auto_smartfill_rank(c: dict) -> tuple:
     return (-score, (c.get("name") or "").lower())
 
 
-@app.get("/smartfill/auto-run")   # GET alias so a scheduler URL is enough
-@app.post("/smartfill/auto-run")
+# PATH SHAPE MATTERS. This was "/smartfill/auto-run" — one segment under
+# /smartfill/ — and FastAPI matches routes in REGISTRATION ORDER, so the
+# earlier-defined /smartfill/{company_name} swallowed every call and SmartFilled
+# a phantom company literally named "auto-run" (gated Not a Fit, one activity
+# row per tick). The nightly job therefore NEVER ran: three consecutive nights
+# of "~1 company per tick" were five scheduler ticks per hour each processing
+# the phantom, while three successive concurrency fixes changed code that never
+# executed. Two segments ("auto/run") can never match a single {company_name}
+# parameter, so this route is now shadow-proof by construction, not by ordering.
+@app.get("/smartfill/auto/run")   # GET alias so a scheduler URL is enough
+@app.post("/smartfill/auto/run")
 async def smartfill_auto_run(request: Request):
     """One tick of the nightly bulk SmartFill. Token-gated (Cloud Scheduler
     cannot hold a browser session).

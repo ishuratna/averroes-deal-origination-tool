@@ -121,6 +121,37 @@ chk("concurrency stays modest (rate limits are shared with daytime use)",
     1 <= AUTO_SMARTFILL_CONCURRENCY <= 8, True)
 
 print()
+print("── The route actually reaches the auto-run code ──")
+# THE PHANTOM COMPANY BUG. The path was /smartfill/auto-run, and FastAPI matches
+# in registration order: the earlier /smartfill/{company_name} swallowed every
+# call and SmartFilled a company literally named "auto-run" (gated Not a Fit,
+# one activity row per tick). The nightly job therefore never ran once, while
+# three successive concurrency 'fixes' changed code that never executed. This
+# resolves the path exactly as FastAPI does - first matching route wins - and
+# asserts the winner is the auto-run handler, so a shadow cannot ship again.
+import main as _m  # noqa: E402
+
+
+def _first_match(path: str, method: str = "POST"):
+    from starlette.routing import Match
+    scope = {"type": "http", "path": path, "method": method}
+    for route in _m.app.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            return getattr(route, "endpoint", None) and route.endpoint.__name__
+    return None
+
+
+chk("POST /smartfill/auto/run resolves to the auto-run handler",
+    _first_match("/smartfill/auto/run"), "smartfill_auto_run")
+chk("a real company path still resolves to single-company SmartFill",
+    _first_match("/smartfill/Acme%20Ltd"), "smartfill_company")
+chk("the old shadowed path is gone from the exempt list",
+    "/smartfill/auto-run" in __import__("auth").EXEMPT_PATHS, False)
+chk("...and the new one is exempt + token-guarded (pairing test covers the guard)",
+    "/smartfill/auto/run" in __import__("auth").EXEMPT_PATHS, True)
+
+print()
 print("── Parallelism is real threads, not event-loop theatre ──")
 # Measured twice in production: sequential AND asyncio.gather-with-semaphore
 # both produced ~1 company per tick, because SmartFill's internals are blocking
