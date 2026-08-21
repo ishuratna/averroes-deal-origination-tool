@@ -144,6 +144,9 @@ class BigQueryHandler:
         # The dead address, kept on the record after being cleared from
         # contact_email so the contact waterfall never re-suggests it.
         ("bounced_email", "STRING"),
+        # Nurture -> Assignment ready is ISHU'S CLICK ("Ready to assign"), never
+        # a heuristic acting alone. Stamped here; cleared to send it back.
+        ("assignment_ready_at", "TIMESTAMP"),
         ("owner", "STRING"),
         # 'A' = high fit, goes to Bea via the Thursday session.
         # 'B' = low/moderate fit or too early, associate call via Wednesday.
@@ -1190,6 +1193,24 @@ class BigQueryHandler:
     #   second copy of the fact.
     TRACKS = ("A", "B", "kill", "later")
 
+    def set_assignment_ready(self, name: str, on: bool = True, by: str = "Ishu Ratna") -> bool:
+        """Move a Responded company between Nurture and Assignment ready."""
+        if not self.client:
+            return False
+        job = self.client.query(
+            f"""UPDATE `{self.table_id}` SET
+                    assignment_ready_at = {"CURRENT_TIMESTAMP()" if on else "NULL"}
+                WHERE LOWER(name) = LOWER(@name)""",
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("name", "STRING", name)]))
+        job.result()
+        self.add_activity_note(
+            name,
+            "Marked ready to assign: the conversation has matured and needs a routing decision."
+            if on else "Moved back to Nurture: the conversation needs more time before routing.",
+            created_by=by)
+        return int(job.num_dml_affected_rows or 0) > 0
+
     def set_owner(self, name: str, owner: str) -> bool:
         """Assign who is managing a company. One field, and it changes hands
         on loop-in, so per-person open counts derive straight from it.
@@ -1269,6 +1290,7 @@ class BigQueryHandler:
                        t.averroes_fit_score, t.revenue_band, t.revenue_estimate_m,
                        t.size_bucket, t.action_bucket, t.unfit_reason,
                        t.owner, t.track, CAST(t.triaged_at AS STRING) AS triaged_at,
+                       CAST(t.assignment_ready_at AS STRING) AS assignment_ready_at,
                        CAST(t.reply_exempt_at AS STRING) AS reply_exempt_at,
                        t.reply_exempt_by,
                        IFNULL(a.sent_count, 0) AS sent_count,

@@ -1584,14 +1584,14 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 -- are excluded: intentional silence must never nag.
                 (owed
                  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), last_recv_at, DAY) >= @reply_days
-                 -- Deliberate silence never nags: parked action buckets, Not
-                 -- interested (kill) and Talk later. All keep status Responded
-                 -- (they did reply; parking is our decision), so without this
-                 -- they would reappear here every 7 days forever. Talk-later
-                 -- companies resurface on the Responded page after 6 months
-                 -- instead, which is the agreed re-engagement route.
+                 -- The 7-day nag applies ONLY while Ishu owns the conversation
+                 -- (Nurture / Assignment ready = no track). Routed companies
+                 -- (A: Bea's list, B: associates) are waiting on a MEETING,
+                 -- not an email; parked ones (kill, later) are deliberate
+                 -- silence. All keep status Responded, so without this they
+                 -- would reappear here every 7 days forever.
                  AND IFNULL(action_bucket, '') NOT IN ('not_fit_no_respond', 'declined_close')
-                 AND IFNULL(track, '') NOT IN ('kill', 'later'))
+                 AND IFNULL(track, '') = '')
                 OR
                 -- THE BALL IS WITH THEM: silence since our email, reminder due.
                 -- Contacted = 14 days, overridden by the out-of-office rule above.
@@ -4261,19 +4261,30 @@ TALK_LATER_DAYS = int(os.getenv("TALK_LATER_DAYS", "180"))
 
 
 def _responded_group(r: dict) -> str:
+    """Which section of the Responded page a company belongs to. v3, per the
+    decision tree agreed with Ishu (21 Aug 2026):
+
+      nurture           Ishu runs the conversation (no routing yet)
+      assignment_ready  Ishu clicked "Ready to assign" (or a Talk-later woke up)
+      bea_review        routed as a Bea candidate; discussed Thursday
+      assoc_review      routed for an associate call; allocated Wednesday
+      assoc_pending     allocated to Issam/Marianna; the call has not happened
+      bea_assigned      confirmed to Bea at the Thursday session (Section 3)
+      progressed        Meeting and beyond; the associates manage it on the
+                        Pipeline, this page only counts it
+      talk_later        asleep; wakes into assignment_ready after 6 months
+      closed            Not interested
+
+    ONE derivation feeds the header stats AND the section lists, so they can
+    never disagree.
+    """
     track = (r.get("track") or "").strip()
     status = r.get("status") or ""
     owner = (r.get("owner") or "").strip()
-    sent = int(r.get("sent_count") or 0)
-    recv = int(r.get("recv_count") or 0)
 
     if status in ("Lost", "Not a Fit") or track == "kill":
         return "closed"
     if track == "later":
-        # Asleep for 6 months from the decision, then RESURFACES for a fresh
-        # decision. Derived from triaged_at at read time — the company simply
-        # starts grouping as needs_triage again one morning, with no cron and
-        # no stored flag to get stale.
         # Explicit falsy guard: _as_date falls back to today for unparseable
         # input, which would make a missing timestamp look freshly parked and
         # sleep the company forever.
@@ -4282,22 +4293,14 @@ def _responded_group(r: dict) -> str:
         from datetime import date as _date
         if t and (_date.today() - t).days < TALK_LATER_DAYS:
             return "talk_later"
-        return "needs_triage"
-    if not track:
-        # No reply in the log at all: the company is here because a person put it
-        # in Responded and confirmed a reply exists off-record (a phone call).
-        # Email counts cannot say what it needs, so a human decides.
-        if recv == 0:
-            return "needs_triage"
-        # Not triaged yet. One email out means they answered Email 1 and are
-        # owed Email 2; two or more means they answered the real ask.
-        return "needs_email_2" if sent <= 1 else "needs_triage"
+        return "assignment_ready"   # woke up: what it needs is a routing decision
+    if status in ("Meeting", "DD", "Offer", "Won"):
+        return "progressed"
     if track == "A":
-        return "track_a_call_done" if status in ("Meeting", "DD", "Offer") else "track_a_awaiting_thursday"
-    # Track B
-    if owner in ("Issam", "Marianna"):
-        return "track_b_call_done" if status in ("Meeting", "DD", "Offer") else "track_b_assigned"
-    return "track_b_awaiting_wednesday"
+        return "bea_assigned" if owner == "Bea" else "bea_review"
+    if track == "B":
+        return "assoc_pending" if owner in ("Issam", "Marianna") else "assoc_review"
+    return "assignment_ready" if r.get("assignment_ready_at") else "nurture"
 
 
 @app.get("/responded")
@@ -4308,6 +4311,13 @@ async def get_responded():
     rows = bq_handler.get_responded()
     for r in rows:
         r["queue"] = _responded_group(r)
+        # Flags the page renders as hints, derived here so the rule lives once:
+        # resurfaced = a Talk-later that woke up (track still 'later', but
+        # grouped as assignment_ready); probably_ready = still in Nurture and
+        # they have answered the second email, so it is LIKELY mature — Ishu's
+        # click is still what moves it.
+        r["resurfaced"] = (r.get("track") == "later" and r["queue"] == "assignment_ready")
+        r["probably_ready"] = (r["queue"] == "nurture" and int(r.get("sent_count") or 0) >= 2)
 
     groups: Dict[str, List[dict]] = {}
     for r in rows:
@@ -4328,6 +4338,16 @@ async def get_responded():
         "owners": list(bq_handler.OWNERS),
         "companies": rows,
     }
+
+
+@app.put("/company/{company_name}/assignment-ready")
+async def company_assignment_ready(company_name: str,
+                                   on: int = Query(1, description="1 = ready to assign, 0 = back to Nurture")):
+    """Ishu's click that moves a conversation between Nurture and Assignment
+    ready. Deliberately a human action, never a heuristic acting alone."""
+    if not bq_handler.set_assignment_ready(company_name, on=bool(on)):
+        raise HTTPException(status_code=404, detail=f"'{company_name}' not found.")
+    return {"status": "Success", "company": company_name, "assignment_ready": bool(on)}
 
 
 class RemoveRequest(BaseModel):

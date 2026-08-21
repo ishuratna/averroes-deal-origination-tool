@@ -172,6 +172,20 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Ishu's click that moves a conversation between Nurture and Assignment
+  // ready. A human decision by design — the "probably ready" hint suggests,
+  // never acts.
+  async setAssignmentReady(name: string, on = true): Promise<any> {
+    const response = await apiFetch(
+      `${API_BASE_URL}/company/${encodeURIComponent(name)}/assignment-ready?on=${on ? 1 : 0}`,
+      { method: 'PUT' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Failed to move the company');
+    }
+    return await response.json();
+  },
+
   async triageCompany(name: string, track: DealTrack, owner?: DealOwner | ''): Promise<any> {
     const body: Record<string, unknown> = { track };
     if (owner !== undefined) body.owner = owner;

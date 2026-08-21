@@ -901,3 +901,50 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .rsp-chip { border: 1px solid #cbd5e1; background: #fff; color: #475569; border-radius: 999px; padding: 0.28rem 0.7rem; font-size: 0.74rem; font-weight: 700; cursor: pointer; font-family: inherit; }
 .rsp-chip.on { border-color: #4a2a6b; background: #f1ecf7; color: #4a2a6b; }
 .rsp-search { flex: 1; min-width: 200px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.82rem; font-family: inherit; }
+
+/* ── Responded v3: the three-step funnel ─────────────────────────────────────
+   Collapsed cards that open on click. The collapse animation uses the
+   grid-template-rows 0fr -> 1fr trick so it works at ANY content height —
+   max-height animations either clip long lists or ease unevenly on short
+   ones. Chevron rotation and the body fade share the same 0.25s so the whole
+   card feels like one movement. */
+.rsp3-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 0.35rem; overflow: hidden; transition: border-color 0.25s ease, box-shadow 0.25s ease; }
+.rsp3-section.open { box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06); }
+.rsp3-section.plum.open  { border-color: #c7b8dd; }
+.rsp3-section.amber.open { border-color: #ecd5b8; }
+.rsp3-section.teal.open  { border-color: #bcd9c8; }
+.rsp3-section.parked { background: #fbfcfe; }
+
+.rsp3-head { display: flex; align-items: center; gap: 0.7rem; width: 100%; padding: 0.85rem 1rem; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
+.rsp3-head:hover { background: #f8fafc; }
+.rsp3-step { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 800; color: #fff; background: #64748b; }
+.rsp3-section.plum  .rsp3-step { background: #4a2a6b; }
+.rsp3-section.amber .rsp3-step { background: #8a4b0f; }
+.rsp3-section.teal  .rsp3-step { background: #0f5132; }
+.rsp3-title { font-size: 0.95rem; font-weight: 800; color: #0f172a; }
+.rsp3-owner { font-size: 0.68rem; font-weight: 800; color: #475569; background: #eef2f6; border: 1px solid #dbe2ea; border-radius: 999px; padding: 0.16rem 0.55rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.rsp3-counts { margin-left: auto; display: flex; gap: 0.9rem; flex-wrap: wrap; }
+.rsp3-count { font-size: 0.74rem; color: #64748b; }
+.rsp3-count b { color: #0f172a; font-weight: 800; }
+.rsp3-chev { flex: none; color: #94a3b8; font-size: 0.85rem; transition: transform 0.25s ease; }
+.rsp3-section.open .rsp3-chev { transform: rotate(180deg); }
+
+.rsp3-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.25s ease; }
+.rsp3-section.open .rsp3-body { grid-template-rows: 1fr; }
+.rsp3-body-inner { min-height: 0; overflow: hidden; padding: 0 1rem; opacity: 0; transition: opacity 0.25s ease, padding 0.25s ease; }
+.rsp3-section.open .rsp3-body-inner { opacity: 1; padding: 0 1rem 1rem; }
+.rsp3-blurb { font-size: 0.78rem; color: #64748b; margin: 0 0 0.8rem; }
+.rsp3-list { margin-bottom: 1rem; }
+.rsp3-list:last-child { margin-bottom: 0; }
+
+/* The funnel arrow between section cards. */
+.rsp3-arrow { text-align: center; color: #94a3b8; font-size: 0.95rem; line-height: 1; margin: 0.1rem 0 0.45rem; }
+
+/* Hints, never actions: chips that explain a row's situation. */
+.rsp3-chip { display: inline-block; margin-left: 0.45rem; font-size: 0.62rem; font-weight: 800; border-radius: 999px; padding: 0.1rem 0.45rem; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.03em; }
+.rsp3-chip.ready { color: #0f5132; background: #e8f1ec; border: 1px solid #bcd9c8; }
+.rsp3-chip.woke  { color: #8a4b0f; background: #fbf1e6; border: 1px solid #ecd5b8; }
+
+/* The reconciliation footnote under the header stats. */
+.rsp3-subline { font-size: 0.78rem; color: #64748b; margin: -0.4rem 0 1rem; }
+.rsp3-subline b { color: #0f172a; }

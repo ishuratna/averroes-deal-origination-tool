@@ -64,7 +64,7 @@ FROM (SELECT *, last_recv_at IS NOT NULL AND last_recv_at > last_sent_at AS owed
 WHERE (
     (owed AND DATE_DIFF('day', last_recv_at, TIMESTAMP '{NOW}') >= {REPLY_DAYS}
        AND COALESCE(action_bucket,'') NOT IN ('not_fit_no_respond','declined_close')
-       AND COALESCE(track,'') != 'kill')
+       AND COALESCE(track,'') = '')
     OR (NOT owed AND TIMESTAMP '{NOW}' >= due_at)
 )
 ORDER BY name
@@ -145,6 +145,12 @@ mail("Bounced", "received", D(2026, 7, 20, 1), cls="bounce")
 #     without the track filter it would reappear every run forever.
 company("Killed", status="Responded", track="kill")
 mail("Killed", "sent", D(2026, 7, 20)); mail("Killed", "received", D(2026, 7, 25))
+# 16. ROUTED companies never nag either: once passed to Bea (A) or the
+#     associates (B), they wait on a MEETING, not an email from Ishu.
+company("WithBea", status="Responded", track="A")
+mail("WithBea", "sent", D(2026, 7, 20)); mail("WithBea", "received", D(2026, 7, 25))
+company("WithAssoc", status="Responded", track="B")
+mail("WithAssoc", "sent", D(2026, 7, 20)); mail("WithAssoc", "received", D(2026, 7, 25))
 
 rows = {r[0]: {"type": r[1], "threshold": r[2], "due_on": r[3]} for r in db.execute(SQL).fetchall()}
 
@@ -184,6 +190,8 @@ chk("...also as we_owe_reply", rows.get("NeverAnsweredThem", {}).get("type"), "w
 print()
 print("── A kill silences the reminder for good ──")
 chk("a killed company never appears", "Killed" in rows, False)
+chk("a company routed to Bea never nags Ishu", "WithBea" in rows, False)
+chk("a company routed to the associates never nags Ishu", "WithAssoc" in rows, False)
 
 print()
 print("── A bounce is not a reply ──")

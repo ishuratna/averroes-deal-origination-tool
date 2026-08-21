@@ -211,30 +211,47 @@ export const OWNER_ROLES: Record<DealOwner, string> = {
   Marianna: 'Associate — Track B calls',
 };
 
-// The six live queues on the Responded page, in the order they are worked.
-// Backend counterpart: main.py _responded_group().
-// PLAIN ENGLISH ON PURPOSE (per Ishu, 20 Aug 2026): every section says what a
-// company is WAITING FOR, in words a first-time reader understands. Internal
-// vocabulary (Email 2, triage, Track A/B, kill) stays in the process doc and
-// the stored values; it does not appear on screen. The order is the order of
-// urgency: things waiting on you first, things waiting on meetings next,
-// things asleep or closed last.
-export const RESPONDED_QUEUES = [
-  { key: 'needs_email_2',             label: 'You owe them a reply',       hint: 'They answered your first email. Send them the next one from your usual block.', tone: 'plum'  },
-  { key: 'needs_triage',              label: 'Decide who takes it',        hint: 'The conversation is live. Pass it to Bea, pass it to Issam/Marianna, park it for later, or close it out.', tone: 'plum'  },
-  { key: 'track_a_awaiting_thursday', label: 'Going to Bea — Thursday session', hint: 'High fit. Bea picks these up in the fortnightly Thursday session.',        tone: 'teal'  },
-  { key: 'track_b_awaiting_wednesday', label: 'For Issam/Marianna — Wednesday', hint: 'Waiting for Wednesday’s call to decide which of the two takes it.',        tone: 'amber' },
-  { key: 'track_b_assigned',          label: 'With an associate — call pending', hint: 'Issam or Marianna owns it and the intro email has gone out.',             tone: 'amber' },
-  { key: 'track_a_call_done',         label: 'Bea’s call happened',        hint: 'Moved past the first call with Bea.',                                           tone: 'teal'  },
-  { key: 'track_b_call_done',         label: 'Associate call happened',    hint: 'Moved past the call with Issam or Marianna.',                                   tone: 'amber' },
-  // Asleep, not gone: parked companies resurface in "Decide who takes it"
-  // 6 months after the decision, automatically.
-  { key: 'talk_later',                label: 'Talk later',                 hint: 'Warm but not now. No reminders; each returns to "Decide who takes it" 6 months after you parked it.', tone: 'grey' },
-  // Always rendered, never hidden behind a toggle. A closed company keeps its
-  // Responded status (they DID reply; closing it is our decision, not a change
-  // of fact), so the Pipeline column still counts it. This section is what makes
-  // that reconcile on sight: live queues + these two = the board's count.
-  { key: 'closed',                    label: 'Not interested',             hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.', tone: 'grey' },
+// Responded page v3 (agreed with Ishu, 21 Aug 2026): three OWNED SECTIONS,
+// each a stage of the funnel with a named person responsible, plus the parked
+// lists. Backend counterpart: main.py _responded_group() — the queue keys here
+// mirror its return values exactly, so the page renders whatever the one
+// derivation says and can never disagree with the header stats.
+// PLAIN ENGLISH ON PURPOSE: every list says what a company is WAITING FOR, in
+// words a first-time reader understands. Internal vocabulary (Track A/B, kill)
+// stays in the stored values; it does not appear on screen.
+export const RESPONDED_SECTIONS = [
+  {
+    key: 's1', title: 'Nurture', owner: 'Ishu', tone: 'plum',
+    blurb: 'Ishu runs every conversation until it is mature, then clicks it forward.',
+    lists: [
+      { key: 'nurture',          label: 'Nurture',          hint: 'Live email conversations. Keep them warm; the reminders below chase anything quiet for 7 days.' },
+      { key: 'assignment_ready', label: 'Assignment ready', hint: 'Mature conversations you marked ready. Route each to Bea or to an associate call.' },
+    ],
+  },
+  {
+    key: 's2', title: 'Associates weekly list', owner: 'Issam · Marianna', tone: 'amber',
+    blurb: 'The Wednesday and Thursday agendas: who takes each mature conversation.',
+    lists: [
+      { key: 'bea_review',    label: 'To discuss for Bea — Thursday',   hint: 'Candidates for Bea. Confirmed at the Thursday session; until then they can bounce back.' },
+      { key: 'assoc_review',  label: 'To discuss for calls — Wednesday', hint: 'Waiting for Wednesday to decide which associate takes the call.' },
+      { key: 'assoc_pending', label: 'Allocated — call pending',        hint: 'An associate owns it. After the call they move it to Meeting on the Pipeline themselves.' },
+    ],
+  },
+  {
+    key: 's3', title: 'Qualified leads', owner: 'Bea', tone: 'teal',
+    blurb: 'Confirmed to Bea at the Thursday session. Hers until a meeting happens.',
+    lists: [
+      { key: 'bea_assigned', label: 'With Bea', hint: 'Bea takes these conversations forward. A booked meeting moves them off this page.' },
+    ],
+  },
+] as const;
+
+// Parked lists render after the sections, always visible (never behind a
+// toggle): live sections + these + progressed = the Pipeline's
+// Responded-and-beyond count, so the reconciliation is a glance, not faith.
+export const RESPONDED_PARKED = [
+  { key: 'talk_later', label: 'Talk later',     hint: 'Warm but not now. No reminders; each wakes into Assignment ready 6 months after you parked it.' },
+  { key: 'closed',     label: 'Not interested', hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.' },
 ] as const;
 
 export interface RespondedCompany extends CompanyTarget {
@@ -248,6 +265,11 @@ export interface RespondedCompany extends CompanyTarget {
   // a genuine reply exists that the mailbox has no record of.
   reply_exempt_at?: string;
   reply_exempt_by?: string;
+  // v3: Ishu's "Ready to assign" click (Nurture -> Assignment ready).
+  assignment_ready_at?: string;
+  // Derived server-side alongside the queue, so the rules live once:
+  resurfaced?: boolean;      // a Talk-later that just woke up after 6 months
+  probably_ready?: boolean;  // still in Nurture but they answered email 2 — likely mature
 }
 
 // ── THE REPLY RULE ──────────────────────────────────────────────────────────
