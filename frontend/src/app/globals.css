@@ -697,6 +697,34 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .an-wbar-sent { background: #b45309; }
 .an-wbar-recv { background: #16a34a; }
 .an-week-label { font-size: 0.6rem; color: #94a3b8; margin-top: 4px; }
+/* Cumulative funnel chain: equal-size number blocks joined by conversion
+   percentages. Numbers, not proportional bars, because the universe dwarfs
+   every later stage and bars would render them invisible. */
+.an-chain-caption { font-size: 0.8rem; color: #64748b; margin: 0 0 0.9rem; }
+.an-chain { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0.2rem 0; }
+.an-chain-step { display: flex; align-items: center; }
+.an-chain-block {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 108px; padding: 0.7rem 0.9rem; border: 1px solid #e2e8f0;
+  border-radius: 10px; background: #fff;
+}
+.an-chain-block.first { background: #eff6ff; border-color: #bfdbfe; }
+.an-chain-n { font-size: 1.25rem; font-weight: 800; color: #0f172a; line-height: 1.1; }
+.an-chain-stage { font-size: 0.68rem; font-weight: 600; color: #64748b; margin-top: 0.2rem; }
+.an-chain-link { display: flex; flex-direction: column; align-items: center; padding: 0 0.55rem; }
+.an-chain-pct { font-size: 0.72rem; font-weight: 800; color: #b45309; }
+.an-chain-arrow { font-size: 0.9rem; color: #cbd5e1; line-height: 1; }
+
+/* SmartFill vs Qualified: the qualified column is drawn IN FRONT of the
+   smartfill column at the same x, so the subset reading is literal. */
+.an-week-bars.an-nest { position: relative; }
+/* Override the base .an-wbar flex sizing: nested columns share one x. */
+.an-week-bars.an-nest .an-wbar { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); max-width: none; }
+.an-wbar-fill { background: #c7d2fe; width: 22px; border-radius: 3px 3px 0 0; }
+.an-wbar-qual { background: #4f46e5; width: 11px; border-radius: 3px 3px 0 0; }
+.an-dot-fill { background: #c7d2fe; }
+.an-dot-qual { background: #4f46e5; }
+
 /* Data-integrity states. an-warn is a fault that needs action, an-ok is the
    all-clear, an-note is context that is not a problem. Distinct colours so the
    fault case is not mistaken for a footnote. */

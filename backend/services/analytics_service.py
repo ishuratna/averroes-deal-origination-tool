@@ -308,19 +308,66 @@ def compute_stats(bq_handler) -> Dict:
     emailed_ever = ever.get("emailed", 0)
     replied_ever = ever.get("replied", 0)
 
-    weekly: List[Dict] = []
+    # ── Activity series for the page's charts (per Ishu, 20 Aug 2026) ────────
+    # Daily for the working week, monthly for the long arc. All from primary
+    # sources (email_log, activity_log, targets), zero AI.
+
+    # Emails per day, last 7 days.
+    daily_emails: List[Dict] = []
     try:
         for r in bq_handler.client.query(
-                f"""SELECT FORMAT_DATE('%Y-%m-%d', DATE_TRUNC(DATE(sent_at), WEEK(MONDAY))) AS wk,
+                f"""SELECT FORMAT_DATE('%Y-%m-%d', DATE(sent_at)) AS d,
                            COUNTIF(direction = 'sent') AS sent,
                            COUNTIF(direction = 'received') AS received
                     FROM `{email}`
                     WHERE entity_type = 'company' AND sent_at IS NOT NULL
-                      AND DATE(sent_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 WEEK)
-                    GROUP BY wk ORDER BY wk""").result():
-            weekly.append({"week": r.wk, "sent": int(r.sent), "received": int(r.received)})
+                      AND DATE(sent_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY)
+                    GROUP BY d ORDER BY d""").result():
+            daily_emails.append({"day": r.d, "sent": int(r.sent), "received": int(r.received)})
     except Exception as e:
-        logger.warning(f"[Analytics] weekly email stats failed: {e}")
+        logger.warning(f"[Analytics] daily email stats failed: {e}")
+
+    # SmartFill runs per day vs companies that became Qualified that day, last 7
+    # days. Qualified is drawn INSIDE the SmartFill column on the page - not a
+    # strict mathematical subset (a hand-move to Qualified counts too), but the
+    # practical reading is "of the enrichment volume, how much became pipeline".
+    daily_enrichment: List[Dict] = []
+    try:
+        activity = bq_handler.activity_table_id
+        rows = {r.d: {"smartfills": int(r.n)} for r in bq_handler.client.query(
+            f"""SELECT FORMAT_DATE('%Y-%m-%d', DATE(created_at)) AS d, COUNT(*) AS n
+                FROM `{activity}`
+                WHERE action_type IN ('smartfill', 'smartenrich', 'smartfill_gated')
+                  AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY)
+                  AND IFNULL(company_name, '') NOT IN ('auto-run', 'chat')
+                GROUP BY d""").result()}
+        for r in bq_handler.client.query(
+                f"""SELECT FORMAT_DATE('%Y-%m-%d', DATE(first_at)) AS d, COUNT(*) AS n
+                    FROM `{_ledger_id(bq_handler)}`
+                    WHERE event = 'Qualified'
+                      AND DATE(first_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY)
+                    GROUP BY d""").result():
+            rows.setdefault(r.d, {})["qualified"] = int(r.n)
+        daily_enrichment = [{"day": d, "smartfills": v.get("smartfills", 0),
+                             "qualified": v.get("qualified", 0)}
+                            for d, v in sorted(rows.items())]
+    except Exception as e:
+        logger.warning(f"[Analytics] daily enrichment stats failed: {e}")
+
+    # Universe growth: cumulative companies by month, from ingested_at. Uploads
+    # show as visible jumps, which is the honest shape of how it was built.
+    universe_growth: List[Dict] = []
+    try:
+        running = 0
+        for r in bq_handler.client.query(
+                f"""SELECT FORMAT_DATE('%Y-%m', DATE(ingested_at)) AS m, COUNT(*) AS n
+                    FROM `{targets}`
+                    WHERE ingested_at IS NOT NULL AND IFNULL(source,'') != 'Internal Test'
+                    GROUP BY m ORDER BY m""").result():
+            running += int(r.n)
+            universe_growth.append({"month": r.m, "added": int(r.n), "cumulative": running})
+    except Exception as e:
+        logger.warning(f"[Analytics] universe growth failed: {e}")
 
     # EVER-COUNTS for the two outreach stages come from email EVIDENCE, not from
     # stage history, and deliberately so:
@@ -345,11 +392,25 @@ def compute_stats(bq_handler) -> Dict:
     # (bq_handler.reconcile_reply_stages), so every surface reads status and the
     # numbers reconcile. Rows whose evidence disagrees are reported below as
     # inconsistencies rather than quietly changing the count.
-    funnel = [{
-        "stage": s,
-        "ever": ever.get(_EVIDENCE.get(s, s), 0),
-        "current": current.get(s, 0),
-    } for s in FUNNEL_ORDER]
+    # CUMULATIVE funnel (the page's word, per Ishu): how many companies have
+    # EVER reached each stage, with each stage's conversion from the previous
+    # one precomputed here so the page renders numbers, not maths. "current"
+    # is no longer shown on the page but kept in the payload for the snapshot
+    # history and any future need.
+    funnel = []
+    prev = None
+    for s in FUNNEL_ORDER:
+        cum = ever.get(_EVIDENCE.get(s, s), 0)
+        funnel.append({
+            "stage": s,
+            "cumulative": cum,
+            "ever": cum,                      # legacy name, kept for snapshots
+            "current": current.get(s, 0),
+            # % of the previous stage that converted. None for the first stage
+            # and whenever the previous stage is 0 (a rate against nothing).
+            "conversion_pct": round(cum / prev * 100, 1) if prev else None,
+        })
+        prev = cum if cum else prev
 
     # Stage/evidence disagreements, surfaced for the page (0 = clean):
     inconsistencies = {
@@ -372,7 +433,9 @@ def compute_stats(bq_handler) -> Dict:
         "emailed_ever": emailed_ever,
         "replied_ever": replied_ever,
         "response_rate": round(replied_ever / emailed_ever, 4) if emailed_ever else None,
-        "weekly_emails": weekly,
+        "daily_emails": daily_emails,
+        "daily_enrichment": daily_enrichment,
+        "universe_growth": universe_growth,
         "inconsistencies": inconsistencies,
     }
 
@@ -381,7 +444,10 @@ def write_snapshot(bq_handler, stats: Dict):
     """Upsert today's snapshot (last write of the day wins)."""
     if not bq_handler.client or not stats:
         return
-    payload = json.dumps({k: v for k, v in stats.items() if k != "weekly_emails"})
+    # Activity series are recomputable from primary sources any time; snapshots
+    # exist to preserve the FUNNEL's history, so only that (and the scalars).
+    _RECOMPUTABLE = {"weekly_emails", "daily_emails", "daily_enrichment", "universe_growth"}
+    payload = json.dumps({k: v for k, v in stats.items() if k not in _RECOMPUTABLE})
     bq_handler.client.query(
         f"""MERGE `{_snapshots_id(bq_handler)}` T
             USING (SELECT CURRENT_DATE() AS d) S ON T.snap_date = S.d

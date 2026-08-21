@@ -3,7 +3,9 @@
 // Analytics — retention-proof funnel stats.
 // "Ever" counts come from the backend's immutable analytics_ledger (facts
 // survive deletion/re-statusing); "current" counts are live targets rows.
-// Trend series comes from daily snapshots written by the watch job.
+// Activity series (daily emails, SmartFill vs Qualified, universe growth) are
+// recomputed from primary sources on every load; the funnel is CUMULATIVE from
+// the immutable ledger.
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -11,23 +13,19 @@ import { dealApi } from '../../services/api';
 import AuthGate from '../../components/AuthGate';
 import SideNav from '../../components/SideNav';
 
-interface FunnelRow { stage: string; ever: number; current: number }
-interface WeeklyRow { week: string; sent: number; received: number }
-interface Snapshot {
-  date: string;
-  stored_ever?: number; stored_current?: number;
-  emailed_ever?: number; replied_ever?: number;
-  response_rate?: number | null;
-  funnel?: FunnelRow[];
-}
+interface FunnelRow { stage: string; cumulative: number; ever: number; current: number; conversion_pct: number | null }
+interface DailyEmailRow { day: string; sent: number; received: number }
+interface EnrichmentRow { day: string; smartfills: number; qualified: number }
+interface UniverseRow { month: string; added: number; cumulative: number }
 interface Analytics {
   stored_ever: number; stored_current: number;
   funnel: FunnelRow[];
   not_a_fit_ever: number; not_a_fit_current: number;
   emailed_ever: number; replied_ever: number;
   response_rate: number | null;
-  weekly_emails: WeeklyRow[];
-  snapshots: Snapshot[];
+  daily_emails: DailyEmailRow[];
+  daily_enrichment: EnrichmentRow[];
+  universe_growth: UniverseRow[];
   inconsistencies?: {
     contacted_without_email?: number;
     responded_without_reply?: number;
@@ -66,8 +64,12 @@ function AnalyticsInner() {
 
   useEffect(() => { load(false); }, [load]);
 
-  const maxFunnel = Math.max(1, ...(data?.funnel || []).map(f => Math.max(f.ever, f.current)));
   const rate = data?.response_rate != null ? `${(data.response_rate * 100).toFixed(1)}%` : '—';
+  // The chain runs Qualified -> Won: the funnel's decision path. Lost is not a
+  // conversion step (it is an exit that can happen anywhere), so it reads as a
+  // footnote rather than a link in the chain.
+  const chain = (data?.funnel || []).filter(f => f.stage !== 'Lost');
+  const lost = (data?.funnel || []).find(f => f.stage === 'Lost');
 
   return (
     <div className="layout-wrapper">
@@ -78,8 +80,8 @@ function AnalyticsInner() {
           <div>
             <h1 className="an-title">Analytics</h1>
             <p className="an-sub">
-              Ever counts are recorded in an immutable ledger, so they survive deletions
-              and re-uploads. Current counts are live database rows.
+              Cumulative counts: how many companies have ever reached each step.
+              Recorded in an immutable ledger, so they survive deletions and re-uploads.
             </p>
           </div>
           <button className="an-refresh" disabled={loading} onClick={() => load(true)}>
@@ -115,31 +117,41 @@ function AnalyticsInner() {
               </div>
             </section>
 
-            {/* Funnel: ever vs current */}
+            {/* CUMULATIVE FUNNEL — numbers, not bars, on purpose: the universe
+                (12k+) dwarfs everything downstream, so proportional bars turn
+                every later stage into an invisible sliver. Equal blocks with
+                the conversion % between them read the story instead. Starts at
+                Qualified; the universe is the caption above. */}
             <section className="an-card">
-              <h2 className="an-card-title">Funnel, ever vs current</h2>
-              <div className="an-funnel">
-                {data.funnel.map(f => (
-                  <div className="an-funnel-row" key={f.stage}>
-                    <span className="an-stage">{label(f.stage)}</span>
-                    <div className="an-bars">
-                      <div className="an-bar-line">
-                        <div className="an-bar an-bar-ever" style={{ width: `${(f.ever / maxFunnel) * 100}%` }} />
-                        <span className="an-bar-num">{f.ever.toLocaleString()}</span>
+              <h2 className="an-card-title">Cumulative funnel</h2>
+              <p className="an-chain-caption">
+                From a universe of <b>{data.stored_ever.toLocaleString()}</b> companies,
+                every step a company has ever reached:
+              </p>
+              <div className="an-chain">
+                {chain.map((f, i) => (
+                  <div className="an-chain-step" key={f.stage}>
+                    {i > 0 && (
+                      <div className="an-chain-link">
+                        <span className="an-chain-pct">
+                          {f.conversion_pct != null ? `${f.conversion_pct}%` : '—'}
+                        </span>
+                        <span className="an-chain-arrow">→</span>
                       </div>
-                      <div className="an-bar-line">
-                        <div className="an-bar an-bar-current" style={{ width: `${(f.current / maxFunnel) * 100}%` }} />
-                        <span className="an-bar-num">{f.current.toLocaleString()}</span>
-                      </div>
+                    )}
+                    <div className={`an-chain-block ${i === 0 ? 'first' : ''}`}>
+                      <span className="an-chain-n">{f.cumulative.toLocaleString()}</span>
+                      <span className="an-chain-stage">{label(f.stage)}</span>
                     </div>
                   </div>
                 ))}
               </div>
               <div className="an-legend">
-                <span><i className="an-dot an-dot-ever" /> ever reached stage</span>
-                <span><i className="an-dot an-dot-current" /> currently in stage</span>
                 <span className="an-legend-note">
-                  Contacted = emailed · Responded = replied (email evidence, ever and current) · Not a Fit: {data.not_a_fit_ever.toLocaleString()} ever · {data.not_a_fit_current.toLocaleString()} current
+                  Percentages are conversion from the previous step. Contacted counts
+                  companies we emailed; Responded counts genuine replies (autoresponders
+                  and bounces never count). Not a fit: {data.not_a_fit_ever.toLocaleString()}
+                  {lost ? <> · Lost: {(lost.cumulative || 0).toLocaleString()}</> : null}
                 </span>
               </div>
               {(() => {
@@ -185,29 +197,39 @@ function AnalyticsInner() {
             </section>
 
             <div className="an-two-col">
-              {/* Trend from daily snapshots */}
+              {/* Emails per day, working week */}
               <section className="an-card">
-                <h2 className="an-card-title">Trend, daily snapshots</h2>
-                {data.snapshots.length >= 2 ? (
-                  <TrendChart snapshots={data.snapshots} />
+                <h2 className="an-card-title">Emails, last 7 days</h2>
+                {data.daily_emails.length > 0 ? (
+                  <DailyEmailBars rows={data.daily_emails} />
                 ) : (
-                  <p className="an-empty">
-                    Trend charts appear once a few daily snapshots accumulate
-                    (first one was written today; the watch job adds one per day).
-                  </p>
+                  <p className="an-empty">No logged emails in the last 7 days.</p>
                 )}
               </section>
 
-              {/* Weekly email volume */}
+              {/* SmartFill vs newly Qualified — qualified drawn INSIDE the
+                  smartfill column, so "how much enrichment became pipeline"
+                  is literal, not inferred. */}
               <section className="an-card">
-                <h2 className="an-card-title">Email volume, last 12 weeks</h2>
-                {data.weekly_emails.length > 0 ? (
-                  <WeeklyBars rows={data.weekly_emails} />
+                <h2 className="an-card-title">SmartFill vs Qualified, last 7 days</h2>
+                {data.daily_enrichment.length > 0 ? (
+                  <EnrichmentBars rows={data.daily_enrichment} />
                 ) : (
-                  <p className="an-empty">No logged emails in the last 12 weeks.</p>
+                  <p className="an-empty">No SmartFill runs in the last 7 days.</p>
                 )}
               </section>
             </div>
+
+            {/* Universe growth: the asset being built, month by month. Uploads
+                appear as visible jumps, which is the honest shape of it. */}
+            <section className="an-card">
+              <h2 className="an-card-title">Universe growth, cumulative by month</h2>
+              {data.universe_growth.length >= 2 ? (
+                <UniverseLine rows={data.universe_growth} />
+              ) : (
+                <p className="an-empty">Growth appears once the universe spans more than one month.</p>
+              )}
+            </section>
           </>
         )}
         {!data && loading && <div className="an-empty">Loading analytics…</div>}
@@ -216,52 +238,23 @@ function AnalyticsInner() {
   );
 }
 
-// ── Hand-rolled SVG line chart (no chart deps) ───────────────────────────────
-function TrendChart({ snapshots }: { snapshots: Snapshot[] }) {
-  const W = 520, H = 220, P = 34;
-  const series: { key: keyof Snapshot; label: string; color: string }[] = [
-    { key: 'stored_ever', label: 'Stored ever', color: '#2563eb' },
-    { key: 'emailed_ever', label: 'Emailed ever', color: '#b45309' },
-    { key: 'replied_ever', label: 'Replied ever', color: '#16a34a' },
-  ];
-  const vals = snapshots.flatMap(s => series.map(x => Number(s[x.key] ?? 0)));
-  const maxV = Math.max(1, ...vals);
-  const x = (i: number) => P + (i / Math.max(1, snapshots.length - 1)) * (W - 2 * P);
-  const y = (v: number) => H - P - (v / maxV) * (H - 2 * P);
-  const path = (key: keyof Snapshot) =>
-    snapshots.map((s, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(Number(s[key] ?? 0)).toFixed(1)}`).join(' ');
-  return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="an-svg" role="img" aria-label="Funnel trend over time">
-        {[0, 0.5, 1].map(t => (
-          <g key={t}>
-            <line x1={P} x2={W - P} y1={y(maxV * t)} y2={y(maxV * t)} stroke="#e2e8f0" strokeWidth="1" />
-            <text x={P - 6} y={y(maxV * t) + 4} textAnchor="end" fontSize="10" fill="#64748b">{Math.round(maxV * t)}</text>
-          </g>
-        ))}
-        {series.map(s => <path key={s.key as string} d={path(s.key)} fill="none" stroke={s.color} strokeWidth="2" />)}
-        <text x={P} y={H - 8} fontSize="10" fill="#64748b">{snapshots[0].date}</text>
-        <text x={W - P} y={H - 8} fontSize="10" fill="#64748b" textAnchor="end">{snapshots[snapshots.length - 1].date}</text>
-      </svg>
-      <div className="an-legend">
-        {series.map(s => <span key={s.key as string}><i className="an-dot" style={{ background: s.color }} /> {s.label}</span>)}
-      </div>
-    </div>
-  );
-}
+// ── Hand-rolled charts (no chart deps) ───────────────────────────────────────
 
-function WeeklyBars({ rows }: { rows: WeeklyRow[] }) {
+const DAY_LABEL = (d: string) =>
+  new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+
+function DailyEmailBars({ rows }: { rows: DailyEmailRow[] }) {
   const maxV = Math.max(1, ...rows.map(r => Math.max(r.sent, r.received)));
   return (
     <div>
       <div className="an-weeks">
         {rows.map(r => (
-          <div className="an-week" key={r.week} title={`Week of ${r.week}: ${r.sent} sent, ${r.received} replies`}>
+          <div className="an-week" key={r.day} title={`${r.day}: ${r.sent} sent, ${r.received} replies`}>
             <div className="an-week-bars">
               <div className="an-wbar an-wbar-sent" style={{ height: `${(r.sent / maxV) * 100}%` }} />
               <div className="an-wbar an-wbar-recv" style={{ height: `${(r.received / maxV) * 100}%` }} />
             </div>
-            <span className="an-week-label">{r.week.slice(5)}</span>
+            <span className="an-week-label">{DAY_LABEL(r.day)}</span>
           </div>
         ))}
       </div>
@@ -269,6 +262,62 @@ function WeeklyBars({ rows }: { rows: WeeklyRow[] }) {
         <span><i className="an-dot an-dot-sent" /> sent</span>
         <span><i className="an-dot an-dot-recv" /> replies</span>
       </div>
+    </div>
+  );
+}
+
+function EnrichmentBars({ rows }: { rows: EnrichmentRow[] }) {
+  // The qualified column sits INSIDE the smartfill column (same x, in front),
+  // so the subset relationship is drawn, not implied by a legend.
+  const maxV = Math.max(1, ...rows.map(r => Math.max(r.smartfills, r.qualified)));
+  return (
+    <div>
+      <div className="an-weeks">
+        {rows.map(r => (
+          <div className="an-week" key={r.day} title={`${r.day}: ${r.smartfills} SmartFills, ${r.qualified} newly qualified`}>
+            <div className="an-week-bars an-nest">
+              <div className="an-wbar an-wbar-fill" style={{ height: `${(r.smartfills / maxV) * 100}%` }} />
+              <div className="an-wbar an-wbar-qual" style={{ height: `${(r.qualified / maxV) * 100}%` }} />
+            </div>
+            <span className="an-week-label">{DAY_LABEL(r.day)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="an-legend">
+        <span><i className="an-dot an-dot-fill" /> SmartFill runs</span>
+        <span><i className="an-dot an-dot-qual" /> became Qualified</span>
+      </div>
+    </div>
+  );
+}
+
+function UniverseLine({ rows }: { rows: UniverseRow[] }) {
+  const W = 1040, H = 220, P = 42;
+  const maxV = Math.max(1, ...rows.map(r => r.cumulative));
+  const x = (i: number) => P + (i / Math.max(1, rows.length - 1)) * (W - 2 * P);
+  const y = (v: number) => H - P - (v / maxV) * (H - 2 * P);
+  const path = rows.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(r.cumulative).toFixed(1)}`).join(' ');
+  const area = `${path} L${x(rows.length - 1).toFixed(1)},${y(0)} L${x(0).toFixed(1)},${y(0)} Z`;
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="an-svg" role="img" aria-label="Universe growth over time">
+        {[0, 0.5, 1].map(t => (
+          <g key={t}>
+            <line x1={P} x2={W - P} y1={y(maxV * t)} y2={y(maxV * t)} stroke="#e2e8f0" strokeWidth="1" />
+            <text x={P - 6} y={y(maxV * t) + 4} textAnchor="end" fontSize="10" fill="#64748b">{Math.round(maxV * t).toLocaleString()}</text>
+          </g>
+        ))}
+        <path d={area} fill="#eff6ff" />
+        <path d={path} fill="none" stroke="#2563eb" strokeWidth="2" />
+        {rows.map((r, i) => (
+          <circle key={r.month} cx={x(i)} cy={y(r.cumulative)} r="3" fill="#2563eb">
+            <title>{`${r.month}: ${r.cumulative.toLocaleString()} total (+${r.added.toLocaleString()})`}</title>
+          </circle>
+        ))}
+        {rows.map((r, i) => (rows.length <= 14 || i % 2 === 0) && (
+          <text key={`l${r.month}`} x={x(i)} y={H - 10} fontSize="10" fill="#64748b" textAnchor="middle">{r.month}</text>
+        ))}
+      </svg>
     </div>
   );
 }
