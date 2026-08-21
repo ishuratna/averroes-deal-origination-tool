@@ -1480,6 +1480,7 @@ class BigQueryHandler:
             schema = [bigquery.SchemaField(n, t) for n, t in [
                 ("company_name", "STRING"), ("filename", "STRING"),
                 ("gcs_path", "STRING"), ("content_type", "STRING"),
+                ("content_sha256", "STRING"),
                 ("size_bytes", "INT64"), ("message_id", "STRING"),
                 ("email_subject", "STRING"), ("sender_email", "STRING"),
                 ("received_at", "TIMESTAMP"), ("saved_at", "TIMESTAMP"),
@@ -1504,21 +1505,40 @@ class BigQueryHandler:
         except Exception:
             return False
 
+    def email_doc_hash_exists(self, company_name: str, sha256: str) -> bool:
+        """Identical bytes already filed for this company? The cost guard that
+        stops a thread's repeated signature logo filing (and being AI-read)
+        once per email."""
+        if not self.client or not sha256:
+            return False
+        t = self._ensure_email_docs_table()
+        try:
+            rows = list(self.client.query(
+                f"SELECT 1 FROM `{t}` WHERE company_name = @c AND content_sha256 = @s LIMIT 1",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("c", "STRING", company_name),
+                    bigquery.ScalarQueryParameter("s", "STRING", sha256),
+                ])).result())
+            return bool(rows)
+        except Exception:
+            return False
+
     def save_email_doc(self, meta: Dict) -> bool:
         if not self.client:
             return False
         t = self._ensure_email_docs_table()
         try:
             self.client.query(f"""
-                INSERT INTO `{t}` (company_name, filename, gcs_path, content_type,
+                INSERT INTO `{t}` (company_name, filename, gcs_path, content_type, content_sha256,
                                    size_bytes, message_id, email_subject, sender_email,
                                    received_at, saved_at, ai_summary, ai_updates)
-                VALUES (@c, @f, @g, @ct, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd)
+                VALUES (@c, @f, @g, @ct, @sha, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd)
             """, job_config=bigquery.QueryJobConfig(query_parameters=[
                 bigquery.ScalarQueryParameter("c", "STRING", meta.get("company_name") or ""),
                 bigquery.ScalarQueryParameter("f", "STRING", meta.get("filename") or ""),
                 bigquery.ScalarQueryParameter("g", "STRING", meta.get("gcs_path") or ""),
                 bigquery.ScalarQueryParameter("ct", "STRING", meta.get("content_type") or ""),
+                bigquery.ScalarQueryParameter("sha", "STRING", meta.get("content_sha256") or ""),
                 bigquery.ScalarQueryParameter("sz", "INT64", int(meta.get("size_bytes") or 0)),
                 bigquery.ScalarQueryParameter("m", "STRING", meta.get("message_id") or ""),
                 bigquery.ScalarQueryParameter("subj", "STRING", meta.get("email_subject") or ""),

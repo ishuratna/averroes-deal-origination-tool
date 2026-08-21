@@ -3920,12 +3920,14 @@ async def email_docs_backfill(request: Request,
         entries = sync_mailbox(known, days=max(1, min(days, 3650)),
                                known_domains=known_domains, thread_map=thread_map)
         filed, scanned = [], 0
+        backfill_ai_budget = [50]  # one-off pass, a larger but still bounded read budget
         for e in entries:
             if e.get("direction") != "received" or not e.get("attachments"):
                 continue
             scanned += 1
             names = process_email_documents(
-                bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")))
+                bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")),
+                ai_budget=backfill_ai_budget)
             filed += [f"{e['entity_name']}: {n}" for n in names]
         return {"status": "Success", "days_scanned": days,
                 "emails_with_attachments": scanned, "documents_filed": filed,
@@ -5399,11 +5401,13 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # email_docs_service and every change lands in the Activity Log.
     docs_filed = []
     try:
-        from services.email_docs_service import process_email_documents
+        from services.email_docs_service import AI_READS_PER_RUN, process_email_documents
+        doc_ai_budget = [AI_READS_PER_RUN]
         for e in new_entries:
             if e.get("direction") == "received" and e.get("attachments"):
                 names = process_email_documents(
-                    bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")))
+                    bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")),
+                    ai_budget=doc_ai_budget)
                 docs_filed += [f"{e['entity_name']}: {n}" for n in names]
     except Exception as e:
         logger.warning(f"[EmailDocs] processing failed (non-fatal): {e}")

@@ -17,6 +17,7 @@ AI never touches CH-filed figures (revenue_y1 etc.): a deck's numbers are
 unaudited claims, so they land in the ESTIMATE fields, clearly sourced.
 """
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -31,6 +32,26 @@ MAX_ATTACHMENTS_PER_EMAIL = 10
 # Types Gemini can read natively. Everything else is still FILED (per Ishu:
 # everything attached is kept), just not analysed.
 _AI_READABLE = ("application/pdf", "image/png", "image/jpeg", "image/webp")
+
+# COST GUARDS. Most attachments are signature logos: the same small image on
+# every message in a thread. Filing is near-free; AI-reading each one is pure
+# waste (a 30KB logo holds no company data, and threads repeat it endlessly).
+MIN_AI_IMAGE_BYTES = 100 * 1024      # images below this are filed, not read
+AI_READS_PER_RUN = 10                # per sync run, a mass-attachment email cannot spike spend
+
+
+def should_analyse(content_type: str, size_bytes: int) -> bool:
+    """Is AI-reading this file worth a call? Pure, testable.
+
+    PDFs always (that is where decks and accounts live, ~1p each). Images only
+    when large enough to plausibly be a scanned document or a chart, not a
+    signature logo. Everything else Gemini cannot read natively anyway.
+    """
+    if content_type == "application/pdf":
+        return True
+    if content_type in _AI_READABLE:                 # the image types
+        return size_bytes >= MIN_AI_IMAGE_BYTES
+    return False
 
 
 def sanitize_filename(name: str) -> str:
@@ -176,11 +197,18 @@ Return ONLY valid JSON:
 
 
 def process_email_documents(bq_handler, gcs_handler, entry: Dict,
-                            company_row: Optional[Dict]) -> List[str]:
+                            company_row: Optional[Dict],
+                            ai_budget: Optional[List[int]] = None) -> List[str]:
     """File and read every attachment on one inbound email. Returns saved names.
 
-    Idempotent: (message_id, filename) already stored is skipped, so re-syncs
-    and the retro backfill can overlap freely.
+    Idempotent twice over: (message_id, filename) already stored is skipped,
+    and IDENTICAL BYTES already filed for this company are skipped entirely
+    (content hash) - the signature logo attached to every message in a thread
+    files once, not once per email, and never costs a second AI read.
+
+    ai_budget is a single-element list shared by the caller across one run
+    (mutable on purpose): each AI read decrements it, and at zero the remaining
+    documents are filed without analysis.
     """
     saved = []
     attachments = entry.get("attachments") or []
@@ -191,13 +219,21 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
         try:
             if bq_handler.email_doc_exists(entry["message_id"], att["filename"]):
                 continue
+            sha = hashlib.sha256(att["data"]).hexdigest()
+            if bq_handler.email_doc_hash_exists(company, sha):
+                continue  # same bytes already on file for this company
             path = doc_gcs_path(company, entry.get("sent_at") or "", att["filename"])
             bucket = gcs_handler.storage_client.bucket(gcs_handler.bucket_name)
             blob = bucket.blob(path)
             blob.upload_from_string(att["data"], content_type=att["content_type"])
 
-            analysis = analyse_document(company_row or {"name": company},
-                                        att["filename"], att["content_type"], att["data"])
+            analysis = {"summary": "", "proposed": []}
+            if should_analyse(att["content_type"], len(att["data"])) \
+                    and (ai_budget is None or ai_budget[0] > 0):
+                if ai_budget is not None:
+                    ai_budget[0] -= 1
+                analysis = analyse_document(company_row or {"name": company},
+                                            att["filename"], att["content_type"], att["data"])
             applied = decide_updates(company_row or {}, analysis.get("proposed"))
 
             if applied:
@@ -227,6 +263,7 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
             bq_handler.save_email_doc({
                 "company_name": company, "filename": att["filename"],
                 "gcs_path": path, "content_type": att["content_type"],
+                "content_sha256": sha,
                 "size_bytes": len(att["data"]), "message_id": entry["message_id"],
                 "email_subject": entry.get("subject") or "",
                 "sender_email": entry.get("counterparty_email") or "",

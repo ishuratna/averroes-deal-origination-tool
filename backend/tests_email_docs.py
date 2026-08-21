@@ -72,6 +72,21 @@ chk("a body-only email yields nothing",
     extract_attachments(email.message_from_string("Subject: hi\n\njust text")), [])
 
 print()
+print("── Cost guards: what earns an AI read ──")
+from services.email_docs_service import AI_READS_PER_RUN, MIN_AI_IMAGE_BYTES, should_analyse  # noqa: E402
+chk("a PDF is always read (decks and accounts live there)",
+    should_analyse("application/pdf", 5_000), True)
+chk("a signature-logo-sized image is filed but NOT read",
+    should_analyse("image/png", 30 * 1024), False)
+chk("a large image (scanned doc, chart) IS read",
+    should_analyse("image/png", 400 * 1024), True)
+chk("office docs are never sent to the model (it cannot read them natively)",
+    should_analyse("application/vnd.openxmlformats-officedocument.wordprocessingml.document", 900_000), False)
+chk("the image threshold is sane (50-500KB)",
+    50 * 1024 <= MIN_AI_IMAGE_BYTES <= 500 * 1024, True)
+chk("the per-run read budget is bounded", 1 <= AI_READS_PER_RUN <= 50, True)
+
+print()
 print("── The update whitelist ──")
 company = {"name": "Acme", "revenue_estimate_m": 3.0, "employees": 20,
            "description": "A B2B SaaS platform for logistics teams.",
