@@ -2308,7 +2308,21 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # company fails the 3 hard filters (geography / industry / size), it is
     # marked Not a Fit with the reason stored, and ALL expensive work
     # (founder enrichment, Companies House extraction, fit scoring) is skipped.
-    qual = qualify_company_with_gemini(company_data)
+    #
+    # QUICK RESEARCH BYPASSES THE GATE. Deep Research seeds a row that may hold
+    # ONLY the name (typing a name deliberately skips AI identification), so
+    # the gate sees no geography and no industry evidence and rejects it before
+    # anything runs - which is how "deep research" returned a blank card. The
+    # gate exists to protect BULK spend from junk; a person explicitly asking
+    # about one company is the opposite case. Enrichment then finds the real
+    # geography and sector, and the user judges fit with evidence in front of
+    # them instead of the gate guessing from an empty row.
+    if company_data.get("source") == "Quick Research":
+        qual = {"qualified": True, "status": company_data.get("status") or "Uploaded",
+                "reason": "Gate bypassed: explicit Quick Research request",
+                "size_bucket": "", "size_confidence": "", "size_reason": ""}
+    else:
+        qual = qualify_company_with_gemini(company_data)
     new_status = qual["status"]
 
     # Extract size info
