@@ -3810,10 +3810,21 @@ async def send_outreach(req: OutreachSendRequest):
                 sets.append("contact_email = @ce")
                 params.append(bq_lib.ScalarQueryParameter("ce", "STRING", adopt["email"]))
                 changes.append(f"email {stored.get('contact_email') or '(none)'} -> {adopt['email']}")
+                # Preserve what SmartFill originally found, ONCE: the first
+                # adoption stamps it, later ones never touch it, so the
+                # first-found POC survives any number of hand-offs.
+                if stored.get("contact_email") and not stored.get("original_contact_email"):
+                    sets.append("original_contact_email = @oce")
+                    params.append(bq_lib.ScalarQueryParameter(
+                        "oce", "STRING", stored["contact_email"]))
             if adopt["name"]:
                 sets.append("contact_name = @cn")
                 params.append(bq_lib.ScalarQueryParameter("cn", "STRING", adopt["name"]))
                 changes.append(f"name {stored.get('contact_name') or '(none)'} -> {adopt['name']}")
+                if stored.get("contact_name") and not stored.get("original_contact_name"):
+                    sets.append("original_contact_name = @ocn")
+                    params.append(bq_lib.ScalarQueryParameter(
+                        "ocn", "STRING", stored["contact_name"]))
             if sets:
                 params.append(bq_lib.ScalarQueryParameter("name", "STRING", req.company_name))
                 bq_handler.client.query(
@@ -4037,6 +4048,8 @@ async def contacts_sync_from_sends(request: Request,
             SELECT t.name, IFNULL(t.contact_email, '') AS contact_email,
                    IFNULL(t.contact_name, '') AS contact_name,
                    IFNULL(t.bounced_email, '') AS bounced_email,
+                   IFNULL(t.original_contact_email, '') AS original_contact_email,
+                   IFNULL(t.original_contact_name, '') AS original_contact_name,
                    IFNULL(t.source, '') AS source,
                    s.counterparty_email AS sent_to, s.snippet,
                    CAST(s.sent_at AS STRING) AS sent_at
@@ -4055,7 +4068,10 @@ async def contacts_sync_from_sends(request: Request,
             if adopt["email"] or adopt["name"]:
                 plan.append({"name": r["name"], "sent_at": r["sent_at"],
                              "email_from": r["contact_email"], "email_to": adopt["email"],
-                             "name_from": r["contact_name"], "name_to": adopt["name"]})
+                             "name_from": r["contact_name"], "name_to": adopt["name"],
+                             # Stamp-once preservation, same as the live path.
+                             "keep_email": bool(r["contact_email"]) and not r["original_contact_email"],
+                             "keep_name": bool(r["contact_name"]) and not r["original_contact_name"]})
 
         if dry_run:
             return {"status": "Preview", "dry_run": True,
@@ -4072,10 +4088,16 @@ async def contacts_sync_from_sends(request: Request,
                     sets.append("contact_email = @ce")
                     params.append(bq_lib.ScalarQueryParameter("ce", "STRING", p["email_to"]))
                     changes.append(f"email {p['email_from'] or '(none)'} -> {p['email_to']}")
+                    if p.get("keep_email"):
+                        sets.append("original_contact_email = @oce")
+                        params.append(bq_lib.ScalarQueryParameter("oce", "STRING", p["email_from"]))
                 if p["name_to"]:
                     sets.append("contact_name = @cn")
                     params.append(bq_lib.ScalarQueryParameter("cn", "STRING", p["name_to"]))
                     changes.append(f"name {p['name_from'] or '(none)'} -> {p['name_to']}")
+                    if p.get("keep_name"):
+                        sets.append("original_contact_name = @ocn")
+                        params.append(bq_lib.ScalarQueryParameter("ocn", "STRING", p["name_from"]))
                 params.append(bq_lib.ScalarQueryParameter("name", "STRING", p["name"]))
                 bq_handler.client.query(
                     f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
@@ -5431,8 +5453,18 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                 created_by="email-sync")
             continue
         try:
+            # Same stamp-once rule as the send path: the first adoption
+            # preserves what SmartFill originally found. SET expressions all
+            # read PRE-update values in BigQuery, so this is one atomic write.
             bq_handler.client.query(
-                f"UPDATE `{bq_handler.table_id}` SET contact_email = @ce WHERE name = @name",
+                f"""UPDATE `{bq_handler.table_id}` SET
+                      original_contact_email = CASE
+                        WHEN IFNULL(original_contact_email, '') = ''
+                             AND IFNULL(contact_email, '') != ''
+                             AND LOWER(contact_email) != LOWER(@ce)
+                        THEN contact_email ELSE original_contact_email END,
+                      contact_email = @ce
+                    WHERE name = @name""",
                 job_config=bq_lib.QueryJobConfig(query_parameters=[
                     bq_lib.ScalarQueryParameter("ce", "STRING", r["counterparty_email"]),
                     bq_lib.ScalarQueryParameter("name", "STRING", r["entity_name"]),

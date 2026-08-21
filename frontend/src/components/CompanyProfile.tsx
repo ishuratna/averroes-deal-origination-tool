@@ -681,6 +681,22 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       )}
                     </div>
                   )}
+                  {/* The contact SmartFill first found, preserved when a
+                      pre-send edit or a cross-domain reply replaced it.
+                      Stamped once server-side, so however many times the POC
+                      changes hands, the first person is never lost. */}
+                  {(company.original_contact_name || company.original_contact_email) && (
+                    <div style={{ fontSize: '0.74rem', color: '#94a3b8', marginTop: 6 }}
+                         title="The contact originally found by SmartFill, before it was replaced by an edit you made at send time or by a reply from a different address.">
+                      Originally: <b style={{ color: '#64748b' }}>{company.original_contact_name || '—'}</b>
+                      {company.original_contact_email && (
+                        <> · <a href={`mailto:${company.original_contact_email}`}
+                                style={{ color: '#64748b', fontWeight: 600 }}>
+                          {company.original_contact_email}
+                        </a></>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

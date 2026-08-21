@@ -14,6 +14,10 @@ export interface CompanyTarget {
   contact_email_kind?: 'founder' | 'colleague' | 'generic' | '';
   contact_email_name?: string;
   contact_email_source?: string;
+  // The contact SmartFill first found, preserved (stamped once) when a
+  // pre-send edit or a cross-domain reply adoption replaced it.
+  original_contact_name?: string;
+  original_contact_email?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
   status: 'Qualified' | 'Contacted' | 'Responded' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Not a Fit' | 'Scraped' | 'Uploaded';

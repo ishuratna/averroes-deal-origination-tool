@@ -144,6 +144,12 @@ class BigQueryHandler:
         # The dead address, kept on the record after being cleared from
         # contact_email so the contact waterfall never re-suggests it.
         ("bounced_email", "STRING"),
+        # The contact SmartFill originally found, preserved the FIRST time a
+        # pre-send edit replaces it (contact adoption). Stamped once, never
+        # overwritten - like the per-stage timestamps - so however many times
+        # the POC changes hands, the first-found person is never lost.
+        ("original_contact_name", "STRING"),
+        ("original_contact_email", "STRING"),
         # Nurture -> Assignment ready is ISHU'S CLICK ("Ready to assign"), never
         # a heuristic acting alone. Stamped here; cleared to send it back.
         ("assignment_ready_at", "TIMESTAMP"),
