@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, EmailDoc, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -220,6 +220,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
   const [tab, setTab] = useState<typeof TABS[number]>(
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
   const [connections, setConnections] = useState<any>({ investors: [], siblings: [] });
   const [noteText, setNoteText] = useState('');
@@ -228,13 +229,14 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
   useEffect(() => {
     if (!baseCompany) return;
-    setActivity([]); setEmails([]); setConnections({ investors: [], siblings: [] });
+    setActivity([]); setEmails([]); setEmailDocs([]); setConnections({ investors: [], siblings: [] });
     setFullCompany(null);
     dealApi.getCompanyFull(baseCompany.name).then(r => {
       if (r && r.name) setFullCompany({ ...baseCompany, ...r });
     }).catch(() => {});
     dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
+    dealApi.getEmailDocs(baseCompany.name).then(r => setEmailDocs(r.documents || [])).catch(() => {});
     dealApi.getCompanyConnections(baseCompany.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
   }, [baseCompany?.name]);
 
@@ -396,7 +398,34 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                 </>
               )}
 
-              <div className="cp-section-title">News &amp; activity</div>
+              {/* Email documents: everything this company has ever attached to
+                  an email, filed automatically by the sync. Opens through the
+                  authenticated fetch - founders' own files never get a bare
+                  public link. */}
+              {emailDocs.length > 0 && (
+                <>
+                  <div className="cp-section-title">Email documents</div>
+                  <div className="cp-card">
+                    {emailDocs.map(d => (
+                      <div className="cp-doc-row" key={d.gcs_path}>
+                        <button className="cp-doc-name" title={`From ${d.sender_email} — "${d.email_subject}"`}
+                          onClick={() => dealApi.openEmailDoc(d.gcs_path).catch(e => alert(e.message))}>
+                          {d.filename}
+                        </button>
+                        <span className="cp-doc-meta">
+                          {fmtDate(d.received_at)} · {(d.size_bytes / 1024) < 1024
+                            ? `${Math.max(1, Math.round(d.size_bytes / 1024))}KB`
+                            : `${(d.size_bytes / 1048576).toFixed(1)}MB`}
+                          {d.ai_updates ? ' · updated fields' : ''}
+                        </span>
+                        {d.ai_summary && <p className="cp-doc-summary">{d.ai_summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="cp-section-title">Activity Log</div>
               <div className="cp-card">
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.6rem' }}>
                   <input value={noteText} onChange={e => setNoteText(e.target.value)}

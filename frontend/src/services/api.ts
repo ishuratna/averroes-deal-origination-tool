@@ -1,4 +1,4 @@
-import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, RespondedResponse, ReplyRuleResult } from "../types";
+import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, EmailDoc, RespondedResponse, ReplyRuleResult } from "../types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
@@ -119,6 +119,27 @@ export const dealApi = {
       throw new Error(detail?.detail || 'Failed to load the compose draft');
     }
     return await response.json();
+  },
+
+  // ── Email documents: files founders attached to their emails ────────────
+  async getEmailDocs(name: string): Promise<{ documents: EmailDoc[] }> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs`);
+    if (!response.ok) return { documents: [] };
+    return await response.json();
+  },
+
+  // Authenticated blob open, same pattern as CH filing PDFs: these are
+  // founders' own files, so the endpoint stays behind sign-in and a plain
+  // link can never serve them.
+  async openEmailDoc(gcsPath: string): Promise<void> {
+    const response = await apiFetch(`${API_BASE_URL}/email-doc/download?path=${encodeURIComponent(gcsPath)}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || 'Could not load the document');
+    }
+    const url = URL.createObjectURL(await response.blob());
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
 
   // ── The reply rule ─────────────────────────────────────────────────────

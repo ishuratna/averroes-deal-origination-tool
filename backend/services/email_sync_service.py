@@ -173,7 +173,16 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             except Exception:
                 sent_at = datetime.now(timezone.utc).isoformat()
 
+            # Attachments: extracted ONLY for inbound company mail (the messages
+            # whose documents we keep), so a 500-message scan does not hold
+            # hundreds of payloads in memory.
+            attachments = []
+            if direction == "received" and entity.get("type") == "company":
+                from services.email_docs_service import extract_attachments
+                attachments = extract_attachments(msg)
+
             entries.append({
+                "attachments": attachments,
                 "message_id": _decode(msg.get("Message-ID")) or f"{folder}-{msg_id.decode()}",
                 "thread_id": _decode(msg.get("References", "")).split()[0] if msg.get("References") else _decode(msg.get("Message-ID")) or "",
                 "direction": direction,

@@ -268,6 +268,19 @@ export const STAGE_MEANINGS: Record<string, string> = {
   Responded: 'We emailed them and they genuinely replied.',
 };
 
+// A file a founder attached to an email, filed automatically by the sync.
+export interface EmailDoc {
+  filename: string;
+  gcs_path: string;
+  content_type: string;
+  size_bytes: number;
+  email_subject: string;
+  sender_email: string;
+  received_at: string;
+  ai_summary: string;
+  ai_updates: string;   // JSON of the field changes the document caused, '' if none
+}
+
 export interface ReplyRuleMove {
   name: string;
   from: string;

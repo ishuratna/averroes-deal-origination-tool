@@ -1467,6 +1467,88 @@ class BigQueryHandler:
             logger.error(f"unverified_sends failed: {e}")
             return []
 
+    # ── Email documents: attachments founders send us ───────────────────────
+    # Files live in GCS; THIS table is the single source of truth about what
+    # exists, where it is, and what the AI read in it. Dedupe key is
+    # (message_id, filename): the same email re-synced must never file twice.
+
+    def _ensure_email_docs_table(self) -> str:
+        table_id = f"{self.project_id}.{self.dataset_id}.email_documents"
+        try:
+            self.client.get_table(table_id)
+        except Exception:
+            schema = [bigquery.SchemaField(n, t) for n, t in [
+                ("company_name", "STRING"), ("filename", "STRING"),
+                ("gcs_path", "STRING"), ("content_type", "STRING"),
+                ("size_bytes", "INT64"), ("message_id", "STRING"),
+                ("email_subject", "STRING"), ("sender_email", "STRING"),
+                ("received_at", "TIMESTAMP"), ("saved_at", "TIMESTAMP"),
+                ("ai_summary", "STRING"), ("ai_updates", "STRING"),
+            ]]
+            self.client.create_table(bigquery.Table(table_id, schema=schema))
+            logger.info("Created email_documents table")
+        return table_id
+
+    def email_doc_exists(self, message_id: str, filename: str) -> bool:
+        if not self.client:
+            return False
+        t = self._ensure_email_docs_table()
+        try:
+            rows = list(self.client.query(
+                f"SELECT 1 FROM `{t}` WHERE message_id = @m AND filename = @f LIMIT 1",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("m", "STRING", message_id),
+                    bigquery.ScalarQueryParameter("f", "STRING", filename),
+                ])).result())
+            return bool(rows)
+        except Exception:
+            return False
+
+    def save_email_doc(self, meta: Dict) -> bool:
+        if not self.client:
+            return False
+        t = self._ensure_email_docs_table()
+        try:
+            self.client.query(f"""
+                INSERT INTO `{t}` (company_name, filename, gcs_path, content_type,
+                                   size_bytes, message_id, email_subject, sender_email,
+                                   received_at, saved_at, ai_summary, ai_updates)
+                VALUES (@c, @f, @g, @ct, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd)
+            """, job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("c", "STRING", meta.get("company_name") or ""),
+                bigquery.ScalarQueryParameter("f", "STRING", meta.get("filename") or ""),
+                bigquery.ScalarQueryParameter("g", "STRING", meta.get("gcs_path") or ""),
+                bigquery.ScalarQueryParameter("ct", "STRING", meta.get("content_type") or ""),
+                bigquery.ScalarQueryParameter("sz", "INT64", int(meta.get("size_bytes") or 0)),
+                bigquery.ScalarQueryParameter("m", "STRING", meta.get("message_id") or ""),
+                bigquery.ScalarQueryParameter("subj", "STRING", meta.get("email_subject") or ""),
+                bigquery.ScalarQueryParameter("from", "STRING", meta.get("sender_email") or ""),
+                bigquery.ScalarQueryParameter("recv", "TIMESTAMP", meta.get("received_at")),
+                bigquery.ScalarQueryParameter("sum", "STRING", meta.get("ai_summary") or ""),
+                bigquery.ScalarQueryParameter("upd", "STRING", meta.get("ai_updates") or ""),
+            ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"save_email_doc failed for {meta.get('filename')}: {e}")
+            return False
+
+    def get_email_docs(self, company_name: str) -> List[Dict]:
+        if not self.client:
+            return []
+        t = self._ensure_email_docs_table()
+        try:
+            return self._run_query(f"""
+                SELECT filename, gcs_path, content_type, size_bytes,
+                       email_subject, sender_email,
+                       CAST(received_at AS STRING) AS received_at,
+                       ai_summary, ai_updates
+                FROM `{t}` WHERE company_name = @c
+                ORDER BY received_at DESC
+            """, params=[bigquery.ScalarQueryParameter("c", "STRING", company_name)])
+        except Exception as e:
+            logger.error(f"get_email_docs failed for {company_name}: {e}")
+            return []
+
     def get_message_id_entity_map(self) -> Dict[str, Dict]:
         """Every real logged Message-ID -> its entity, for thread matching in
         the sync. Synthetic dedup ids (no '<' prefix) are excluded: they never

@@ -3864,6 +3864,77 @@ async def admin_rescore_fit(request: Request,
     return _stream_json(_run)
 
 
+@app.get("/company/{company_name}/email-docs")
+async def list_email_docs(company_name: str):
+    """Every document this company has ever emailed us, newest first."""
+    return {"company": company_name, "documents": bq_handler.get_email_docs(company_name)}
+
+
+@app.get("/email-doc/download")
+async def download_email_doc(path: str = Query(..., description="gcs_path from the documents list")):
+    """Serve one filed email document. Session-gated (NOT exempt): these are
+    founders' own files, the most confidential thing the tool holds. The
+    frontend fetches with auth and opens a blob, same as CH filing PDFs."""
+    from fastapi.responses import Response
+    if not path.startswith("email-docs/") or ".." in path:
+        raise HTTPException(status_code=400, detail="Invalid document path.")
+    if not gcs_handler.storage_client:
+        raise HTTPException(status_code=500, detail="GCS not available")
+    blob = gcs_handler.storage_client.bucket(gcs_handler.bucket_name).blob(path)
+    if not blob.exists():
+        raise HTTPException(status_code=404, detail="Document not found in storage.")
+    data = blob.download_as_bytes()
+    filename = path.split("/")[-1]
+    return Response(content=data,
+                    media_type=blob.content_type or "application/octet-stream",
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+@app.post("/email/docs/backfill")
+async def email_docs_backfill(request: Request,
+                              days: int = Query(90, description="How far back to scan the mailbox")):
+    """Retro pass: file attachments from emails ALREADY received.
+
+    Re-reads the mailbox (address + domain + thread matching, same as the
+    sync), extracts attachments from every inbound company message, and runs
+    the same file-and-read pipeline. Fully idempotent - (message_id, filename)
+    already stored is skipped - so it can be re-run any time.
+    """
+    _require_token(request)
+
+    def _run():
+        from services.email_sync_service import sync_mailbox
+        from services.email_docs_service import process_email_documents
+        known, known_domains, companies_by_name = {}, {}, {}
+        for c in bq_handler.get_universe():
+            companies_by_name[c.get("name")] = c
+            entry = {"type": "company", "name": c.get("name")}
+            for em in {(c.get("contact_email") or "").strip().lower(),
+                       (c.get("outreach_draft_to") or "").strip().lower()}:
+                if em:
+                    known[em] = entry
+                dom = em.split("@")[-1] if "@" in em else ""
+                if dom:
+                    known_domains.setdefault(dom, entry)
+        thread_map = bq_handler.get_message_id_entity_map()
+        entries = sync_mailbox(known, days=max(1, min(days, 3650)),
+                               known_domains=known_domains, thread_map=thread_map)
+        filed, scanned = [], 0
+        for e in entries:
+            if e.get("direction") != "received" or not e.get("attachments"):
+                continue
+            scanned += 1
+            names = process_email_documents(
+                bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")))
+            filed += [f"{e['entity_name']}: {n}" for n in names]
+        return {"status": "Success", "days_scanned": days,
+                "emails_with_attachments": scanned, "documents_filed": filed,
+                "message": f"Filed {len(filed)} new documents from {scanned} emails "
+                           f"with attachments (already-filed ones skipped)."}
+
+    return _stream_json(_run)
+
+
 @app.post("/admin/contacts/sync-from-sends")
 async def contacts_sync_from_sends(request: Request,
                                    dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
@@ -5322,6 +5393,21 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
 
     inserted = bq_handler.save_email_log(new_entries)
 
+    # ── Email documents: file and read every attachment on inbound mail ──────
+    # Runs on NEW entries only (dedupe also guards inside, so overlap with the
+    # retro backfill is safe). Field updates go through the whitelist in
+    # email_docs_service and every change lands in the Activity Log.
+    docs_filed = []
+    try:
+        from services.email_docs_service import process_email_documents
+        for e in new_entries:
+            if e.get("direction") == "received" and e.get("attachments"):
+                names = process_email_documents(
+                    bq_handler, gcs_handler, e, companies_by_name.get(e.get("entity_name")))
+                docs_filed += [f"{e['entity_name']}: {n}" for n in names]
+    except Exception as e:
+        logger.warning(f"[EmailDocs] processing failed (non-fatal): {e}")
+
     # ── Action buckets (Responded-stage intelligence) ────────────────────────
     # One ungrounded call per reply: our company record + the email content →
     # an action bucket, a one-sentence rationale, an optional follow-up date,
@@ -5546,6 +5632,7 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
         # answer, because a person put them in Responded. The UI prompts on these.
         "needs_confirmation": reply_rule["needs_confirmation"],
         "contact_adopted_from_replies": contact_adopted,
+        "documents_filed": docs_filed,
         "delivery": {k: delivery.get(k) for k in
                      ("bounces_found", "sends_missing_from_mailbox", "pulled_back")},
         "reclassified": reclassified,
