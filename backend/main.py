@@ -2318,7 +2318,27 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # geography and sector, and the user judges fit with evidence in front of
     # them instead of the gate guessing from an empty row.
     if company_data.get("source") == "Quick Research":
-        qual = {"qualified": True, "status": company_data.get("status") or "Uploaded",
+        # A husk left by an earlier gated run sits at Not a Fit with the gate's
+        # no-evidence reason. Re-running Quick Research must wipe that verdict,
+        # or the bypass would enrich the row and then faithfully keep the wrong
+        # status on top of the fresh data.
+        prior = company_data.get("status") or "Uploaded"
+        if prior == "Not a Fit":
+            prior = "Uploaded"
+            try:
+                from google.cloud import bigquery as bq_lib
+                bq_handler.client.query(
+                    f"UPDATE `{bq_handler.table_id}` SET unfit_reason = NULL WHERE name = @n",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("n", "STRING", company_name)])).result()
+                bq_handler.add_activity_note(
+                    company_name,
+                    "Quick Research re-run: cleared the earlier gate verdict "
+                    "(it was made with no evidence on the row).",
+                    created_by="quick-research")
+            except Exception as e:
+                logger.warning(f"Husk reset failed for {company_name} (non-fatal): {e}")
+        qual = {"qualified": True, "status": prior,
                 "reason": "Gate bypassed: explicit Quick Research request",
                 "size_bucket": "", "size_confidence": "", "size_reason": ""}
     else:
