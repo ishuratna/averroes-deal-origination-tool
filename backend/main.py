@@ -2339,7 +2339,8 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             except Exception as e:
                 logger.warning(f"Husk reset failed for {company_name} (non-fatal): {e}")
         qual = {"qualified": True, "status": prior,
-                "reason": "Gate bypassed: explicit Quick Research request",
+                "reason": "Verdict deferred: research first, judge from evidence after",
+                "is_uk_ireland": True, "is_tech": True, "size_qualified": None,
                 "size_bucket": "", "size_confidence": "", "size_reason": ""}
     else:
         qual = qualify_company_with_gemini(company_data)
@@ -2760,6 +2761,40 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 "smartfill")
         except Exception:
             pass
+
+    # ── Quick Research: the VERDICT COMES AFTER THE RESEARCH (per Ishu) ──────
+    # Deep Research must always output findings, so the gate was deferred at
+    # the top. Now, with the row fully enriched, the SAME hard filters run on
+    # actual evidence. Not a Fit stays Not a Fit - but as a researched verdict
+    # sitting on a populated row in the Master Universe, not a guess stamped on
+    # an empty one. Data is never removed by the verdict.
+    if company_data.get("source") == "Quick Research":
+        try:
+            fresh = bq_handler.get_company_full(company_name) or {}
+            verdict = qualify_company_with_gemini(fresh)
+            if not verdict.get("qualified"):
+                from google.cloud import bigquery as bq_lib
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET
+                            status = 'Not a Fit', unfit_reason = @r,
+                            stage_entered_at = CURRENT_TIMESTAMP()
+                        WHERE name = @n""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("r", "STRING", verdict.get("reason") or "Failed hard filters"),
+                        bq_lib.ScalarQueryParameter("n", "STRING", company_name),
+                    ])).result()
+                bq_handler._log_activity(company_name, "status_change", "quick-research",
+                                         old_status=new_status, new_status="Not a Fit")
+                bq_handler.add_activity_note(
+                    company_name,
+                    f"Deep Research verdict: Not a Fit ({verdict.get('reason')}). "
+                    f"Full findings retained on the record.",
+                    created_by="quick-research")
+                new_status = "Not a Fit"
+                qual = {**qual, "is_uk_ireland": verdict.get("is_uk_ireland"),
+                        "is_tech": verdict.get("is_tech"), "reason": verdict.get("reason")}
+        except Exception as e:
+            logger.warning(f"Post-research verdict failed for {company_name} (non-fatal): {e}")
 
     return {
         "status": "Success",
