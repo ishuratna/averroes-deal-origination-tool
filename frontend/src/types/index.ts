@@ -219,32 +219,60 @@ export const OWNER_ROLES: Record<DealOwner, string> = {
 // PLAIN ENGLISH ON PURPOSE: every list says what a company is WAITING FOR, in
 // words a first-time reader understands. Internal vocabulary (Track A/B, kill)
 // stays in the stored values; it does not appear on screen.
-export const RESPONDED_SECTIONS = [
+// Sections hold LANES. A lane is one route drawn top-to-bottom, exactly like
+// a branch in the decision tree; a section with two lanes renders them side
+// by side, because that is the picture Ishu approved: Assignment ready splits
+// into TWO KINDS of call, the Bea route and the associate route, and stacking
+// them made the split read as one queue.
+export interface RespondedList { key: string; label: string; hint: string; }
+export interface RespondedLane { key: string; title: string; tone: string; lists: RespondedList[]; }
+export interface RespondedSection {
+  key: string; title: string; owner: string; tone: string; blurb: string;
+  lanes: RespondedLane[];
+}
+
+export const RESPONDED_SECTIONS: RespondedSection[] = [
   {
     key: 's1', title: 'Nurture', owner: 'Ishu', tone: 'plum',
     blurb: 'Ishu runs every conversation until it is mature, then clicks it forward.',
-    lists: [
-      { key: 'nurture',          label: 'Nurture',          hint: 'Live email conversations. Keep them warm; the reminders below chase anything quiet for 7 days.' },
-      { key: 'assignment_ready', label: 'Assignment ready', hint: 'Mature conversations you marked ready. Route each to Bea or to an associate call.' },
+    lanes: [
+      {
+        key: 'main', title: '', tone: 'plum', lists: [
+          { key: 'nurture',          label: 'Nurture',          hint: 'Live email conversations. Keep them warm; the reminders below chase anything quiet for 7 days.' },
+          { key: 'assignment_ready', label: 'Assignment ready', hint: 'Mature conversations you marked ready. Route each to Bea or to an associate call.' },
+        ],
+      },
     ],
   },
   {
-    key: 's2', title: 'Associates weekly list', owner: 'Issam · Marianna', tone: 'amber',
-    blurb: 'The Wednesday and Thursday agendas: who takes each mature conversation.',
-    lists: [
-      { key: 'bea_review',    label: 'To discuss for Bea — Thursday',   hint: 'Candidates for Bea. Confirmed at the Thursday session; until then they can bounce back.' },
-      { key: 'assoc_review',  label: 'To discuss for calls — Wednesday', hint: 'Waiting for Wednesday to decide which associate takes the call.' },
-      { key: 'assoc_pending', label: 'Allocated — call pending',        hint: 'An associate owns it. After the call they move it to Meeting on the Pipeline themselves.' },
+    key: 's2', title: 'Associates weekly list', owner: 'Wed · Thu sessions', tone: 'amber',
+    blurb: 'Assignment ready splits into two kinds of call, each with its own weekly session:',
+    lanes: [
+      {
+        key: 'bea', title: 'Bea route — Thursday', tone: 'teal', lists: [
+          { key: 'bea_review', label: 'To discuss for Bea', hint: 'High-fit candidates. The Thursday session confirms each to Bea or bounces it back.' },
+        ],
+      },
+      {
+        key: 'assoc', title: 'Associate route — Wednesday', tone: 'amber', lists: [
+          { key: 'assoc_review',  label: 'To discuss for calls',     hint: 'Waiting for Wednesday to decide which associate takes the call.' },
+          { key: 'assoc_pending', label: 'Allocated — call pending', hint: 'An associate owns it. After the call they move it to Meeting on the Pipeline themselves.' },
+        ],
+      },
     ],
   },
   {
     key: 's3', title: 'Qualified leads', owner: 'Bea', tone: 'teal',
     blurb: 'Confirmed to Bea at the Thursday session. Hers until a meeting happens.',
-    lists: [
-      { key: 'bea_assigned', label: 'With Bea', hint: 'Bea takes these conversations forward. A booked meeting moves them off this page.' },
+    lanes: [
+      {
+        key: 'main', title: '', tone: 'teal', lists: [
+          { key: 'bea_assigned', label: 'With Bea', hint: 'Bea takes these conversations forward. A booked meeting moves them off this page.' },
+        ],
+      },
     ],
   },
-] as const;
+];
 
 // Parked lists render after the sections, always visible (never behind a
 // toggle): live sections + these + progressed = the Pipeline's

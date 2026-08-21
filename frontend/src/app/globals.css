@@ -948,3 +948,14 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 /* The reconciliation footnote under the header stats. */
 .rsp3-subline { font-size: 0.78rem; color: #64748b; margin: -0.4rem 0 1rem; }
 .rsp3-subline b { color: #0f172a; }
+
+/* Section 2's two routes, side by side like the decision tree's branches.
+   Wraps to stacked lanes below ~900px content width so nothing is cramped. */
+.rsp3-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); gap: 1rem; align-items: start; }
+.rsp3-lane { border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.75rem 0.85rem; background: #fbfcfe; }
+.rsp3-lane.teal  { border-color: #bcd9c8; background: #f7fbf9; }
+.rsp3-lane.amber { border-color: #ecd5b8; background: #fdfaf5; }
+.rsp3-lane-head { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.6rem; padding-bottom: 0.45rem; border-bottom: 1px solid #e2e8f0; color: #475569; }
+.rsp3-lane-head.teal  { color: #0f5132; border-bottom-color: #bcd9c8; }
+.rsp3-lane-head.amber { color: #8a4b0f; border-bottom-color: #ecd5b8; }
+.rsp3-arrow.lane { margin: 0.3rem 0 0.4rem; }

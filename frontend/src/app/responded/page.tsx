@@ -29,7 +29,7 @@ import {
 
 // The keys, flat and in render order, so the profile drawer's prev/next walks
 // exactly what the page shows.
-const SECTION_KEYS = RESPONDED_SECTIONS.flatMap(s => s.lists.map(l => l.key));
+const SECTION_KEYS = RESPONDED_SECTIONS.flatMap(s => s.lanes.flatMap(ln => ln.lists.map(l => l.key)));
 const PARKED_KEYS = RESPONDED_PARKED.map(p => p.key);
 const RENDER_ORDER: string[] = [...SECTION_KEYS, ...PARKED_KEYS, 'progressed'];
 
@@ -81,7 +81,7 @@ export default function RespondedPage() {
     if (!search.trim()) return;
     const opened: Record<string, boolean> = {};
     for (const s of RESPONDED_SECTIONS) {
-      if (s.lists.some(l => (byQueue[l.key] || []).length)) opened[s.key] = true;
+      if (s.lanes.some(ln => ln.lists.some(l => (byQueue[l.key] || []).length))) opened[s.key] = true;
     }
     for (const p of RESPONDED_PARKED) {
       if ((byQueue[p.key] || []).length) opened[p.key] = true;
@@ -299,16 +299,19 @@ export default function RespondedPage() {
     }
   };
 
-  const renderTable = (listKey: string, rows: RespondedCompany[], parked = false) => (
+  // compact = the half-width lane tables in Section 2: Stage and Revenue band
+  // give way so the two routes fit side by side (both are one click away in
+  // the profile).
+  const renderTable = (listKey: string, rows: RespondedCompany[], parked = false, compact = false) => (
     <table className="rsp-table">
       <thead>
         <tr>
-          <th style={{ width: '26%' }}>Company</th>
-          <th style={{ width: '9%' }}>Stage</th>
-          <th style={{ width: '8%' }}>Fit</th>
-          <th style={{ width: '13%' }}>Revenue band</th>
-          <th style={{ width: '11%' }}>Last reply</th>
-          <th style={{ width: '10%' }}>Owner</th>
+          <th style={{ width: compact ? '32%' : '26%' }}>Company</th>
+          {!compact && <th style={{ width: '9%' }}>Stage</th>}
+          <th style={{ width: compact ? '10%' : '8%' }}>Fit</th>
+          {!compact && <th style={{ width: '13%' }}>Revenue band</th>}
+          <th style={{ width: compact ? '14%' : '11%' }}>Last reply</th>
+          <th style={{ width: compact ? '13%' : '10%' }}>Owner</th>
           <th>Action</th>
         </tr>
       </thead>
@@ -333,9 +336,9 @@ export default function RespondedPage() {
               )}
               <div className="rsp-sub">{c.sector || '—'}</div>
             </td>
-            <td>{displayStatus(c.status)}</td>
+            {!compact && <td>{displayStatus(c.status)}</td>}
             <td>{c.averroes_fit_score != null ? Number(c.averroes_fit_score).toFixed(1) : '—'}</td>
-            <td>{c.revenue_band || '—'}</td>
+            {!compact && <td>{c.revenue_band || '—'}</td>}
             {/* Red at 7 days, matching the agreed Responded reminder (their
                 message last + 7 days). Parked rows never redden. */}
             <td className={!parked && (c.days_since_reply ?? 0) >= 7 ? 'rsp-stale' : ''}>
@@ -420,7 +423,7 @@ export default function RespondedPage() {
             {loading && !data && <div className="rsp-empty">Loading the funnel…</div>}
 
             {RESPONDED_SECTIONS.map((s, si) => {
-              const total = s.lists.reduce((t, l) => t + n(l.key), 0);
+              const twoLanes = s.lanes.length > 1;
               const isOpen = !!open[s.key];
               return (
                 <div key={s.key}>
@@ -431,7 +434,7 @@ export default function RespondedPage() {
                       <span className="rsp3-title">{s.title}</span>
                       <span className="rsp3-owner">{s.owner}</span>
                       <span className="rsp3-counts">
-                        {s.lists.map(l => (
+                        {s.lanes.flatMap(ln => ln.lists).map(l => (
                           <span className="rsp3-count" key={l.key}>
                             {l.label.split(' — ')[0]}: <b>{n(l.key)}</b>
                           </span>
@@ -442,21 +445,39 @@ export default function RespondedPage() {
                     <div className="rsp3-body">
                       <div className="rsp3-body-inner">
                         <p className="rsp3-blurb">{s.blurb}</p>
-                        {s.lists.map(l => {
-                          const rows = byQueue[l.key] || [];
-                          return (
-                            <div className="rsp3-list" key={l.key}>
-                              <div className="rsp-group-head">
-                                <span className="rsp-group-title">{l.label}</span>
-                                <span className="rsp-group-n">{rows.length}</span>
-                                <span className="rsp-group-hint">{l.hint}</span>
-                              </div>
-                              {rows.length
-                                ? renderTable(l.key, rows)
-                                : <div className="rsp-group-empty">Nothing here right now.</div>}
+                        {/* Two lanes render side by side, exactly like the two
+                            branches in the approved decision tree: the Bea
+                            route and the associate route are DIFFERENT KINDS
+                            of call, and stacking them read as one queue. */}
+                        <div className={twoLanes ? 'rsp3-lanes' : undefined}>
+                          {s.lanes.map(ln => (
+                            <div className={twoLanes ? `rsp3-lane ${ln.tone}` : undefined} key={ln.key}>
+                              {twoLanes && ln.title && (
+                                <div className={`rsp3-lane-head ${ln.tone}`}>{ln.title}</div>
+                              )}
+                              {ln.lists.map((l, li) => {
+                                const rows = byQueue[l.key] || [];
+                                return (
+                                  <div key={l.key}>
+                                    {/* The flow inside a lane, drawn: To
+                                        discuss ↓ Allocated. */}
+                                    {li > 0 && <div className="rsp3-arrow lane" aria-hidden>↓</div>}
+                                    <div className="rsp3-list">
+                                      <div className="rsp-group-head">
+                                        <span className="rsp-group-title">{l.label}</span>
+                                        <span className="rsp-group-n">{rows.length}</span>
+                                        <span className="rsp-group-hint">{l.hint}</span>
+                                      </div>
+                                      {rows.length
+                                        ? renderTable(l.key, rows, false, twoLanes)
+                                        : <div className="rsp-group-empty">Nothing here right now.</div>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </section>
