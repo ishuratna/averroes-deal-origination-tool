@@ -2876,7 +2876,11 @@ async def smartfill_eligible():
 # processed twice. The backlog (~11k companies) clears in ~6-7 weeks, after
 # which each night finds only newly ingested companies and costs pennies.
 
-AUTO_SMARTFILL_TARGET = int(os.getenv("AUTO_SMARTFILL_TARGET", "250"))
+# 60/day per Ishu (21 Aug 2026): the first full night proved the system at 250
+# (~£15/day), and he chose a quarter of the pace - ~£4/day, gentler burn. The
+# target is shared with manual daytime runs, so a heavy manual day still means
+# a light night. One env var turns it back up when wanted.
+AUTO_SMARTFILL_TARGET = int(os.getenv("AUTO_SMARTFILL_TARGET", "60"))
 # ONE WAVE PER TICK. Batch was 15 with 5 workers = three ~6-minute waves =
 # ~18-22 minutes (measured: a manual tick ran 21m50s), which overruns the
 # scheduler's 11-minute deadline every time - the cut kills whatever wave is
