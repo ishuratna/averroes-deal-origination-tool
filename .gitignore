@@ -25,3 +25,6 @@ Thumbs.db
 # Project Specific
 **/docs/scraped_data/
 **/docs/raw_exports/
+
+# Ishu's private weekly pack - has the admin token baked in, must never enter git
+docs/Weekly_Review_private.html
