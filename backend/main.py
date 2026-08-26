@@ -4363,10 +4363,17 @@ async def get_responded():
 
 
 @app.get("/weekly-review")
-async def weekly_review():
-    """Everything the Wednesday meeting slide deck needs, in one call, all of
-    it read through the SAME code paths as the pages it summarises (doctrine:
-    same intent, same logic):
+async def weekly_review(request: Request):
+    """Everything the Wednesday meeting slide deck needs, in one call.
+
+    DELIBERATELY NOT A PAGE IN THE TOOL (per Ishu, 26 Aug 2026): the weekly
+    pack is his private meeting prep, so it must not appear in the team-facing
+    UI. It is consumed by a local HTML file on his machine
+    (docs/Weekly_Review.html), which is why this path is token-gated and
+    EXEMPT from Google sign-in - a local file has no browser session.
+
+    All of it is read through the SAME code paths as the pages it summarises
+    (doctrine: same intent, same logic):
 
       * analytics  -> analytics_service.refresh_and_stats, identical numbers
                       to the Analytics page (funnel, response rate, 7d series)
@@ -4376,6 +4383,7 @@ async def weekly_review():
                       exactly what the page shows, per section
       * updates    -> tool_updates.py, the curated plain-English changelog
     """
+    _require_token(request)
     from services.analytics_service import refresh_and_stats
     stats = refresh_and_stats(bq_handler)
 
