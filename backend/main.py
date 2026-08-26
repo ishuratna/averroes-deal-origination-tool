@@ -4362,6 +4362,67 @@ async def get_responded():
     }
 
 
+@app.get("/weekly-review")
+async def weekly_review():
+    """Everything the Wednesday meeting slide deck needs, in one call, all of
+    it read through the SAME code paths as the pages it summarises (doctrine:
+    same intent, same logic):
+
+      * analytics  -> analytics_service.refresh_and_stats, identical numbers
+                      to the Analytics page (funnel, response rate, 7d series)
+      * last7      -> outreach sent + genuine replies this week; 'genuine'
+                      built from NON_REPLY_CLASSES, the one reply definition
+      * pipeline   -> the Responded page's own endpoint, so the meeting lists
+                      exactly what the page shows, per section
+      * updates    -> tool_updates.py, the curated plain-English changelog
+    """
+    from services.analytics_service import refresh_and_stats
+    stats = refresh_and_stats(bq_handler)
+
+    last7 = {"sent": sum(d.get("sent", 0) for d in stats.get("daily_emails", [])),
+             "genuine_replies": 0}
+    try:
+        email = f"{bq_handler.project_id}.{bq_handler.dataset_id}.email_log"
+        non_reply = ", ".join(f"'{c}'" for c in bq_handler.NON_REPLY_CLASSES)
+        for r in bq_handler.client.query(f"""
+                SELECT COUNT(*) AS n FROM `{email}`
+                WHERE entity_type = 'company' AND direction = 'received'
+                  AND IFNULL(classification, '') NOT IN ({non_reply})
+                  AND DATE(sent_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 DAY)
+            """).result():
+            last7["genuine_replies"] = int(r.n)
+    except Exception as e:
+        logger.warning(f"[Weekly] last-7 reply count failed: {e}")
+
+    # The Responded page's OWN derivation - never a second copy of the rules.
+    responded = await get_responded()
+    pipeline = {}
+    for c in responded.get("companies", []):
+        pipeline.setdefault(c["queue"], []).append({
+            "name": c["name"], "owner": c.get("owner") or "",
+            "days_since_reply": c.get("days_since_reply"),
+        })
+
+    from datetime import timezone as _tz
+    from tool_updates import updates_since
+    return {
+        "generated_at": datetime.now(_tz.utc).isoformat(),
+        "analytics": {
+            "universe_total": stats.get("stored_current"),
+            "funnel": stats.get("funnel", []),
+            "emailed_ever": stats.get("emailed_ever"),
+            "replied_ever": stats.get("replied_ever"),
+            "response_rate": stats.get("response_rate"),
+            "daily_emails": stats.get("daily_emails", []),
+            "inconsistencies": stats.get("inconsistencies", {}),
+        },
+        "last7": last7,
+        "pipeline": pipeline,
+        "open_calls": responded.get("open_calls", {}),
+        "updates": updates_since(days=8),
+    }
+
+
 @app.put("/company/{company_name}/assignment-ready")
 async def company_assignment_ready(company_name: str,
                                    on: int = Query(1, description="1 = ready to assign, 0 = back to Nurture")):

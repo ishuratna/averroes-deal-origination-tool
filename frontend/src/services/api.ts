@@ -535,6 +535,14 @@ export const dealApi = {
     return await response.json();
   },
 
+  // The Wednesday meeting pack: analytics, this week's numbers, the Responded
+  // sections and the tool changelog - one call, same code paths as the pages.
+  async getWeeklyReview(): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/weekly-review`);
+    if (!response.ok) throw new Error('Failed to load the weekly review');
+    return await response.json();
+  },
+
   async getAnalytics(refresh: boolean = false): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/analytics${refresh ? '?refresh=1' : ''}`);
     if (!response.ok) throw new Error('Failed to load analytics');

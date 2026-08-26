@@ -959,3 +959,55 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .rsp3-lane-head.teal  { color: #0f5132; border-bottom-color: #bcd9c8; }
 .rsp3-lane-head.amber { color: #8a4b0f; border-bottom-color: #ecd5b8; }
 .rsp3-arrow.lane { margin: 0.3rem 0 0.4rem; }
+
+/* ── Weekly Review: three live "slides" + print-to-deck ─────────────────────
+   On screen: three cards. In print: each slide is exactly one page, nav and
+   buttons hidden, so "save as PDF" produces the Wednesday deck directly. */
+.wk-slide { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.1rem 1.3rem 1.2rem; margin-bottom: 1.2rem; }
+.wk-slide-head { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.9rem; }
+.wk-slide-head h2 { font-size: 1.05rem; font-weight: 800; color: #0f172a; margin: 0; }
+.wk-slide-n { flex: none; width: 1.5rem; height: 1.5rem; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 800; color: #fff; background: #0f172a; align-self: center; }
+.wk-date { margin-left: auto; font-size: 0.74rem; color: #94a3b8; }
+.wk-note { font-size: 0.74rem; color: #94a3b8; margin: 0.5rem 0 0; }
+
+.wk-funnel { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem; }
+.wk-funnel-step { display: inline-flex; align-items: center; gap: 0.35rem; }
+.wk-funnel-box { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 0.78rem; color: #334155; white-space: nowrap; }
+.wk-funnel-box b { color: #0f172a; font-size: 0.92rem; margin-right: 0.25rem; }
+.wk-funnel-arrow { color: #94a3b8; font-size: 0.85rem; display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
+.wk-funnel-arrow em { font-style: normal; font-size: 0.62rem; font-weight: 800; color: #0f5132; }
+
+.wk-days { display: flex; align-items: flex-end; gap: 0.55rem; margin-top: 0.8rem; }
+.wk-day { text-align: center; }
+.wk-day-bars { display: flex; align-items: flex-end; gap: 2px; height: 50px; }
+.wk-bar { width: 12px; border-radius: 2px 2px 0 0; display: inline-block; }
+.wk-bar.sent { background: #4a2a6b; }
+.wk-bar.recv { background: #0f5132; }
+.wk-day-l { font-size: 0.62rem; color: #94a3b8; margin-top: 2px; }
+.wk-legend { display: flex; gap: 0.8rem; font-size: 0.68rem; color: #64748b; align-self: flex-start; margin-left: 0.6rem; }
+.wk-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 3px; }
+
+.wk-pipe-row { display: grid; grid-template-columns: 215px 1fr; gap: 0.7rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; align-items: start; }
+.wk-pipe-row:last-of-type { border-bottom: none; }
+.wk-pipe-label { font-size: 0.76rem; font-weight: 800; color: #475569; }
+.wk-pipe-label b { color: #fff; background: #64748b; border-radius: 999px; padding: 0.05rem 0.4rem; font-size: 0.68rem; margin-left: 0.3rem; }
+.wk-pipe-label.plum  b { background: #4a2a6b; }
+.wk-pipe-label.teal  b { background: #0f5132; }
+.wk-pipe-label.amber b { background: #8a4b0f; }
+.wk-pipe-label.grey  b { background: #94a3b8; }
+.wk-pipe-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.wk-chip { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.75rem; font-weight: 600; color: #0f172a; }
+.wk-chip em { font-style: normal; font-size: 0.65rem; color: #94a3b8; }
+
+.wk-updates { list-style: none; margin: 0; padding: 0; }
+.wk-updates li { display: flex; gap: 0.7rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; font-size: 0.82rem; color: #334155; line-height: 1.45; }
+.wk-updates li:last-child { border-bottom: none; }
+.wk-upd-date { flex: none; font-size: 0.7rem; font-weight: 800; color: #94a3b8; padding-top: 2px; width: 42px; }
+
+@media print {
+  .sidebar, .wk-no-print { display: none !important; }
+  .app-shell { display: block; }
+  .main-content { padding: 0; margin: 0; background: #fff; }
+  .wk-slide { border: none; border-radius: 0; margin: 0; padding: 24px 30px; page-break-after: always; }
+  .wk-slide:last-child { page-break-after: auto; }
+}

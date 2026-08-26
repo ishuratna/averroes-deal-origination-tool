@@ -214,6 +214,18 @@ mistake is both visible and correctable. This one logged nothing, which is why
   decision cannot make the alarm permanently non-zero and therefore ignorable.
   `replied_never_emailed` is not a fault; it is an inbound-first thread.
 
+## 6c. Weekly Review page (/weekly)
+
+- The Wednesday meeting pack is a LIVE page, never a static export: GET
+  /weekly-review composes analytics (refresh_and_stats), last-7-day counts
+  (built from NON_REPLY_CLASSES — the one reply definition), the Responded
+  page's own endpoint for the pipeline lists, and tool_updates.py. Never
+  re-derive any of those numbers separately for this page.
+- `backend/tool_updates.py` is the curated plain-English changelog. EVERY
+  session that ships a user-visible change appends one dated line there
+  (the deployed container has no git history, and commit messages are for
+  engineers). Newest first.
+
 ## 7. Verification before push (hard-learned)
 
 - `python3 -m compileall backend` (lazy imports hide f-string syntax errors),
