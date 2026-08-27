@@ -4582,6 +4582,50 @@ async def generate_ic_memo(company_name: str):
     return {"status": "Success", "memo": memo}
 
 
+@app.post("/company/{company_name}/ic-memo-deck")
+async def ic_memo_deck(company_name: str):
+    """The 4-slide IC screening deck in the Blink CIM format (per Ishu,
+    27 Aug 2026): screening summary, overview (description / alignment chips /
+    key financials / market), rationale + risks, diligence questions.
+
+    Facts come from the stored record and the founder's emails and documents;
+    market/competitor context is grounded research, TAGGED "(AI research)" in
+    the output. The financials table is filled in CODE - the model never
+    writes a number. One grounded call, weight 2 (it is doing real research).
+    """
+    from services.ic_memo_deck import compose_deck, financials_grid, render_deck
+    from services.ic_memo_service import _email_block, _facts_block
+
+    _enforce_grounding_budget(2, "IC memo deck")
+    company = bq_handler.get_company_full(company_name) or \
+        next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+
+    emails = (await get_company_emails(company_name, limit=30)).get("emails", [])
+    try:
+        doc_summaries = [d.get("ai_summary") or d.get("filename") or ""
+                         for d in bq_handler.get_email_docs(company_name)]
+    except Exception:
+        doc_summaries = []
+
+    content = compose_deck(company, emails, doc_summaries,
+                           _facts_block(company), _email_block(emails))
+    pptx_bytes = render_deck(company, content, financials_grid(company))
+
+    bq_handler.log_smartfill(company_name, kind="icdeck")
+    try:
+        bq_handler.add_activity_note(company_name, "IC screening deck generated (4 slides, Blink format)", "icmemo")
+    except Exception:
+        pass
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", company_name)
+    from fastapi.responses import Response
+    return Response(
+        content=pptx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="IC_Deck_{safe}.pptx"'})
+
+
 @app.get("/company/{company_name}/ic-memo.pdf")
 async def ic_memo_pdf(company_name: str):
     """Render the stored IC memo as a one-page PDF (generate it first)."""

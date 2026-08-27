@@ -724,21 +724,23 @@ function HomeInner() {
                               </button>
                             ); })()}
 
-                            {/* IC Memo — Meeting and beyond only, per Ishu: the
-                                committee one-pager belongs to deals with a call
-                                booked, not to everything that was ever emailed.
-                                Earlier stages reach it from the profile. */}
-                            {['Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
+                            {/* IC Memo — Responded and beyond (per Ishu,
+                                27 Aug 2026: prep before the first call). One
+                                click builds the 4-slide screening deck in the
+                                Blink CIM format and downloads the .pptx: facts
+                                from the record and the founder's own emails and
+                                documents, market context AI-researched and
+                                tagged "(AI research)". */}
+                            {['Responded', 'Meeting', 'DD', 'Offer', 'Won'].includes(company.status) && (
                               <button className="kc-icmemo" disabled={memoBusy === company.name}
-                                title={company.ic_memo ? 'Open the stored IC memo' : 'Generate a one-page IC memo from the verified record'}
+                                title="Generate the 4-slide IC screening deck (Blink format) and download it as PowerPoint. Takes ~30-60s."
                                 onClick={async () => {
-                                  if (company.ic_memo) { openProfile(company.name, 'IC Memo'); return; }
                                   setMemoBusy(company.name);
-                                  try { await dealApi.generateIcMemo(company.name); await loadData(); openProfile(company.name, 'IC Memo'); }
-                                  catch (e: any) { alert(e?.message || 'IC memo generation failed'); }
+                                  try { await dealApi.downloadIcMemoDeck(company.name); }
+                                  catch (e: any) { alert(e?.message || 'IC deck generation failed'); }
                                   finally { setMemoBusy(''); }
                                 }}>
-                                {memoBusy === company.name ? 'Generating memo…' : company.ic_memo ? 'IC Memo' : 'Generate IC Memo'}
+                                {memoBusy === company.name ? 'Building deck…' : 'IC Memo'}
                               </button>
                             )}
 

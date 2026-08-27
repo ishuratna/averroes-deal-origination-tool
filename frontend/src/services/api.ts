@@ -576,6 +576,27 @@ export const dealApi = {
     return data;
   },
 
+  // The 4-slide IC screening deck (Blink CIM format). Generated fresh on each
+  // click - company facts from the record, market context AI-researched and
+  // tagged - and downloaded as a .pptx. Takes ~30-60s (one grounded AI call).
+  async downloadIcMemoDeck(companyName: string): Promise<void> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo-deck`, { method: 'POST' });
+    if (!response.ok) {
+      let detail = 'IC deck generation failed';
+      try { detail = (await response.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `IC_Deck_${companyName.replace(/[^A-Za-z0-9_-]+/g, '_')}.pptx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   async downloadIcMemoPdf(companyName: string): Promise<void> {
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(companyName)}/ic-memo.pdf`);
     if (!response.ok) {
