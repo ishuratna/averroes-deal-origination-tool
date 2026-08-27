@@ -10,6 +10,7 @@ entry here, dated with the commit date.
 
 # (date YYYY-MM-DD, one line a non-engineer understands)
 TOOL_UPDATES = [
+    ("2026-08-27", "Email documents now also captures decks shared as LINKS: direct PDF links in a founder's reply are downloaded (behind a strict safety check) and filed like attachments, and an Upload document button on the company profile handles Drive/Dropbox links you download yourself. Both run the same AI-read pipeline."),
     ("2026-08-27", "IC Memo rebuilt: one click on any Responded-or-later card now builds the full 4-slide screening deck in the house CIM format (summary, overview with criteria scorecard and financials, rationale and risks, diligence questions) and downloads it as PowerPoint. Company numbers come only from the record; market context is AI-researched and tagged."),
     ("2026-08-21", "Responded page rebuilt as a three-step funnel: Nurture (Ishu) → the weekly lists → Qualified leads (Bea), with collapsible sections and the Wednesday/Thursday routes drawn side by side."),
     ("2026-08-21", "When a send-time edit or a founder's reply changes the contact, the person SmartFill originally found is now preserved on the profile (\"Originally: ...\")."),

@@ -221,6 +221,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
+  const [docUploading, setDocUploading] = useState(false);
   const [emails, setEmails] = useState<any[]>([]);
   const [connections, setConnections] = useState<any>({ investors: [], siblings: [] });
   const [noteText, setNoteText] = useState('');
@@ -402,9 +403,32 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   an email, filed automatically by the sync. Opens through the
                   authenticated fetch - founders' own files never get a bare
                   public link. */}
+              <div className="cp-section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem' }}>
+                Email documents
+                {/* Manual route into the same pipeline: a founder shares a
+                    deck behind a Drive/Dropbox link the sync cannot fetch;
+                    download it and upload it here. Filed, AI-read and
+                    field-updated exactly like an email attachment. */}
+                <label className="cp-chip-btn" style={{ cursor: docUploading ? 'default' : 'pointer', fontWeight: 700 }}>
+                  {docUploading ? 'Uploading…' : '⬆ Upload document'}
+                  <input type="file" style={{ display: 'none' }} disabled={docUploading}
+                    onChange={async e => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!f) return;
+                      setDocUploading(true);
+                      try {
+                        const r = await dealApi.uploadEmailDoc(baseCompany.name, f);
+                        if (r.status === 'Skipped') alert(r.message);
+                        const docs = await dealApi.getEmailDocs(baseCompany.name);
+                        setEmailDocs(docs.documents || []);
+                      } catch (err: any) { alert(err?.message || 'Upload failed'); }
+                      finally { setDocUploading(false); }
+                    }} />
+                </label>
+              </div>
               {emailDocs.length > 0 && (
                 <>
-                  <div className="cp-section-title">Email documents</div>
                   <div className="cp-card">
                     {emailDocs.map(d => (
                       <div className="cp-doc-row" key={d.gcs_path}>

@@ -54,6 +54,102 @@ def should_analyse(content_type: str, size_bytes: int) -> bool:
     return False
 
 
+# ── PDF links in the email body (per Ishu, 27 Aug 2026: Plastometrex sent
+#    their deck as a LINK, which no attachment pipeline can see) ─────────────
+#
+# Only bare, direct .pdf URLs are followed. Drive/Dropbox/WeTransfer links
+# need access grants and return HTML, so they are ignored rather than half
+# fetched. And because these URLs come from EXTERNAL email, the fetch must
+# never be usable to reach anything internal (SSRF): scheme, host and every
+# resolved address are checked before a single byte is requested.
+
+MAX_PDF_LINKS_PER_EMAIL = 2
+_PDF_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+\.pdf(?:\?[^\s<>\"')\]]*)?", re.IGNORECASE)
+
+
+def extract_pdf_links(text: str) -> List[str]:
+    """Direct .pdf URLs in an email body. Pure, capped, deduplicated."""
+    out, seen = [], set()
+    for m in _PDF_URL_RE.finditer(text or ""):
+        url = m.group(0).rstrip(".,;")
+        if url.lower() not in seen:
+            seen.add(url.lower())
+            out.append(url)
+        if len(out) >= MAX_PDF_LINKS_PER_EMAIL:
+            break
+    return out
+
+
+def _is_safe_url(url: str, resolver=None) -> bool:
+    """May the backend fetch this URL at all?
+
+    The URL came from an external email, so this guard is what stands between
+    'file the founder's deck' and 'let an attacker read the Cloud Run metadata
+    server'. http/https only, no credentials in the URL, no raw-IP hosts, and
+    EVERY address the hostname resolves to must be public.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname or parts.username:
+            return False
+        host = parts.hostname.lower()
+        if host in ("metadata.google.internal", "localhost") or host.endswith(".internal"):
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return False           # raw-IP hosts are never a founder's website
+        except ValueError:
+            pass
+        resolver = resolver or (lambda h: [ai[4][0] for ai in socket.getaddrinfo(h, 443)])
+        addrs = resolver(host)
+        if not addrs:
+            return False
+        for a in addrs:
+            ip = ipaddress.ip_address(a)
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def fetch_pdf_link(url: str) -> Optional[Dict]:
+    """Download one vetted PDF link. Returns an attachment-shaped dict or None.
+
+    Belt and braces: the safety check first, a hard size cap while streaming,
+    and the bytes must actually BE a PDF (%PDF magic) - a login page served
+    with a .pdf URL is silently dropped.
+    """
+    if not _is_safe_url(url):
+        logger.info(f"[EmailDocs] link refused by safety check: {url[:120]}")
+        return None
+    try:
+        import requests
+        with requests.get(url, timeout=20, stream=True,
+                          headers={"User-Agent": "AverroesIntel document fetch"}) as r:
+            if r.status_code != 200:
+                return None
+            data, cap = b"", MAX_ATTACHMENT_BYTES
+            for chunk in r.iter_content(65536):
+                data += chunk
+                if len(data) > cap:
+                    return None
+        if not data.startswith(b"%PDF"):
+            return None
+        from urllib.parse import urlsplit
+        name = sanitize_filename(urlsplit(url).path.split("/")[-1] or "document.pdf")
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+        return {"filename": name, "content_type": "application/pdf", "data": data}
+    except Exception as e:
+        logger.warning(f"[EmailDocs] link fetch failed ({url[:120]}): {e}")
+        return None
+
+
 def sanitize_filename(name: str) -> str:
     """A filename safe for a GCS path: no separators, no traversal, bounded."""
     name = (name or "attachment").strip().replace("\\", "/").split("/")[-1]
@@ -211,8 +307,18 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
     documents are filed without analysis.
     """
     saved = []
-    attachments = entry.get("attachments") or []
-    if not attachments or entry.get("entity_type") != "company":
+    if entry.get("entity_type") != "company":
+        return saved
+    attachments = list(entry.get("attachments") or [])
+    # Direct .pdf links in the body ride the same pipeline as attachments:
+    # fetched (behind the SSRF guard), then filed, hashed and AI-read exactly
+    # like a file the founder attached.
+    for url in (entry.get("pdf_links") or [])[:MAX_PDF_LINKS_PER_EMAIL]:
+        att = fetch_pdf_link(url)
+        if att:
+            att["origin"] = "link"
+            attachments.append(att)
+    if not attachments:
         return saved
     company = entry["entity_name"]
     for att in attachments:
@@ -271,9 +377,11 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                 "ai_summary": analysis.get("summary") or "",
                 "ai_updates": json.dumps(applied) if applied else "",
             })
+            how = ("downloaded from a link in their email" if att.get("origin") == "link"
+                   else "received by email")
             bq_handler.add_activity_note(
                 company,
-                f"Document received by email: \"{att['filename']}\" "
+                f"Document {how}: \"{att['filename']}\" "
                 f"({att['content_type']}, {len(att['data']) // 1024}KB) filed to Email documents."
                 + (f" {analysis['summary']}" if analysis.get("summary") else ""),
                 created_by="email-docs")

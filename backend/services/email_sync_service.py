@@ -177,12 +177,20 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             # whose documents we keep), so a 500-message scan does not hold
             # hundreds of payloads in memory.
             attachments = []
+            pdf_links = []
             if direction == "received" and entity.get("type") == "company":
-                from services.email_docs_service import extract_attachments
+                from services.email_docs_service import extract_attachments, extract_pdf_links
                 attachments = extract_attachments(msg)
+                # Direct .pdf links in the body: founders often SHARE a deck
+                # rather than attach it (Plastometrex did exactly this). The
+                # snippet is truncated at 500 chars, so links are pulled from
+                # a longer read of the same body. Downloading happens later in
+                # the docs pipeline, behind its SSRF safety check.
+                pdf_links = extract_pdf_links(_body_snippet(msg, limit=20000))
 
             entries.append({
                 "attachments": attachments,
+                "pdf_links": pdf_links,
                 "message_id": _decode(msg.get("Message-ID")) or f"{folder}-{msg_id.decode()}",
                 "thread_id": _decode(msg.get("References", "")).split()[0] if msg.get("References") else _decode(msg.get("Message-ID")) or "",
                 "direction": direction,

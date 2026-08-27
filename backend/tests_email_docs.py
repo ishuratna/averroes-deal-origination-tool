@@ -127,5 +127,42 @@ chk("empty proposals are safe", decide_updates(company, []), [])
 chk("None proposals are safe", decide_updates(company, None), [])
 
 print()
+print("── PDF links in the body (the Plastometrex case) ──")
+from services.email_docs_service import _is_safe_url, extract_pdf_links  # noqa: E402
+
+chk("a direct pdf link is found",
+    extract_pdf_links("Our deck: https://plastometrex.com/files/PIP-deck.pdf - enjoy"),
+    ["https://plastometrex.com/files/PIP-deck.pdf"])
+chk("query strings survive",
+    extract_pdf_links("see https://a.co/x.pdf?dl=1&v=2 now"), ["https://a.co/x.pdf?dl=1&v=2"])
+chk("drive/dropbox share links are NOT treated as pdfs (they serve HTML)",
+    extract_pdf_links("https://drive.google.com/file/d/abc/view and https://www.dropbox.com/s/x/deck"), [])
+chk("capped at 2 per email",
+    len(extract_pdf_links(" ".join(f"https://a.co/{i}.pdf" for i in range(5)))), 2)
+chk("duplicates collapse",
+    extract_pdf_links("https://a.co/x.pdf and again https://a.co/x.pdf"), ["https://a.co/x.pdf"])
+chk("no links, no crash", extract_pdf_links(""), [])
+
+print()
+print("── The SSRF guard: external mail must never reach anything internal ──")
+pub = lambda h: ["93.184.216.34"]
+chk("a normal public URL passes", _is_safe_url("https://plastometrex.com/deck.pdf", pub), True)
+chk("http (not just https) is allowed", _is_safe_url("http://a.co/x.pdf", pub), True)
+chk("the metadata server is refused",
+    _is_safe_url("http://metadata.google.internal/computeMetadata/v1/x.pdf", pub), False)
+chk("any .internal host is refused", _is_safe_url("https://x.svc.internal/a.pdf", pub), False)
+chk("localhost is refused", _is_safe_url("http://localhost/x.pdf", pub), False)
+chk("raw-IP hosts are refused outright", _is_safe_url("https://93.184.216.34/x.pdf", pub), False)
+chk("a host resolving to the metadata IP is refused",
+    _is_safe_url("https://evil.example/x.pdf", lambda h: ["169.254.169.254"]), False)
+chk("a host resolving to a private range is refused",
+    _is_safe_url("https://evil.example/x.pdf", lambda h: ["10.0.0.5"]), False)
+chk("ONE private address among many public poisons the whole host",
+    _is_safe_url("https://evil.example/x.pdf", lambda h: ["93.184.216.34", "127.0.0.1"]), False)
+chk("credentials in the URL are refused", _is_safe_url("https://user@a.co/x.pdf", pub), False)
+chk("non-http schemes are refused", _is_safe_url("ftp://a.co/x.pdf", pub), False)
+chk("resolution failure fails CLOSED", _is_safe_url("https://a.co/x.pdf", lambda h: []), False)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

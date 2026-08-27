@@ -3970,6 +3970,43 @@ async def download_email_doc(path: str = Query(..., description="gcs_path from t
                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
+@app.post("/company/{company_name}/email-docs/upload")
+async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
+    """Manual route into the SAME document pipeline (per Ishu, 27 Aug 2026):
+    a founder shares a deck behind a Drive/Dropbox link the sync cannot fetch,
+    Ishu downloads it and uploads it here. Filed to GCS, hashed, AI-read and
+    whitelisted-field-updated exactly like an email attachment."""
+    import uuid
+    from services.email_docs_service import MAX_ATTACHMENT_BYTES, process_email_documents, sanitize_filename
+
+    company = next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="File is over the 15MB limit.")
+
+    entry = {
+        "entity_type": "company", "entity_name": company_name,
+        "message_id": f"manual-{uuid.uuid4().hex[:12]}",
+        "subject": "Manual upload",
+        "counterparty_email": "",
+        "sent_at": datetime.now().astimezone().isoformat(),
+        "attachments": [{
+            "filename": sanitize_filename(file.filename or "document"),
+            "content_type": file.content_type or "application/octet-stream",
+            "data": data,
+        }],
+    }
+    filed = process_email_documents(bq_handler, gcs_handler, entry, company, ai_budget=[2])
+    if not filed:
+        return {"status": "Skipped",
+                "message": "Nothing filed - identical bytes are already on file for this company."}
+    return {"status": "Success", "filed": filed}
+
+
 @app.post("/email/docs/backfill")
 async def email_docs_backfill(request: Request,
                               days: int = Query(90, description="How far back to scan the mailbox")):

@@ -128,6 +128,20 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Manual upload into the same email-documents pipeline (for decks shared
+  // as Drive/Dropbox links the sync cannot fetch). No Content-Type header:
+  // the browser sets the multipart boundary itself.
+  async uploadEmailDoc(name: string, file: globalThis.File): Promise<any> {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await apiFetch(
+      `${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs/upload`,
+      { method: 'POST', body: form });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || 'Upload failed');
+    return data;
+  },
+
   // Authenticated blob open, same pattern as CH filing PDFs: these are
   // founders' own files, so the endpoint stays behind sign-in and a plain
   // link can never serve them.
