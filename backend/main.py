@@ -4758,6 +4758,113 @@ async def identity_audit(request: Request,
     return _stream_json(_run)
 
 
+@app.post("/admin/identity-repair")
+async def identity_repair(request: Request,
+                          dry_run: int = Query(1, description="1 = preview (default), 0 = apply"),
+                          reenrich: int = Query(0, description="1 = also re-run guarded SmartEnrich on cleared cross-contamination rows (costs AI)"),
+                          limit: int = Query(25, description="Max re-enrichments in one run")):
+    """Repair the audit's tier 1 + 2 (per Ishu, 28 Aug 2026).
+
+    ZERO-AI step (always): clear the WRONG contact emails -
+      * cross_contamination: the address belongs to another universe company
+      * fabricated_email: an old enrichment invented a placeholder address
+    The bad address goes into the Activity Log note (not bounced_email - the
+    address is not dead, it is someone else's), and the waterfall fields are
+    cleared with it so nothing keeps vouching for a wrong contact.
+
+    SKIPPED, reported separately: pairs whose NAMES squash to the same brand
+    (eflow / eflow Global) - those are duplicate rows of one company, where
+    the email is probably right and the fix is a dedupe decision, not a wipe.
+
+    OPTIONAL AI step (reenrich=1): guarded SmartEnrich on each cleared
+    cross-contamination row, capped by `limit` - the identity guard now
+    refuses wrong-company results, so the re-run cannot re-contaminate.
+    """
+    _require_token(request)
+    from ai.identity_check import _squash, audit_row, registrable_domain
+
+    def _run():
+        rows = bq_handler.get_universe_slim()
+        domain_owners = {}
+        for c in rows:
+            d = registrable_domain(c.get("website") or "")
+            if d:
+                domain_owners.setdefault(d, c.get("name"))
+        to_clear, duplicates = [], []
+        for c in rows:
+            if c.get("source") == "Internal Test":
+                continue
+            got = audit_row(c, domain_owners)
+            if not got["suspect"]:
+                continue
+            sig = " ".join(got["signals"])
+            if "FABRICATED placeholder" in sig:
+                to_clear.append({"name": c["name"], "tier": "fabricated_email",
+                                 "bad_email": c.get("contact_email") or "", "signal": got["signals"][0]})
+            elif "ANOTHER company" in sig:
+                other = got["signals"][0].rsplit(": ", 1)[-1]
+                if _squash(c["name"]) and (_squash(c["name"]) in _squash(other)
+                                           or _squash(other) in _squash(c["name"])):
+                    duplicates.append({"name": c["name"], "other": other,
+                                       "note": "same brand twice in the universe - dedupe, do not wipe"})
+                else:
+                    to_clear.append({"name": c["name"], "tier": "cross_contamination",
+                                     "bad_email": c.get("contact_email") or "", "signal": got["signals"][0]})
+
+        if dry_run:
+            return {"status": "Preview", "dry_run": True,
+                    "would_clear": len(to_clear), "clear_list": sorted(to_clear, key=lambda x: x["name"]),
+                    "duplicates_detected": duplicates,
+                    "message": "Nothing was changed. Re-run with dry_run=0 to apply; add reenrich=1 "
+                               "to also re-research the cross-contamination rows (guarded)."}
+
+        from google.cloud import bigquery as bq_lib
+        cleared, failures = [], []
+        for item in to_clear:
+            try:
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET contact_email = NULL,
+                          contact_email_kind = '', contact_email_name = '',
+                          contact_email_source = '', outreach_draft_to = NULL
+                        WHERE name = @name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("name", "STRING", item["name"]),
+                    ])).result()
+                bq_handler.add_activity_note(
+                    item["name"],
+                    f"Identity repair: cleared wrong contact email '{item['bad_email']}' "
+                    f"({item['signal']}). The waterfall will find the right address on the next enrichment.",
+                    created_by="identity-repair")
+                cleared.append(item["name"])
+            except Exception as e:
+                failures.append(f"{item['name']}: {e}")
+
+        reenriched, reenrich_failures = [], []
+        if reenrich:
+            # _run executes via asyncio.to_thread (no loop in this thread), so
+            # asyncio.run drives the async endpoint directly. Sequential on
+            # purpose - each SmartEnrich is grounded and budget-checked, and
+            # the identity guard inside it refuses wrong-company results.
+            import asyncio as _aio
+            targets = [i["name"] for i in to_clear
+                       if i["tier"] == "cross_contamination" and i["name"] in cleared][:max(1, limit)]
+            for name in targets:
+                try:
+                    _aio.run(smartenrich_company(name))
+                    reenriched.append(name)
+                except Exception as e:
+                    reenrich_failures.append(f"{name}: {e}")
+
+        return {"status": "Success", "cleared": sorted(cleared),
+                "failures": failures, "duplicates_detected": duplicates,
+                "reenriched": reenriched, "reenrich_failures": reenrich_failures,
+                "message": f"Cleared {len(cleared)} wrong emails"
+                           + (f", re-enriched {len(reenriched)} (guarded)" if reenrich else
+                              ". Re-run with reenrich=1 to re-research the cross-contamination rows.")}
+
+    return _stream_json(_run)
+
+
 @app.post("/company/{company_name}/news/refresh")
 async def company_news_refresh(company_name: str):
     """The profile's NEWS section: one grounded search for recent coverage
