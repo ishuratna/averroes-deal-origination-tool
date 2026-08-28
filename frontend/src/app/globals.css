@@ -978,3 +978,9 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 /* ── Fit score: the click-open evidence panel ──────────────────────────────── */
 .cp-score-why { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.7rem; margin: 0.15rem 0 0.5rem; }
 .cp-score-why p { font-size: 0.76rem; color: #334155; margin: 0 0 0.35rem; line-height: 1.45; }
+
+/* ── Identity guard verdict on the profile ─────────────────────────────────── */
+.cp-identity { font-size: 0.74rem; border-radius: 8px; padding: 0.45rem 0.7rem; margin-bottom: 0.8rem; border: 1px solid; line-height: 1.4; }
+.cp-identity.confirmed  { color: #0f5132; background: #f2f8f5; border-color: #bcd9c8; }
+.cp-identity.unverified { color: #8a4b0f; background: #fdfaf5; border-color: #ecd5b8; }
+.cp-identity.mismatch, .cp-identity.suspect { color: #8c1d2a; background: #fdf1f4; border-color: #f0cdd5; }

@@ -158,6 +158,12 @@ class BigQueryHandler:
         # person parking it. Cleared when the company returns to live tracks.
         ("park_reason", "STRING"),
         ("park_reason_detail", "STRING"),
+        # Identity guard verdict from the last enrichment: 'confirmed' (two
+        # anchors agreed), 'unverified' (not enough overlap to say), or
+        # 'mismatch' (the research found a DIFFERENT same-named company and
+        # its fields were refused). Note holds the matched/conflicting anchors.
+        ("identity_status", "STRING"),
+        ("identity_note", "STRING"),
         # Cached news list for the profile's NEWS section: JSON
         # [{title, source, date, url}], refreshed only by the button (each
         # refresh is one grounded call), never auto-fetched.

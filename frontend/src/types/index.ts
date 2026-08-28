@@ -24,6 +24,10 @@ export interface CompanyTarget {
   // Cached NEWS list (JSON of NewsItem[]), refreshed only by the button.
   news_items?: string;
   news_refreshed_at?: string;
+  // Identity guard: was the researched company verifiably OURS?
+  // 'confirmed' | 'unverified' | 'mismatch' | 'suspect' (retro audit).
+  identity_status?: string;
+  identity_note?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
   status: 'Qualified' | 'Contacted' | 'Responded' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Not a Fit' | 'Scraped' | 'Uploaded';

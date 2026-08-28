@@ -150,6 +150,28 @@ mistake is both visible and correctable. This one logged nothing, which is why
   (`_enforce_grounding_budget`) and are logged via `log_smartfill(kind)`.
   Never add a grounded Gemini call outside this accounting.
 
+## 4a. Identity guard (same-named companies must never mix)
+
+- Every grounded enrichment call receives the row's SEED ANCHORS as identity
+  constraints in the prompt AND must echo back the identity of the company it
+  actually researched. `ai/identity_check.py` then verifies IN CODE:
+  TWO-ANCHOR RULE — domain and CH number score 2 (near-unique), founder
+  surname / city / founding year score 1 (year ±1); confirmed needs ≥2 points
+  of agreement outweighing conflict; conflicts ≥ agreement = mismatch;
+  not enough overlap = unverified (write allowed, flagged, never trusted).
+- On MISMATCH the guard strips every researched field BEFORE persistence -
+  the wrong company's details are refused, not corrected. Verdict + note go
+  to identity_status/identity_note and the Activity Log; the profile shows
+  the badge. All four enrichment call sites use `_identity_guard` (main.py);
+  never add a grounded enrichment path without it.
+- Seeds are constraints, not suggestions - but seeds can be stale, so one
+  conflicting anchor never blocks a match that two others confirm (the note
+  names the stale anchor).
+- Retro: GET /admin/identity-audit is ZERO AI - it finds the contradictions a
+  past mixup leaves (contact email on ANOTHER universe company's domain, CH
+  match sharing no core word with the name). Only listed suspects are worth a
+  guarded SmartFill re-run.
+
 ## 5. Internal Test row (source = 'Internal Test')
 
 - All test-company exceptions key off `source = 'Internal Test'`, nowhere else:

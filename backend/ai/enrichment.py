@@ -11,7 +11,8 @@ class EnrichmentAgent:
     to find founders, contact details, and a company summary for targets.
     """
 
-    def enrich_founder_details(self, company_name: str) -> Dict[str, Optional[str]]:
+    def enrich_founder_details(self, company_name: str,
+                               seed: Optional[Dict] = None) -> Dict[str, Optional[str]]:
         """
         Uses Gemini with Google Search grounding to discover founder details,
         the correct company website URL, and a 1-2 paragraph company summary.
@@ -28,8 +29,28 @@ class EnrichmentAgent:
 
             client = genai.Client(api_key=api_key)
 
+            # Identity constraints (per Ishu, 27 Aug 2026): company names
+            # collide, so the search is anchored to what the SEED ROW already
+            # knows. These are constraints about WHICH company we mean, never
+            # suggestions - a hit that conflicts with them is the wrong company.
+            seed = seed or {}
+            anchor_lines = []
+            for label, key in (("Website", "website"), ("HQ city", "hq_city"),
+                               ("Founded", "year_founded"),
+                               ("Known founder/contact", "contact_name"),
+                               ("Companies House number", "ch_company_number")):
+                if seed.get(key):
+                    anchor_lines.append(f"- {label}: {seed[key]}")
+            identity_block = ""
+            if anchor_lines:
+                identity_block = (
+                    "\n            THE SPECIFIC COMPANY WE MEAN (identity constraints - if what you find "
+                    "conflicts with these, you have found a DIFFERENT company with the same name; "
+                    "keep searching for the right one, or return empty fields rather than the wrong "
+                    "company's details):\n            " + "\n            ".join(anchor_lines) + "\n")
+
             prompt = f"""
-            Research the tech company '{company_name}' and find:
+            Research the tech company '{company_name}' and find:{identity_block}
             1. The company's official website URL
             2. The primary founder, co-founder, or current CEO
             3. Their LinkedIn profile URL (must be a direct individual profile link)
@@ -72,8 +93,14 @@ class EnrichmentAgent:
             2. Co-Founder
             3. CEO / Managing Director
 
+            IDENTITY ECHO (mandatory): alongside the fields, state the identity of the
+            company you ACTUALLY researched - its website, HQ city, founder's name,
+            founding year and Companies House number where your sources show them
+            (empty string where they do not). This is checked in code against our
+            record; an honest echo of a different company is useful, a fudged one is not.
+
             Return ONLY valid JSON, no markdown, no explanation:
-            {{"website": "https://company.com", "contact_name": "First Last", "contact_email": "name@company.com", "email_source": "where the email was found, or empty", "linkedin_url": "https://www.linkedin.com/in/...", "description": "1-2 paragraph company summary", "investors": ["Fund Name", "Angel Name"]}}
+            {{"website": "https://company.com", "contact_name": "First Last", "contact_email": "name@company.com", "email_source": "where the email was found, or empty", "linkedin_url": "https://www.linkedin.com/in/...", "description": "1-2 paragraph company summary", "investors": ["Fund Name", "Angel Name"], "identity": {{"website": "...", "hq_city": "...", "founder_name": "...", "year_founded": "...", "company_number": "..."}}}}
             """
 
             response = client.models.generate_content(
@@ -105,6 +132,9 @@ class EnrichmentAgent:
                 # SmartFill persist layer merges these into investors_raw and
                 # the LP miner extracts them with the rest.
                 "investors": [str(x).strip() for x in (result.get("investors") or []) if str(x).strip()][:15],
+                # The identity echo, consumed (and popped) by the guard in
+                # main.py before anything is persisted.
+                "identity": result.get("identity") or {},
             }
             # NOTE: the retry ladder is NOT run here — the contact waterfall
             # (services/contact_finder.resolve_contact_email) invokes it at the

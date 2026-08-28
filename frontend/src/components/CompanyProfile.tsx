@@ -388,6 +388,20 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                 </div>
               )}
 
+              {/* Identity guard verdict: whether the last AI research was
+                  verifiably about THIS company (two-anchor rule: domain, CH
+                  number, founder, city, year). A mismatch means the found
+                  details were refused, not written. */}
+              {company.identity_status && (
+                <div className={`cp-identity ${company.identity_status}`}
+                     title={company.identity_note || ''}>
+                  {company.identity_status === 'confirmed' && <>✓ Identity confirmed — {company.identity_note}</>}
+                  {company.identity_status === 'unverified' && <>? Identity unverified — {company.identity_note}</>}
+                  {company.identity_status === 'mismatch' && <>✗ Identity mismatch — research found a different company; its details were refused. {company.identity_note}</>}
+                  {company.identity_status === 'suspect' && <>⚠ Possible identity mixup (retro audit) — {company.identity_note}. Re-run SmartFill to fix.</>}
+                </div>
+              )}
+
               {company.averroes_fit_score != null && (
                 <>
                   <div className="cp-section-title">Fit score breakdown</div>

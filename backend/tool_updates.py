@@ -10,6 +10,7 @@ entry here, dated with the commit date.
 
 # (date YYYY-MM-DD, one line a non-engineer understands)
 TOOL_UPDATES = [
+    ("2026-08-27", "Identity guard: AI research is now anchored to the company we actually mean (website, city, founder, founding year, CH number). If the research finds a different same-named company, its details are refused instead of written, and the profile shows how identity was verified. A free audit can flag past mixups for re-research."),
     ("2026-08-27", "Talk later and Not interested now carry a REASON: parking a company asks for a 2-3 word bucket (15 to pick from) plus optional detail; the parked lists show 'Reason: ...' with the detail on hover, and unparking clears it."),
     ("2026-08-27", "New NEWS section on the company profile: a Refresh button runs one AI web search and saves the top clickable articles (title, source, date). Cached until refreshed, so browsing costs nothing."),
     ("2026-08-27", "Fit score dimensions are now clickable: each one opens the stored evidence - the inputs, the rule applied and the data source - instead of just a hover sentence."),

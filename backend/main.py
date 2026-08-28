@@ -154,7 +154,8 @@ def _process_and_refine(raw_companies: List[dict]):
         if score >= ingestion_threshold:
             c["status"] = "Under Review" if score >= 0.6 else "Qualified"
             # Fully automated enrichment for all potential targets
-            founder_info = enrichment_agent.enrich_founder_details(c['name'])
+            founder_info = enrichment_agent.enrich_founder_details(c['name'], seed=c)
+            _identity_guard(c, founder_info, context="ingest enrichment")
             # Only update if found something real, avoid overwriting with NA
             for key, val in founder_info.items():
                 if val:
@@ -209,7 +210,8 @@ async def enrich_universe_contacts():
     for company in to_enrich:
         try:
             name = company['name']
-            details = enrichment_agent.enrich_founder_details(name)
+            details = enrichment_agent.enrich_founder_details(name, seed=company)
+            _identity_guard(company, details, context="contact enrichment")
             
             # FOOL-PROOF LOGIC:
             if not details['contact_name'] and not details['contact_email']:
@@ -632,6 +634,53 @@ def _contacts_marker() -> str:
     # POST /contacts/reverify.
     verified = bool(os.getenv("HUNTER_API_KEY", "") or os.getenv("EMAIL_VERIFIER_API_KEY", ""))
     return f"contacts-v3-{'verified' if verified else 'scrape-only'}"
+
+
+def _identity_guard(company_row: dict, founder_info: dict, context: str = "smartfill") -> dict:
+    """The two-anchor identity check, applied to EVERY enrichment result
+    before anything is persisted (per Ishu, 27 Aug 2026: same-named companies
+    were getting each other's details).
+
+    Consumes the 'identity' echo from the enrichment response, compares it
+    against the seed anchors in code (ai/identity_check.py), and on a MISMATCH
+    strips every researched field so the wrong company's details can never be
+    written. Verdict + note are stored on the row and logged, whatever the
+    outcome, so the profile can show how identity was (or was not) verified.
+    Zero extra AI: the echo rides inside the existing call.
+    """
+    from ai.identity_check import check_identity, seed_anchors
+
+    echo = founder_info.pop("identity", None) or {}
+    res = check_identity(seed_anchors(company_row), echo)
+    name = company_row.get("name") or ""
+    if res["verdict"] == "mismatch":
+        for k in ("website", "contact_name", "contact_email", "email_source",
+                  "linkedin_url", "description", "investors"):
+            founder_info.pop(k, None)
+        try:
+            bq_handler.add_activity_note(
+                name,
+                f"IDENTITY MISMATCH during {context}: the research found a different "
+                f"same-named company ({res['note']}). Its details were REFUSED - "
+                f"nothing was written. Fix the seed anchors (website/city) or research manually.",
+                created_by="identity-guard")
+        except Exception:
+            pass
+    try:
+        from google.cloud import bigquery as bq_lib
+        bq_handler.client.query(
+            f"UPDATE `{bq_handler.table_id}` SET identity_status = @s, identity_note = @n "
+            f"WHERE name = @name",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("s", "STRING", res["verdict"]),
+                bq_lib.ScalarQueryParameter("n", "STRING", res["note"][:500]),
+                bq_lib.ScalarQueryParameter("name", "STRING", name),
+            ])).result()
+    except Exception as e:
+        logger.warning(f"[Identity] status write failed for {name} (non-fatal): {e}")
+    if res["verdict"] != "confirmed":
+        logger.info(f"[Identity] {name}: {res['verdict']} — {res['note']}")
+    return res
 
 
 def _waterfall_provenance(res: dict) -> str:
@@ -2420,7 +2469,8 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
 
     # Step 2: Enrich with founder details + company description (grounded —
     # only reached when the company passed all hard filters)
-    founder_info = enrichment_agent.enrich_founder_details(company_name)
+    founder_info = enrichment_agent.enrich_founder_details(company_name, seed=company_data)
+    _identity_guard(company_data, founder_info, context="SmartFill")
     website = founder_info.get("website", "")
     description = founder_info.get("description", "")
 
@@ -3142,7 +3192,8 @@ async def smartenrich_company(company_name: str):
     if company.get("source") == "Internal Test":
         actions.append("test row: contact pinned, verification skipped")
     else:
-        founder_info = enrichment_agent.enrich_founder_details(company_name)
+        founder_info = enrichment_agent.enrich_founder_details(company_name, seed=company)
+        _identity_guard(company, founder_info, context="SmartEnrich")
         # The SAME founder-first waterfall v4 as SmartFill (doctrine: one
         # intent, one implementation — never fork the ladder per entry point).
         try:
@@ -4632,6 +4683,58 @@ async def generate_ic_memo(company_name: str):
     bq_handler.log_smartfill(company_name, kind="icmemo")
     bq_handler.add_activity_note(company_name, "IC memo generated (one-pager)", "icmemo")
     return {"status": "Success", "memo": memo}
+
+
+@app.get("/admin/identity-audit")
+async def identity_audit(request: Request,
+                         flag: int = Query(0, description="1 = also stamp identity_status='suspect' on flagged rows")):
+    """The ZERO-AI retro pass for identity mixups (rows enriched before the
+    guard existed). Looks for the contradictions a mixup leaves behind:
+    a contact email on another company's domain (the smoking gun of
+    cross-contamination), an email domain that matches no known site, a CH
+    match sharing no core word with the name. Costs nothing to run; only the
+    listed suspects are worth a (now identity-guarded) SmartFill re-run.
+    """
+    _require_token(request)
+    from ai.identity_check import audit_row, registrable_domain
+
+    def _run():
+        rows = bq_handler.get_universe_slim()
+        domain_owners = {}
+        for c in rows:
+            d = registrable_domain(c.get("website") or "")
+            if d:
+                domain_owners.setdefault(d, c.get("name"))
+        suspects = []
+        for c in rows:
+            if c.get("source") == "Internal Test":
+                continue
+            got = audit_row(c, domain_owners)
+            if got["suspect"]:
+                suspects.append({"name": c.get("name"), "status": c.get("status"),
+                                 "signals": got["signals"]})
+        flagged = []
+        if flag:
+            from google.cloud import bigquery as bq_lib
+            for sc in suspects:
+                try:
+                    bq_handler.client.query(
+                        f"UPDATE `{bq_handler.table_id}` SET identity_status = 'suspect', "
+                        f"identity_note = @n WHERE name = @name",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("n", "STRING", "; ".join(sc["signals"])[:500]),
+                            bq_lib.ScalarQueryParameter("name", "STRING", sc["name"]),
+                        ])).result()
+                    flagged.append(sc["name"])
+                except Exception as e:
+                    logger.warning(f"[Identity audit] flag failed for {sc['name']}: {e}")
+        return {"status": "Success", "companies_scanned": len(rows),
+                "suspects": sorted(suspects, key=lambda s: s["name"]),
+                "flagged": flagged,
+                "message": f"{len(suspects)} suspect rows out of {len(rows)}. Zero AI used. "
+                           f"Fix: re-run SmartFill on each suspect - it is identity-guarded now."}
+
+    return _stream_json(_run)
 
 
 @app.post("/company/{company_name}/news/refresh")
