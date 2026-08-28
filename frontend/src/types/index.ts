@@ -289,16 +289,20 @@ export const RESPONDED_SECTIONS: RespondedSection[] = [
   },
   {
     key: 's2', title: 'Associates weekly list', owner: 'Wed · Thu sessions', tone: 'amber',
-    blurb: 'Assignment ready splits into two kinds of call, each with its own weekly session:',
+    blurb: 'Two kinds of company come out of Nurture, and each has its own table and weekly session. Which table a company sits in tells you WHY it is here.',
     lanes: [
       {
-        key: 'bea', title: 'Bea route — Thursday', tone: 'teal', lists: [
-          { key: 'bea_review', label: 'To discuss for Bea', hint: 'High-fit candidates. The Thursday session confirms each to Bea or bounces it back.' },
+        key: 'bea', title: 'High Fit, Right Size — Bea (Thursday)', tone: 'teal', lists: [
+          { key: 'bea_review',
+            label: 'High Fit, Right Size companies',
+            hint: 'Companies that currently fall inside Averroes’ investment range. The Thursday session confirms each to Bea or bounces it back.' },
         ],
       },
       {
-        key: 'assoc', title: 'Associate route — Wednesday', tone: 'amber', lists: [
-          { key: 'assoc_review',  label: 'To discuss for calls',     hint: 'Waiting for Wednesday to decide which associate takes the call.' },
+        key: 'assoc', title: 'Good Fit, Small Companies — associates (Wednesday)', tone: 'amber', lists: [
+          { key: 'assoc_review',
+            label: 'Good Fit, Small Companies',
+            hint: 'A good fit, but not yet at Averroes’ investment size — highly likely to fit in the future. Wednesday decides which associate keeps the relationship warm.' },
           { key: 'assoc_pending', label: 'Allocated — call pending', hint: 'An associate owns it. After the call they move it to Meeting on the Pipeline themselves.' },
         ],
       },
@@ -340,7 +344,6 @@ export interface RespondedCompany extends CompanyTarget {
   assignment_ready_at?: string;
   // Derived server-side alongside the queue, so the rules live once:
   resurfaced?: boolean;      // a Talk-later that just woke up after 6 months
-  probably_ready?: boolean;  // still in Nurture but they answered email 2 — likely mature
 }
 
 // ── THE REPLY RULE ──────────────────────────────────────────────────────────

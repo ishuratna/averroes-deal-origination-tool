@@ -210,6 +210,19 @@ export const dealApi = {
     return await response.json();
   },
 
+  // Backfill a reason onto an already-parked company. NOT a re-triage:
+  // triaged_at stays put, so a Talk-later's wake-up clock never resets.
+  async setParkReason(name: string, reason: string, reasonDetail?: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/park-reason`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, reason_detail: reasonDetail || '' }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || 'Failed to save the reason');
+    return data;
+  },
+
   async triageCompany(name: string, track: DealTrack, owner?: DealOwner | '',
                       reason?: string, reasonDetail?: string): Promise<any> {
     const body: Record<string, unknown> = { track };

@@ -44,7 +44,9 @@ export default function RespondedPage() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [profileIdx, setProfileIdx] = useState<number | null>(null);
   // The park picker: which company + track is being parked, and the reason.
-  const [park, setPark] = useState<{ name: string; track: 'later' | 'kill' } | null>(null);
+  // backfill = the company is ALREADY parked (before reasons existed) and we
+  // are only adding the reason - no re-triage, no wake-up clock reset.
+  const [park, setPark] = useState<{ name: string; track: 'later' | 'kill'; backfill?: boolean } | null>(null);
   const [parkBucket, setParkBucket] = useState('');
   const [parkDetail, setParkDetail] = useState('');
 
@@ -129,8 +131,12 @@ export default function RespondedPage() {
     if (!park || !parkBucket) return;
     const p = park;
     setPark(null);
-    act(() => dealApi.triageCompany(p.name, p.track,
-      p.track === 'later' ? undefined : '', parkBucket, parkDetail.trim()), p.name);
+    if (p.backfill) {
+      act(() => dealApi.setParkReason(p.name, parkBucket, parkDetail.trim()), p.name);
+    } else {
+      act(() => dealApi.triageCompany(p.name, p.track,
+        p.track === 'later' ? undefined : '', parkBucket, parkDetail.trim()), p.name);
+    }
   };
 
   const ready = (c: RespondedCompany, on: boolean) =>
@@ -177,8 +183,8 @@ export default function RespondedPage() {
 
   // The two exits every live list offers: a conversation can pause or end at
   // any point, not only at the first decision.
-  const startPark = (c: RespondedCompany, track: 'later' | 'kill') => {
-    setParkBucket(''); setParkDetail(''); setPark({ name: c.name, track });
+  const startPark = (c: RespondedCompany, track: 'later' | 'kill', backfill = false) => {
+    setParkBucket(''); setParkDetail(''); setPark({ name: c.name, track, backfill });
   };
 
   const exits = (c: RespondedCompany) => (
@@ -214,13 +220,13 @@ export default function RespondedPage() {
           <>
             <button className="rsp-btn a" disabled={busy === c.name}
                     onClick={() => route(c, 'A')}
-                    title="High fit — candidate for Bea, discussed at the Thursday session before it is confirmed.">
-              Bea candidate
+                    title="Currently inside Averroes' investment range — goes to the High Fit, Right Size table for Bea's Thursday session.">
+              High fit, right size
             </button>
             <button className="rsp-btn b" disabled={busy === c.name}
                     onClick={() => route(c, 'B')}
-                    title="An associate takes the call — which one is decided on Wednesday.">
-              Associate call
+                    title="Good fit but below Averroes' investment size today — goes to the Good Fit, Small Companies table; Wednesday decides which associate keeps it warm.">
+              Good fit, still small
             </button>
             <button className="rsp-btn" disabled={busy === c.name}
                     onClick={() => backToNurture(c)}
@@ -339,15 +345,10 @@ export default function RespondedPage() {
           <tr key={c.name}>
             <td>
               <button className="rsp-name" onClick={() => openProfile(c)}>{c.name}</button>
-              {/* Hints, never actions: "probably ready" flags a likely-mature
-                  conversation (they answered the second email) but only Ishu's
-                  click moves it; "back from Talk later" explains why a company
-                  reappeared after 6 months asleep. */}
-              {listKey === 'nurture' && c.probably_ready && (
-                <span className="rsp3-chip ready" title="They answered your second email — likely mature. Your click still decides.">
-                  probably ready
-                </span>
-              )}
+              {/* "back from Talk later" explains why a company reappeared
+                  after 6 months asleep. (A "probably ready" hint used to sit
+                  on Nurture rows and was removed on Ishu's request, 28 Aug
+                  2026: maturity is his read, not an email count.) */}
               {listKey === 'assignment_ready' && c.resurfaced && (
                 <span className="rsp3-chip woke" title="Parked 6 months ago; its Talk-later timer just expired.">
                   back from Talk later
@@ -355,12 +356,24 @@ export default function RespondedPage() {
               )}
               <div className="rsp-sub">{c.sector || '—'}</div>
               {/* WHY it was parked: the bucket on the row, the detail on
-                  hover. Filled by whoever parked it; cleared on unpark. */}
-              {parked && c.park_reason && (
-                <div className="rsp3-reason"
-                     title={c.park_reason_detail || 'No further detail was added.'}>
-                  Reason: <b>{c.park_reason}</b>
-                </div>
+                  hover. Filled by whoever parked it; cleared on unpark.
+                  Rows parked BEFORE reasons existed show an add button that
+                  backfills the reason without resetting the wake-up clock. */}
+              {parked && (
+                c.park_reason ? (
+                  <div className="rsp3-reason"
+                       title={c.park_reason_detail || 'No further detail was added.'}>
+                    Reason: <b>{c.park_reason}</b>
+                  </div>
+                ) : (
+                  <div className="rsp3-reason">
+                    Reason: <button className="rsp3-reason-add" disabled={busy === c.name}
+                            title="Parked before reasons existed — record why, so the list stays reviewable. Does not reset the Talk-later clock."
+                            onClick={() => startPark(c, listKey === 'talk_later' ? 'later' : 'kill', true)}>
+                      ＋ add reason
+                    </button>
+                  </div>
+                )
               )}
             </td>
             {!compact && <td>{displayStatus(c.status)}</td>}
@@ -553,10 +566,12 @@ export default function RespondedPage() {
         <div className="rsp3-park-overlay" onClick={() => setPark(null)}>
           <div className="rsp3-park-modal" onClick={e => e.stopPropagation()}>
             <h3>
-              {park.track === 'later' ? 'Talk later' : 'Not interested'} — {park.name}
+              {park.backfill ? 'Add the reason' : park.track === 'later' ? 'Talk later' : 'Not interested'} — {park.name}
             </h3>
             <p className="rsp3-park-sub">
-              Why? Pick a reason (shown on the parked list; hover reveals your detail).
+              {park.backfill
+                ? 'This company was parked before reasons existed. Record why, so the list stays reviewable.'
+                : 'Why? Pick a reason (shown on the parked list; hover reveals your detail).'}
             </p>
             <div className="rsp3-park-buckets">
               {PARK_REASONS.map(r => (
@@ -581,7 +596,7 @@ export default function RespondedPage() {
                       disabled={!parkBucket}
                       title={parkBucket ? '' : 'Pick a reason bucket first'}
                       onClick={confirmPark}>
-                {park.track === 'later' ? 'Park — talk later' : 'Close out — not interested'}
+                {park.backfill ? 'Save reason' : park.track === 'later' ? 'Park — talk later' : 'Close out — not interested'}
               </button>
             </div>
           </div>

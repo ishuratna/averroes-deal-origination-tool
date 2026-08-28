@@ -984,3 +984,6 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-identity.confirmed  { color: #0f5132; background: #f2f8f5; border-color: #bcd9c8; }
 .cp-identity.unverified { color: #8a4b0f; background: #fdfaf5; border-color: #ecd5b8; }
 .cp-identity.mismatch, .cp-identity.suspect { color: #8c1d2a; background: #fdf1f4; border-color: #f0cdd5; }
+
+.rsp3-reason-add { border: 1px dashed #cbd5e1; background: none; color: #64748b; border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.68rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+.rsp3-reason-add:hover:not(:disabled) { border-color: #94a3b8; color: #334155; }

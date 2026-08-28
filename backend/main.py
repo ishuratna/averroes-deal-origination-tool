@@ -4436,13 +4436,11 @@ async def get_responded():
     rows = bq_handler.get_responded()
     for r in rows:
         r["queue"] = _responded_group(r)
-        # Flags the page renders as hints, derived here so the rule lives once:
-        # resurfaced = a Talk-later that woke up (track still 'later', but
-        # grouped as assignment_ready); probably_ready = still in Nurture and
-        # they have answered the second email, so it is LIKELY mature — Ishu's
-        # click is still what moves it.
+        # Derived here so the rule lives once: resurfaced = a Talk-later that
+        # woke up (track still 'later', but grouped as assignment_ready).
+        # A "probably ready" hint used to be derived too and was removed on
+        # Ishu's request (28 Aug 2026): maturity is HIS read, not a count.
         r["resurfaced"] = (r.get("track") == "later" and r["queue"] == "assignment_ready")
-        r["probably_ready"] = (r["queue"] == "nurture" and int(r.get("sent_count") or 0) >= 2)
 
     groups: Dict[str, List[dict]] = {}
     for r in rows:
@@ -4532,6 +4530,40 @@ async def weekly_review(request: Request):
         "open_calls": responded.get("open_calls", {}),
         "updates": updates_since(days=8),
     }
+
+
+class ParkReasonRequest(BaseModel):
+    reason: str
+    reason_detail: Optional[str] = ""
+
+
+@app.put("/company/{company_name}/park-reason")
+async def set_park_reason(company_name: str, req: ParkReasonRequest):
+    """Backfill a reason onto an ALREADY-PARKED company (rows parked before
+    reasons existed). Deliberately NOT a re-triage: triaged_at stays put, so
+    adding a reason never resets a Talk-later's 6-month wake-up clock."""
+    from google.cloud import bigquery as bq_lib
+    reason = (req.reason or "").strip()
+    if reason not in bq_handler.PARK_REASONS:
+        raise HTTPException(status_code=400,
+                            detail="Pick one of: " + ", ".join(bq_handler.PARK_REASONS))
+    job = bq_handler.client.query(
+        f"""UPDATE `{bq_handler.table_id}`
+            SET park_reason = @r, park_reason_detail = @d
+            WHERE name = @name AND track IN ('kill', 'later')""",
+        job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("r", "STRING", reason),
+            bq_lib.ScalarQueryParameter("d", "STRING", (req.reason_detail or "").strip()[:600]),
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ]))
+    job.result()
+    if not int(job.num_dml_affected_rows or 0):
+        raise HTTPException(status_code=404, detail=f"'{company_name}' is not a parked company.")
+    bq_handler.add_activity_note(
+        company_name,
+        f"Park reason added: {reason}" + (f" ({req.reason_detail.strip()[:300]})" if (req.reason_detail or "").strip() else ""),
+        created_by="Ishu Ratna")
+    return {"status": "Success", "company": company_name, "reason": reason}
 
 
 @app.put("/company/{company_name}/assignment-ready")
