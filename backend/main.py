@@ -4705,14 +4705,32 @@ async def identity_audit(request: Request,
             d = registrable_domain(c.get("website") or "")
             if d:
                 domain_owners.setdefault(d, c.get("name"))
+        # Tiered by severity so the fix list is priority-ordered, not a wall:
+        #   cross_contamination  another universe company's email on this row
+        #   fabricated_email     an AI-invented placeholder address (clear it)
+        #   domain_mismatch      email/site domains differ (often benign:
+        #                        brand vs legal domain, parent groups)
+        #   ch_name_mismatch     CH match shares nothing with the name
+        tiers = {"cross_contamination": [], "fabricated_email": [],
+                 "domain_mismatch": [], "ch_name_mismatch": []}
         suspects = []
         for c in rows:
             if c.get("source") == "Internal Test":
                 continue
             got = audit_row(c, domain_owners)
             if got["suspect"]:
-                suspects.append({"name": c.get("name"), "status": c.get("status"),
-                                 "signals": got["signals"]})
+                entry = {"name": c.get("name"), "status": c.get("status"),
+                         "signals": got["signals"]}
+                suspects.append(entry)
+                sig = " ".join(got["signals"])
+                if "ANOTHER company" in sig:
+                    tiers["cross_contamination"].append(entry)
+                elif "FABRICATED placeholder" in sig:
+                    tiers["fabricated_email"].append(entry)
+                elif "does not match the website" in sig:
+                    tiers["domain_mismatch"].append(entry)
+                else:
+                    tiers["ch_name_mismatch"].append(entry)
         flagged = []
         if flag:
             from google.cloud import bigquery as bq_lib
@@ -4729,10 +4747,13 @@ async def identity_audit(request: Request,
                 except Exception as e:
                     logger.warning(f"[Identity audit] flag failed for {sc['name']}: {e}")
         return {"status": "Success", "companies_scanned": len(rows),
-                "suspects": sorted(suspects, key=lambda s: s["name"]),
+                "counts": {k: len(v) for k, v in tiers.items()},
+                "tiers": {k: sorted(v, key=lambda s: s["name"]) for k, v in tiers.items()},
                 "flagged": flagged,
-                "message": f"{len(suspects)} suspect rows out of {len(rows)}. Zero AI used. "
-                           f"Fix: re-run SmartFill on each suspect - it is identity-guarded now."}
+                "message": f"{len(suspects)} suspects out of {len(rows)}, zero AI. Priority: "
+                           f"cross_contamination first (real mixups), fabricated_email second "
+                           f"(clear + re-waterfall), domain_mismatch is often benign "
+                           f"(brand vs legal domain, parent groups) - review before spending."}
 
     return _stream_json(_run)
 

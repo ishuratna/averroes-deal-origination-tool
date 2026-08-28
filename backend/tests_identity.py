@@ -92,6 +92,19 @@ chk("CH match sharing no core word flags",
 chk("CH suffix words alone never flag",
     audit_row(dict(clean, ch_official_name="Plastometrex Technologies Ltd"), owners)["suspect"], False)
 chk("empty row never crashes", audit_row({}, {})["suspect"], False)
+# v2 refinements, from reading the first live audit (406 flags, 28 Aug 2026):
+chk("fabricated placeholder email gets its own signal",
+    "FABRICATED" in audit_row(dict(clean, contact_email="a@example.com"), owners)["signals"][0])
+chk("company.com placeholder also caught",
+    "FABRICATED" in audit_row(dict(clean, contact_email="ceo@company.com"), owners)["signals"][0])
+chk("shared service domains (wix, onmicrosoft) never flag",
+    audit_row(dict(clean, contact_email="x@wixpress.com"), owners)["suspect"], False)
+chk("squashed CH name kills punctuation false positives (VU.CITY / VUCITY)",
+    audit_row({"name": "VU.CITY", "ch_official_name": "VUCITY LIMITED"}, {})["suspect"], False)
+chk("SailTies vs SAIL TIES LTD is the same brand",
+    audit_row({"name": "SailTies", "ch_official_name": "SAIL TIES LTD"}, {})["suspect"], False)
+chk("genuinely alien CH name still flags",
+    audit_row({"name": "Hortis", "ch_official_name": "MERIDIAN CATERING LIMITED"}, {})["suspect"], True)
 
 print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")

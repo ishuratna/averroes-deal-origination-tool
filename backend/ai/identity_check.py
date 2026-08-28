@@ -30,6 +30,15 @@ GENERIC_MAIL = {
 
 _WWW = re.compile(r"^www\d?\.")
 
+# Domains that can never identify a company: AI-fabricated placeholders from
+# old enrichments (a real bug this audit surfaced) and multi-tenant/service
+# domains that hundreds of unrelated businesses share.
+PLACEHOLDER_MAIL = {"example.com", "company.com", "email.com", "acme.com",
+                    "yourbusiness.com", "studio.com", "domain.com", "test.com"}
+SHARED_SERVICE_MAIL = {"wixpress.com", "onmicrosoft.com", "sentry.io",
+                       "hostingersite.com", "uk.com", "gsi.gov.uk", "nhs.net",
+                       "wordpress.com", "squarespace.com", "godaddy.com"}
+
 
 def registrable_domain(value: str) -> str:
     """example.co.uk from a URL or an email address. '' when unparseable."""
@@ -144,6 +153,18 @@ def check_identity(seed: Dict, echo: Dict) -> Dict:
 
 # ── The ZERO-AI retro audit ──────────────────────────────────────────────────
 
+def _squash(name: str) -> str:
+    """Everything but letters+digits, lowercased: 'VU.CITY' == 'VUCITY LIMITED'
+    once suffixes are gone. Kills the false positives where the CH name is the
+    same brand merely spaced or punctuated differently (SailTies vs SAIL TIES).
+    """
+    stop = ("limited", "ltd", "plc", "llp", "the ", "group", "holdings")
+    s = (name or "").lower()
+    for w in stop:
+        s = s.replace(w, " ")
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
 def _core_tokens(name: str) -> set:
     stop = {"ltd", "limited", "plc", "llp", "uk", "the", "group", "holdings",
             "technologies", "technology", "tech", "software", "solutions",
@@ -163,7 +184,10 @@ def audit_row(company: Dict, domain_owners: Optional[Dict[str, str]] = None) -> 
     site_dom = registrable_domain(company.get("website") or "")
     mail_dom = registrable_domain(company.get("contact_email") or "")
 
-    if mail_dom and site_dom and mail_dom != site_dom and mail_dom not in GENERIC_MAIL:
+    if mail_dom in PLACEHOLDER_MAIL:
+        signals.append(f"contact email is a FABRICATED placeholder ('{mail_dom}') - clear it and re-run the waterfall")
+    elif mail_dom and site_dom and mail_dom != site_dom \
+            and mail_dom not in GENERIC_MAIL and mail_dom not in SHARED_SERVICE_MAIL:
         owner = (domain_owners or {}).get(mail_dom, "")
         if owner and owner != name:
             signals.append(f"contact email domain '{mail_dom}' belongs to ANOTHER company in the universe: {owner}")
@@ -173,7 +197,9 @@ def audit_row(company: Dict, domain_owners: Optional[Dict[str, str]] = None) -> 
     ch_name = company.get("ch_official_name") or ""
     if ch_name and name:
         ours, theirs = _core_tokens(name), _core_tokens(ch_name)
-        if ours and theirs and not (ours & theirs):
+        a, b = _squash(name), _squash(ch_name)
+        squash_ok = bool(a) and bool(b) and (a in b or b in a)
+        if ours and theirs and not (ours & theirs) and not squash_ok:
             signals.append(f"CH match '{ch_name}' shares no core word with '{name}'")
 
     return {"suspect": bool(signals), "signals": signals}
