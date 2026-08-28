@@ -128,6 +128,16 @@ export const dealApi = {
     return await response.json();
   },
 
+  // The NEWS section: one grounded search (~1p), results cached on the
+  // record until the next press. Never auto-fetched.
+  async refreshNews(name: string): Promise<{ items: import('../types').NewsItem[]; message?: string }> {
+    const response = await apiFetch(
+      `${API_BASE_URL}/company/${encodeURIComponent(name)}/news/refresh`, { method: 'POST' });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || 'News refresh failed');
+    return data;
+  },
+
   // Manual upload into the same email-documents pipeline (for decks shared
   // as Drive/Dropbox links the sync cannot fetch). No Content-Type header:
   // the browser sets the multipart boundary itself.
@@ -200,9 +210,12 @@ export const dealApi = {
     return await response.json();
   },
 
-  async triageCompany(name: string, track: DealTrack, owner?: DealOwner | ''): Promise<any> {
+  async triageCompany(name: string, track: DealTrack, owner?: DealOwner | '',
+                      reason?: string, reasonDetail?: string): Promise<any> {
     const body: Record<string, unknown> = { track };
     if (owner !== undefined) body.owner = owner;
+    if (reason) body.reason = reason;
+    if (reasonDetail) body.reason_detail = reasonDetail;
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/triage`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

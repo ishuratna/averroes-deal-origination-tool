@@ -4243,8 +4243,12 @@ async def update_company_status(company_name: str, req: StatusUpdateRequest):
 
 
 class TriageRequest(BaseModel):
-    track: str                              # 'A' | 'B' | 'kill' | '' to clear
+    track: str                              # 'A' | 'B' | 'kill' | 'later' | '' to clear
     owner: Optional[str] = None             # set in the same write when known
+    # WHY it was parked - REQUIRED for kill/later (bucket from PARK_REASONS),
+    # detail optional. Travels in the same write; cleared on unpark.
+    reason: Optional[str] = None
+    reason_detail: Optional[str] = None
     created_by: Optional[str] = "Ishu Ratna"
 
 
@@ -4276,14 +4280,25 @@ async def triage_company(company_name: str, req: TriageRequest):
     if track and track not in bq_handler.TRACKS:
         raise HTTPException(status_code=400,
                             detail=f"Invalid track. Must be one of: {list(bq_handler.TRACKS)} (or blank to clear).")
+    # No park without a reason (per Ishu, 27 Aug 2026): the bucket is what
+    # makes the Talk later / Not interested lists reviewable months later.
+    if track in ("kill", "later") and not (req.reason or "").strip():
+        raise HTTPException(status_code=400,
+                            detail="A park needs a reason. Pick one of: "
+                                   + ", ".join(bq_handler.PARK_REASONS))
     try:
-        ok = bq_handler.set_track(company_name, track, owner=req.owner)
+        ok = bq_handler.set_track(company_name, track, owner=req.owner,
+                                  reason=req.reason, reason_detail=req.reason_detail)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not ok:
         raise HTTPException(status_code=404, detail=f"'{company_name}' not found.")
 
     note = (f"Triaged: {_TRACK_LABELS.get(track, track)}" if track else "Triage cleared")
+    if track in ("kill", "later") and req.reason:
+        note += f" — reason: {req.reason}"
+        if (req.reason_detail or "").strip():
+            note += f" ({req.reason_detail.strip()[:300]})"
     if req.owner is not None:
         note += f" — owner set to {req.owner or 'unassigned'}"
     try:
@@ -4617,6 +4632,74 @@ async def generate_ic_memo(company_name: str):
     bq_handler.log_smartfill(company_name, kind="icmemo")
     bq_handler.add_activity_note(company_name, "IC memo generated (one-pager)", "icmemo")
     return {"status": "Success", "memo": memo}
+
+
+@app.post("/company/{company_name}/news/refresh")
+async def company_news_refresh(company_name: str):
+    """The profile's NEWS section: one grounded search for recent coverage
+    (news, funding, blogs, awards), stored as a clickable list on the record.
+    Refreshed only by this button - never auto-fetched on open, so browsing
+    the pipeline costs nothing.
+    """
+    from google.cloud import bigquery as bq_lib
+
+    _enforce_grounding_budget(1, "Company news")
+    company = next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
+    items = []
+    try:
+        from google import genai
+        from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+        client = genai.Client(api_key=api_key)
+        prompt = f"""Find recent news and information pieces about the company "{company_name}"
+({company.get('sector') or 'B2B software'}, {company.get('hq_city') or 'UK'},
+website: {company.get('website') or 'unknown'}).
+
+Search for: news articles, funding announcements, product launches, awards,
+notable blog posts or interviews. UP TO 8 items, newest first. ONLY items you
+actually found in search results, about THIS company (same website/location -
+not a similarly named business). Every item needs a real URL from the search
+results. If you find nothing solid, return an empty list rather than padding.
+
+Return ONLY valid JSON:
+{{"items": [{{"title": "...", "source": "publication or site name",
+             "date": "YYYY-MM or YYYY-MM-DD if known, else \\"\\"",
+             "url": "https://..."}}]}}"""
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt,
+            config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())], temperature=0.1))
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        got = json.loads(text[text.find("{"):text.rfind("}") + 1])
+        for it in (got.get("items") or [])[:8]:
+            url = (it.get("url") or "").strip()
+            if url.startswith("http") and (it.get("title") or "").strip():
+                items.append({"title": it["title"].strip()[:200],
+                              "source": (it.get("source") or "").strip()[:80],
+                              "date": (it.get("date") or "").strip()[:10],
+                              "url": url[:500]})
+    except Exception as e:
+        logger.warning(f"[News] fetch failed for {company_name}: {e}")
+        raise HTTPException(status_code=502, detail=f"News search failed: {e}")
+
+    bq_handler.client.query(
+        f"""UPDATE `{bq_handler.table_id}`
+            SET news_items = @items, news_refreshed_at = CURRENT_TIMESTAMP()
+            WHERE name = @name""",
+        job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("items", "STRING", json.dumps(items)),
+            bq_lib.ScalarQueryParameter("name", "STRING", company_name),
+        ])).result()
+    bq_handler.log_smartfill(company_name, kind="news")
+    return {"status": "Success", "items": items,
+            "message": f"Found {len(items)} items." if items else
+                       "Nothing solid found - the list was left empty rather than padded."}
 
 
 @app.post("/company/{company_name}/ic-memo-deck")

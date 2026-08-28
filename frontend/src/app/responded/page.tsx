@@ -22,7 +22,7 @@ import OwnerTag from '../../components/OwnerTag';
 import ReplyRuleButton from '../../components/ReplyRuleButton';
 import { dealApi } from '../../services/api';
 import {
-  RESPONDED_SECTIONS, RESPONDED_PARKED, CALL_ASSOCIATES,
+  RESPONDED_SECTIONS, RESPONDED_PARKED, CALL_ASSOCIATES, PARK_REASONS,
   RespondedCompany, RespondedResponse, DealOwner, DealTrack,
   displayStatus,
 } from '../../types';
@@ -43,6 +43,10 @@ export default function RespondedPage() {
   // reads as a three-step funnel first, and detail only appears on click.
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [profileIdx, setProfileIdx] = useState<number | null>(null);
+  // The park picker: which company + track is being parked, and the reason.
+  const [park, setPark] = useState<{ name: string; track: 'later' | 'kill' } | null>(null);
+  const [parkBucket, setParkBucket] = useState('');
+  const [parkDetail, setParkDetail] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -118,6 +122,17 @@ export default function RespondedPage() {
   const route = (c: RespondedCompany, track: DealTrack) =>
     act(() => dealApi.triageCompany(c.name, track, track === 'later' ? undefined : ''), c.name);
 
+  // NO PARK WITHOUT A REASON (per Ishu, 27 Aug 2026): Talk later and Not
+  // interested open a picker - a required bucket plus optional detail - and
+  // the backend rejects a park that arrives without one.
+  const confirmPark = () => {
+    if (!park || !parkBucket) return;
+    const p = park;
+    setPark(null);
+    act(() => dealApi.triageCompany(p.name, p.track,
+      p.track === 'later' ? undefined : '', parkBucket, parkDetail.trim()), p.name);
+  };
+
   const ready = (c: RespondedCompany, on: boolean) =>
     act(() => dealApi.setAssignmentReady(c.name, on), c.name);
 
@@ -162,16 +177,20 @@ export default function RespondedPage() {
 
   // The two exits every live list offers: a conversation can pause or end at
   // any point, not only at the first decision.
+  const startPark = (c: RespondedCompany, track: 'later' | 'kill') => {
+    setParkBucket(''); setParkDetail(''); setPark({ name: c.name, track });
+  };
+
   const exits = (c: RespondedCompany) => (
     <>
       <button className="rsp-btn later" disabled={busy === c.name}
-              onClick={() => route(c, 'later')}
-              title="Warm but not now. Parks it below; wakes into Assignment ready in 6 months.">
+              onClick={() => startPark(c, 'later')}
+              title="Warm but not now. Asks why, then parks it below; wakes into Assignment ready in 6 months.">
         Talk later
       </button>
       <button className="rsp-btn kill" disabled={busy === c.name}
-              onClick={() => route(c, 'kill')}
-              title="Close it out. Moves to Not interested below; reversible.">
+              onClick={() => startPark(c, 'kill')}
+              title="Close it out. Asks why, then moves to Not interested below; reversible.">
         Not interested
       </button>
     </>
@@ -335,6 +354,14 @@ export default function RespondedPage() {
                 </span>
               )}
               <div className="rsp-sub">{c.sector || '—'}</div>
+              {/* WHY it was parked: the bucket on the row, the detail on
+                  hover. Filled by whoever parked it; cleared on unpark. */}
+              {parked && c.park_reason && (
+                <div className="rsp3-reason"
+                     title={c.park_reason_detail || 'No further detail was added.'}>
+                  Reason: <b>{c.park_reason}</b>
+                </div>
+              )}
             </td>
             {!compact && <td>{displayStatus(c.status)}</td>}
             <td>{c.averroes_fit_score != null ? Number(c.averroes_fit_score).toFixed(1) : '—'}</td>
@@ -520,6 +547,46 @@ export default function RespondedPage() {
           </>
         )}
       </main>
+
+      {/* The park picker: bucket required, detail optional. */}
+      {park && (
+        <div className="rsp3-park-overlay" onClick={() => setPark(null)}>
+          <div className="rsp3-park-modal" onClick={e => e.stopPropagation()}>
+            <h3>
+              {park.track === 'later' ? 'Talk later' : 'Not interested'} — {park.name}
+            </h3>
+            <p className="rsp3-park-sub">
+              Why? Pick a reason (shown on the parked list; hover reveals your detail).
+            </p>
+            <div className="rsp3-park-buckets">
+              {PARK_REASONS.map(r => (
+                <button key={r.bucket}
+                        className={`rsp3-park-bucket ${parkBucket === r.bucket ? 'sel' : ''}`}
+                        title={r.description}
+                        onClick={() => setParkBucket(r.bucket)}>
+                  {r.bucket}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="rsp3-park-detail"
+              placeholder="Optional detail — e.g. 'Founder mid-Series A, said to call back after close'…"
+              value={parkDetail}
+              onChange={e => setParkDetail(e.target.value)}
+              rows={2}
+            />
+            <div className="rsp3-park-actions">
+              <button className="rsp-btn" onClick={() => setPark(null)}>Cancel</button>
+              <button className={`rsp-btn ${park.track === 'later' ? 'later' : 'kill'}`}
+                      disabled={!parkBucket}
+                      title={parkBucket ? '' : 'Pick a reason bucket first'}
+                      onClick={confirmPark}>
+                {park.track === 'later' ? 'Park — talk later' : 'Close out — not interested'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {profileIdx != null && flatOrder[profileIdx] && (
         <CompanyProfile

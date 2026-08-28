@@ -153,6 +153,16 @@ class BigQueryHandler:
         # Nurture -> Assignment ready is ISHU'S CLICK ("Ready to assign"), never
         # a heuristic acting alone. Stamped here; cleared to send it back.
         ("assignment_ready_at", "TIMESTAMP"),
+        # WHY a company was parked (track kill/later): a fixed 2-3 word bucket
+        # from PARK_REASONS plus optional free-text detail, filled by the
+        # person parking it. Cleared when the company returns to live tracks.
+        ("park_reason", "STRING"),
+        ("park_reason_detail", "STRING"),
+        # Cached news list for the profile's NEWS section: JSON
+        # [{title, source, date, url}], refreshed only by the button (each
+        # refresh is one grounded call), never auto-fetched.
+        ("news_items", "STRING"),
+        ("news_refreshed_at", "TIMESTAMP"),
         ("owner", "STRING"),
         # 'A' = high fit, goes to Bea via the Thursday session.
         # 'B' = low/moderate fit or too early, associate call via Wednesday.
@@ -1199,6 +1209,16 @@ class BigQueryHandler:
     #   second copy of the fact.
     TRACKS = ("A", "B", "kill", "later")
 
+    # WHY a company was parked - the fixed 2-3 word buckets Ishu picks from
+    # when clicking Talk later / Not interested (agreed 27 Aug 2026). One
+    # shared list for both: the track already says WHICH section it is in.
+    PARK_REASONS = (
+        "Too early", "Fundraising instead", "Bad timing", "In another process",
+        "Revisit next year", "Not selling", "Too small", "Too large",
+        "Sector mismatch", "Weak financials", "Valuation gap", "Unresponsive",
+        "Founder concerns", "Chose another buyer", "Other",
+    )
+
     def set_assignment_ready(self, name: str, on: bool = True, by: str = "Ishu Ratna") -> bool:
         """Move a Responded company between Nurture and Assignment ready."""
         if not self.client:
@@ -1239,13 +1259,19 @@ class BigQueryHandler:
         job.result()
         return int(job.num_dml_affected_rows or 0) > 0
 
-    def set_track(self, name: str, track: str, owner: str = None) -> bool:
+    def set_track(self, name: str, track: str, owner: str = None,
+                  reason: str = None, reason_detail: str = None) -> bool:
         """Record Ishu's triage decision. triaged_at stamps when the DECISION
         was made (event time, not processing time), and is refreshed on a
         re-triage because the current decision is what matters operationally.
         `owner` is optional so triage-and-assign is a single write.
 
-        Both values are validated BEFORE the client check, so a typo raises
+        PARK REASONS travel with the SAME write: a park (kill/later) stores
+        the bucket + optional detail, and any move to a live track (or a
+        clear) wipes them - a reason describes the CURRENT parking, never a
+        past one.
+
+        All values are validated BEFORE the client check, so a typo raises
         rather than silently returning False.
         """
         track = (track or "").strip()
@@ -1255,11 +1281,19 @@ class BigQueryHandler:
             owner = (owner or "").strip()
             if owner and owner not in self.OWNERS:
                 raise ValueError(f"Unknown owner '{owner}'. Expected one of {', '.join(self.OWNERS)} or blank to clear.")
+        parked = track in ("kill", "later")
+        reason = (reason or "").strip()
+        if parked and reason and reason not in self.PARK_REASONS:
+            raise ValueError(f"Unknown park reason '{reason}'. Expected one of {', '.join(self.PARK_REASONS)}.")
         if not self.client:
             return False
         sets = ["track = @track",
-                "triaged_at = CASE WHEN @track != '' THEN CURRENT_TIMESTAMP() ELSE NULL END"]
+                "triaged_at = CASE WHEN @track != '' THEN CURRENT_TIMESTAMP() ELSE NULL END",
+                "park_reason = @p_reason", "park_reason_detail = @p_detail"]
         params = [bigquery.ScalarQueryParameter("track", "STRING", track),
+                  bigquery.ScalarQueryParameter("p_reason", "STRING", reason if parked else ""),
+                  bigquery.ScalarQueryParameter("p_detail", "STRING",
+                                                (reason_detail or "").strip()[:600] if parked else ""),
                   bigquery.ScalarQueryParameter("name", "STRING", name)]
         if owner is not None:
             sets.append("owner = @owner")
@@ -1296,6 +1330,7 @@ class BigQueryHandler:
                        t.averroes_fit_score, t.revenue_band, t.revenue_estimate_m,
                        t.size_bucket, t.action_bucket, t.unfit_reason,
                        t.owner, t.track, CAST(t.triaged_at AS STRING) AS triaged_at,
+                       t.park_reason, t.park_reason_detail,
                        CAST(t.assignment_ready_at AS STRING) AS assignment_ready_at,
                        CAST(t.reply_exempt_at AS STRING) AS reply_exempt_at,
                        t.reply_exempt_by,

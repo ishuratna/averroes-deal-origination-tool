@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, EmailDoc, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -222,6 +222,10 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
   const [docUploading, setDocUploading] = useState(false);
+  // Which fit-score dimension is expanded to show its stored evidence.
+  const [scoreDim, setScoreDim] = useState<string | null>(null);
+  const [newsBusy, setNewsBusy] = useState(false);
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
   const [connections, setConnections] = useState<any>({ investors: [], siblings: [] });
   const [noteText, setNoteText] = useState('');
@@ -233,8 +237,12 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     setActivity([]); setEmails([]); setEmailDocs([]); setConnections({ investors: [], siblings: [] });
     setFullCompany(null);
     dealApi.getCompanyFull(baseCompany.name).then(r => {
-      if (r && r.name) setFullCompany({ ...baseCompany, ...r });
+      if (r && r.name) {
+        setFullCompany({ ...baseCompany, ...r });
+        try { setNewsItems(r.news_items ? JSON.parse(r.news_items) : []); } catch { setNewsItems([]); }
+      }
     }).catch(() => {});
+    setScoreDim(null);
     dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
     dealApi.getEmailDocs(baseCompany.name).then(r => setEmailDocs(r.documents || [])).catch(() => {});
@@ -390,13 +398,71 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       ['Business Model Fit', company.score_business_fit, scoreDetails?.business_fit],
                       ['Market Sentiment', company.score_market_sentiment, scoreDetails?.market_sentiment],
                     ].filter(([, s]) => s != null).map(([label, s, det]: any, i) => (
-                      <div key={i} className="cp-kv" title={det?.explanation || ''}>
-                        <span className="k">{label}</span>
-                        <span className="v" style={{ color: s >= 0.7 ? '#16a34a' : s >= 0.4 ? '#d97706' : '#dc2626' }}>{Math.round(s * 100)}</span>
+                      <div key={i}>
+                        {/* Click any dimension for the WHY: exactly what the
+                            scorer stored - inputs, rule, source. No AI, no
+                            recomputation, just the evidence. */}
+                        <div className="cp-kv" style={{ cursor: det ? 'pointer' : 'default' }}
+                             title={det ? 'Click for the full scoring evidence' : 'No stored detail for this dimension'}
+                             onClick={() => det && setScoreDim(scoreDim === label ? null : label)}>
+                          <span className="k">{label} {det && <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>{scoreDim === label ? '▾' : '▸'}</span>}</span>
+                          <span className="v" style={{ color: s >= 0.7 ? '#16a34a' : s >= 0.4 ? '#d97706' : '#dc2626' }}>{Math.round(s * 100)}</span>
+                        </div>
+                        {scoreDim === label && det && (
+                          <div className="cp-score-why">
+                            {det.explanation && <p>{det.explanation}</p>}
+                            {Object.entries(det)
+                              .filter(([k, v]) => k !== 'explanation' && v !== null && v !== '' && typeof v !== 'object')
+                              .map(([k, v]) => (
+                                <div className="cp-kv" key={k} style={{ padding: '0.15rem 0' }}>
+                                  <span className="k" style={{ textTransform: 'capitalize' }}>{k.replace(/_/g, ' ')}</span>
+                                  <span className="v" style={{ fontWeight: 600 }}>{String(v)}</span>
+                                </div>
+                              ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 </>
+              )}
+
+              {/* NEWS: the top coverage found by one grounded search, cached
+                  on the record. Refresh only by the button - browsing costs
+                  nothing. Items open in a new tab. */}
+              <div className="cp-section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem' }}>
+                News
+                <button className="cp-chip-btn" disabled={newsBusy}
+                        title="One AI web search (~1p); results are saved until you refresh again."
+                        onClick={async () => {
+                          setNewsBusy(true);
+                          try {
+                            const r = await dealApi.refreshNews(baseCompany.name);
+                            setNewsItems(r.items || []);
+                            if (!r.items?.length) alert(r.message || 'Nothing solid found.');
+                          } catch (e: any) { alert(e?.message || 'News refresh failed'); }
+                          finally { setNewsBusy(false); }
+                        }}>
+                  {newsBusy ? 'Searching…' : '↻ Refresh news'}
+                </button>
+                {company.news_refreshed_at && (
+                  <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                    last refreshed {fmtDate(company.news_refreshed_at)}
+                  </span>
+                )}
+              </div>
+              {newsItems.length > 0 && (
+                <div className="cp-card">
+                  {newsItems.map((n, i) => (
+                    <div className="cp-doc-row" key={i}>
+                      <a className="cp-doc-name" href={n.url} target="_blank" rel="noreferrer"
+                         style={{ textDecoration: 'none' }}>
+                        {n.title} ↗
+                      </a>
+                      <span className="cp-doc-meta">{[n.source, n.date].filter(Boolean).join(' · ')}</span>
+                    </div>
+                  ))}
+                </div>
               )}
 
               {/* Email documents: everything this company has ever attached to

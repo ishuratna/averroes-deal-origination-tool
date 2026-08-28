@@ -18,6 +18,12 @@ export interface CompanyTarget {
   // pre-send edit or a cross-domain reply adoption replaced it.
   original_contact_name?: string;
   original_contact_email?: string;
+  // Why the company is parked (track kill/later): bucket + optional detail.
+  park_reason?: string;
+  park_reason_detail?: string;
+  // Cached NEWS list (JSON of NewsItem[]), refreshed only by the button.
+  news_items?: string;
+  news_refreshed_at?: string;
   linkedin_url?: string;
   growth_signals?: boolean;
   status: 'Qualified' | 'Contacted' | 'Responded' | 'Meeting' | 'DD' | 'Offer' | 'Won' | 'Lost' | 'Under Review' | 'Not a Fit' | 'Scraped' | 'Uploaded';
@@ -223,6 +229,35 @@ export const OWNER_ROLES: Record<DealOwner, string> = {
 // PLAIN ENGLISH ON PURPOSE: every list says what a company is WAITING FOR, in
 // words a first-time reader understands. Internal vocabulary (Track A/B, kill)
 // stays in the stored values; it does not appear on screen.
+// WHY a company was parked. Mirrors bq_handler.PARK_REASONS exactly - the
+// backend validates against its list, so the two must never drift. The
+// description is the picker's hover text explaining when to use each bucket.
+export const PARK_REASONS: { bucket: string; description: string }[] = [
+  { bucket: 'Too early',           description: 'Revenue or maturity below our range; worth revisiting as they grow.' },
+  { bucket: 'Fundraising instead', description: 'Raising equity rather than considering a sale.' },
+  { bucket: 'Bad timing',          description: 'Founder is open, but now is the wrong moment (personal or company timing).' },
+  { bucket: 'In another process',  description: 'Already engaged with another buyer or adviser.' },
+  { bucket: 'Revisit next year',   description: 'Agreed to reconnect in 6-12 months.' },
+  { bucket: 'Not selling',         description: 'Founder explicitly has no intent to sell.' },
+  { bucket: 'Too small',           description: 'Below the mandate’s revenue range on closer look.' },
+  { bucket: 'Too large',           description: 'Above the range, or the cheque would be too big for us.' },
+  { bucket: 'Sector mismatch',     description: 'Outside the UK/Ireland B2B software focus on closer look.' },
+  { bucket: 'Weak financials',     description: 'Declining revenue, losses, or poor quality of earnings.' },
+  { bucket: 'Valuation gap',       description: 'Expectations far above what we would pay.' },
+  { bucket: 'Unresponsive',        description: 'Showed interest then went quiet despite follow-ups.' },
+  { bucket: 'Founder concerns',    description: 'Credibility, behaviour, or key-person doubts.' },
+  { bucket: 'Chose another buyer', description: 'Sold, or exclusive with someone else.' },
+  { bucket: 'Other',               description: 'Anything else - explain in the detail box.' },
+];
+
+// One clickable item in the profile's NEWS section.
+export interface NewsItem {
+  title: string;
+  source: string;
+  date: string;   // YYYY-MM or YYYY-MM-DD, may be ''
+  url: string;
+}
+
 // Sections hold LANES. A lane is one route drawn top-to-bottom, exactly like
 // a branch in the decision tree; a section with two lanes renders them side
 // by side, because that is the picture Ishu approved: Assignment ready splits

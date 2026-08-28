@@ -10,6 +10,9 @@ entry here, dated with the commit date.
 
 # (date YYYY-MM-DD, one line a non-engineer understands)
 TOOL_UPDATES = [
+    ("2026-08-27", "Talk later and Not interested now carry a REASON: parking a company asks for a 2-3 word bucket (15 to pick from) plus optional detail; the parked lists show 'Reason: ...' with the detail on hover, and unparking clears it."),
+    ("2026-08-27", "New NEWS section on the company profile: a Refresh button runs one AI web search and saves the top clickable articles (title, source, date). Cached until refreshed, so browsing costs nothing."),
+    ("2026-08-27", "Fit score dimensions are now clickable: each one opens the stored evidence - the inputs, the rule applied and the data source - instead of just a hover sentence."),
     ("2026-08-27", "Email documents now also captures decks shared as LINKS: direct PDF links in a founder's reply are downloaded (behind a strict safety check) and filed like attachments, and an Upload document button on the company profile handles Drive/Dropbox links you download yourself. Both run the same AI-read pipeline."),
     ("2026-08-27", "IC Memo rebuilt: one click on any Responded-or-later card now builds the full 4-slide screening deck in the house CIM format (summary, overview with criteria scorecard and financials, rationale and risks, diligence questions) and downloads it as PowerPoint. Company numbers come only from the record; market context is AI-researched and tagged."),
     ("2026-08-21", "Responded page rebuilt as a three-step funnel: Nurture (Ishu) → the weekly lists → Qualified leads (Bea), with collapsible sections and the Wednesday/Thursday routes drawn side by side."),

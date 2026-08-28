@@ -959,3 +959,22 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .rsp3-lane-head.teal  { color: #0f5132; border-bottom-color: #bcd9c8; }
 .rsp3-lane-head.amber { color: #8a4b0f; border-bottom-color: #ecd5b8; }
 .rsp3-arrow.lane { margin: 0.3rem 0 0.4rem; }
+
+/* ── Park reasons: picker modal + the reason line on parked rows ───────────── */
+.rsp3-reason { font-size: 0.7rem; color: #64748b; margin-top: 0.15rem; cursor: help; }
+.rsp3-reason b { color: #0f172a; }
+.rsp3-park-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.rsp3-park-modal { background: #fff; border-radius: 12px; padding: 1.2rem 1.4rem; width: min(560px, 92vw); box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25); }
+.rsp3-park-modal h3 { margin: 0 0 0.2rem; font-size: 1rem; color: #0f172a; }
+.rsp3-park-sub { font-size: 0.78rem; color: #64748b; margin: 0 0 0.8rem; }
+.rsp3-park-buckets { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.8rem; }
+.rsp3-park-bucket { border: 1px solid #cbd5e1; background: #f8fafc; color: #334155; border-radius: 999px; padding: 0.3rem 0.7rem; font-size: 0.74rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+.rsp3-park-bucket:hover { border-color: #94a3b8; }
+.rsp3-park-bucket.sel { background: #0f172a; border-color: #0f172a; color: #fff; }
+.rsp3-park-detail { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.6rem; font-size: 0.8rem; font-family: inherit; resize: vertical; box-sizing: border-box; }
+.rsp3-park-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.8rem; }
+.rsp3-park-actions .rsp-btn { padding: 0.4rem 0.9rem; font-size: 0.78rem; }
+
+/* ── Fit score: the click-open evidence panel ──────────────────────────────── */
+.cp-score-why { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.7rem; margin: 0.15rem 0 0.5rem; }
+.cp-score-why p { font-size: 0.76rem; color: #334155; margin: 0 0 0.35rem; line-height: 1.45; }
