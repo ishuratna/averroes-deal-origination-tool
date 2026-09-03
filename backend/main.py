@@ -5146,6 +5146,7 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
 
     our_address = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
     rows = bq_handler.get_received_log(limit=limit)
+    latest_sends = bq_handler.latest_send_times()
 
     # Bounces first. A company is only pulled back if the bounce is its NEWEST
     # inbound message: an address can fail once and be fixed, and a genuine reply
@@ -5171,6 +5172,16 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
         name = r.get("entity_name") or ""
         if newest.get(name, {}).get("message_id") != r.get("message_id"):
             continue  # something newer arrived; the mailbox is alive
+        # THE SUPERSEDE RULE (the Cezanne HR bug, 28 Aug 2026): a bounce only
+        # invalidates the send it bounced against. If we RE-SENT after the
+        # bounce - usually to a corrected address - the old bounce is stale
+        # history and must not pull the company back; the new send gets judged
+        # on its own fate (its own bounce, a reply, or the not-sent check).
+        # The newest-INBOUND guard above cannot see this: a re-send is
+        # outbound, so the old bounce stays the newest inbound forever.
+        from services.delivery_check import bounce_superseded
+        if bounce_superseded(r.get("sent_at"), latest_sends.get(name)):
+            continue
         bounces.append({"name": name, "address": got["address"] or "",
                         "reason": got["reason"], "subject": r.get("subject", ""),
                         "at": r.get("sent_at", "")})

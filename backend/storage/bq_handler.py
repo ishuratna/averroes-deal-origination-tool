@@ -1477,6 +1477,25 @@ class BigQueryHandler:
             logger.warning(f"pull_back_undelivered failed for {name}: {e}")
             return False
 
+    def latest_send_times(self) -> Dict[str, str]:
+        """Company -> timestamp of our NEWEST outbound email, from email_log.
+
+        Exists for the delivery check's supersede rule (the Cezanne HR bug,
+        28 Aug 2026): a bounce only invalidates the send it bounced against.
+        If we re-sent AFTER the bounce (usually to a fixed address), the old
+        bounce is stale history - the new send is judged on its own fate."""
+        if not self.client:
+            return {}
+        try:
+            return {r["entity_name"]: r["last_sent"] for r in self._run_query(
+                f"""SELECT entity_name, CAST(MAX(sent_at) AS STRING) AS last_sent
+                    FROM `{self.project_id}.{self.dataset_id}.email_log`
+                    WHERE entity_type = 'company' AND direction = 'sent'
+                    GROUP BY entity_name""")}
+        except Exception as e:
+            logger.warning(f"latest_send_times failed: {e}")
+            return {}
+
     def mark_delivered(self, names: List[str]) -> int:
         """Record that an outbound message for these companies is in the mailbox.
         Positive evidence, so a later check does not re-examine them from scratch."""

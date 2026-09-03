@@ -169,5 +169,17 @@ chk("...and names no address", ok["address"], None)
 chk("...and claims no reason", ok["reason"], "")
 
 print()
+print("── The supersede rule (Cezanne HR, 28 Aug 2026) ──")
+from services.delivery_check import bounce_superseded  # noqa: E402
+chk("re-send AFTER the bounce supersedes it (no pull-back)",
+    bounce_superseded("2026-08-21 09:00:00+00", "2026-08-24 10:00:00+00"), True)
+chk("bounce after the latest send is CURRENT (pull-back)",
+    bounce_superseded("2026-08-24 11:00:00+00", "2026-08-24 10:00:00+00"), False)
+chk("no send on record: bounce stands",
+    bounce_superseded("2026-08-21 09:00:00+00", ""), False)
+chk("no bounce time: fail safe, not superseded",
+    bounce_superseded("", "2026-08-24 10:00:00+00"), False)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

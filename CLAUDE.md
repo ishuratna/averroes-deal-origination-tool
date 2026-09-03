@@ -104,6 +104,11 @@ mistake is both visible and correctable. This one logged nothing, which is why
    - BOUNCE: a mailer-daemon report came back (`services/delivery_check.py`).
      The address is dead, so `contact_email` is cleared and preserved in
      `bounced_email` and the contact waterfall finds a new one.
+     THE SUPERSEDE RULE (Cezanne HR, 28 Aug 2026): a bounce invalidates only
+     the send it bounced against. If a NEWER outbound send exists
+     (`latest_send_times`), the bounce is stale history and must not pull the
+     company back - the newest-INBOUND guard cannot see this, because a
+     re-send is outbound and the old bounce stays the newest inbound forever.
    - NEVER SENT: no `direction='sent'` row exists in `email_log` for the
      company. The sync reads Gmail's All Mail (which includes Sent), so absence
      means nothing was filed and nobody received it.

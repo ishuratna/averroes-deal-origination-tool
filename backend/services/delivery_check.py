@@ -217,3 +217,16 @@ def classify_delivery(subject: str = "", snippet: str = "", headers: str = "",
         m = _PERMANENT_STATUS.search(blob)
         reason = f"SMTP status {m.group(0)}" if m else "delivery failure reported"
     return {"is_bounce": True, "address": addr, "reason": reason}
+
+
+def bounce_superseded(bounce_at: str, latest_send_at: str) -> bool:
+    """Is this bounce stale history? True when we RE-SENT after it arrived.
+
+    The Cezanne HR rule (28 Aug 2026): a bounce invalidates only the send it
+    bounced against. A newer outbound send - usually to a corrected address -
+    takes precedence, and its own fate (bounce / reply / not-sent) decides the
+    stage. Timestamps are BigQuery CAST(... AS STRING) ISO forms, which order
+    correctly as strings; missing values fail safe (not superseded).
+    """
+    b, s = str(bounce_at or ""), str(latest_send_at or "")
+    return bool(b) and bool(s) and s > b
