@@ -10,6 +10,7 @@ entry here, dated with the commit date.
 
 # (date YYYY-MM-DD, one line a non-engineer understands)
 TOOL_UPDATES = [
+    ("2026-08-28", "Companies House accounts are now read from the machine-tagged iXBRL filing instead of an AI reading the PDF: every figure (revenue, cash, employees, net assets) is exact, auditable and free. The AI read remains only for old paper-scan filings - this removes the single largest AI cost inside SmartFill."),
     ("2026-08-28", "Delivery check fix: when an email bounced but a newer email was later sent (usually to a corrected address), the old bounce no longer drags the company back to Qualified - the newest send takes precedence and is judged on its own."),
     ("2026-08-28", "Responded page made first-timer friendly: the weekly list now has two clearly named tables - 'High Fit, Right Size companies' (inside Averroes' investment range, for Bea) and 'Good Fit, Small Companies' (right fit, not yet the size - kept warm by the associates). The 'probably ready' hint was removed, and companies parked before reasons existed show an 'add reason' button that never resets the Talk-later clock."),
     ("2026-08-27", "Identity guard: AI research is now anchored to the company we actually mean (website, city, founder, founding year, CH number). If the research finds a different same-named company, its details are refused instead of written, and the profile shows how identity was verified. A free audit can flag past mixups for re-research."),

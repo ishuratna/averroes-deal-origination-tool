@@ -867,12 +867,33 @@ def extract_ch_financials(
         elif "filleted" in desc_lower:
             filing_type = filing_type or "filleted"
 
-        pdf_bytes = _download_accounts_pdf(filing)
-        if not pdf_bytes:
-            logger.warning(f"[CH] Could not download PDF for filing {i+1}")
-            continue
+        # ── iXBRL FIRST (per Ishu, 28 Aug 2026): digitally filed accounts are
+        # machine-tagged, so every figure is exact, auditable and FREE. The
+        # PDF+Gemini read below is now only the fallback for paper scans -
+        # this was the largest single AI cost inside SmartFill.
+        parsed = None
+        try:
+            from services.ixbrl_accounts import fetch_ixbrl, parse_ixbrl
+            xhtml = fetch_ixbrl(filing)
+            if xhtml:
+                got = parse_ixbrl(xhtml, company_number)
+                if got.get("error"):
+                    # In-document company number disagreed - never use, and do
+                    # not let Gemini read the same wrong document either.
+                    logger.warning(f"[CH] iXBRL refused for filing {i+1}: {got['error']}")
+                    continue
+                if got:
+                    parsed = got
+                    logger.info(f"[CH] Filing {i+1} parsed from iXBRL (exact, zero AI).")
+        except Exception as e:
+            logger.warning(f"[CH] iXBRL path failed for filing {i+1} (falling back to PDF): {e}")
 
-        # Save first PDF to GCS for later review
+        # The PDF is still fetched for the FIRST filing so the profile's
+        # "View filing" keeps working - a free download, no AI involved.
+        pdf_bytes = None
+        if parsed is None or (gcs_handler and not saved_pdf_path):
+            pdf_bytes = _download_accounts_pdf(filing)
+
         if gcs_handler and pdf_bytes and not saved_pdf_path:
             try:
                 safe_name = company_name.replace(" ", "_").replace("/", "_")[:50]
@@ -886,18 +907,22 @@ def extract_ch_financials(
             except Exception as e:
                 logger.warning(f"[CH] Could not save PDF to GCS: {e}")
 
-        # Parse the PDF with Gemini
-        parsed = _parse_accounts_pdf_with_gemini(
-            pdf_bytes, company_name, company_number, filing_date
-        )
-
-        if parsed.get("error"):
-            logger.warning(f"[CH] Gemini parse failed for filing {i+1}: {parsed['error']}")
-            continue
+        if parsed is None:
+            if not pdf_bytes:
+                logger.warning(f"[CH] Could not download PDF for filing {i+1}")
+                continue
+            # Fallback: a scanned/paper filing with no iXBRL rendition.
+            parsed = _parse_accounts_pdf_with_gemini(
+                pdf_bytes, company_name, company_number, filing_date
+            )
+            if parsed.get("error"):
+                logger.warning(f"[CH] Gemini parse failed for filing {i+1}: {parsed['error']}")
+                continue
 
         parsed["_filing_date"] = filing_date
         all_financials.append(parsed)
-        logger.info(f"[CH] Successfully parsed filing {i+1} ({filing_date})")
+        logger.info(f"[CH] Successfully parsed filing {i+1} ({filing_date})"
+                    + (" via iXBRL" if parsed.get("_source") == "ixbrl" else " via PDF+Gemini"))
 
     # ── Step 5: Assemble final result ──
     result = {
