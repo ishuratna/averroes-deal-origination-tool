@@ -4030,7 +4030,11 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
     import uuid
     from services.email_docs_service import MAX_ATTACHMENT_BYTES, process_email_documents, sanitize_filename
 
-    company = next((c for c in bq_handler.get_universe() if c.get("name") == company_name), None)
+    # ONE row, not the universe. This handler used to call get_universe()
+    # (SELECT * over 13k rows including every blob column) just to find the
+    # company; the container died mid-request and the browser saw
+    # "Failed to fetch" with nothing logged (Plastometrex, 7 Sep 2026).
+    company = bq_handler.get_company_full(company_name)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
     data = await file.read()
@@ -4051,7 +4055,14 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
             "data": data,
         }],
     }
-    filed = process_email_documents(bq_handler, gcs_handler, entry, company, ai_budget=[2])
+    # A manual upload is a person waiting on the answer: a failure must be
+    # reported as a failure, not disguised as "already on file" (the sync
+    # path keeps swallowing per-attachment errors so one bad file cannot
+    # stop a 500-message run).
+    errors: List[str] = []
+    filed = process_email_documents(bq_handler, gcs_handler, entry, company, ai_budget=[2], errors=errors)
+    if errors and not filed:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {errors[0]}")
     if not filed:
         return {"status": "Skipped",
                 "message": "Nothing filed - identical bytes are already on file for this company."}

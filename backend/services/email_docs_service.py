@@ -294,7 +294,8 @@ Return ONLY valid JSON:
 
 def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                             company_row: Optional[Dict],
-                            ai_budget: Optional[List[int]] = None) -> List[str]:
+                            ai_budget: Optional[List[int]] = None,
+                            errors: Optional[List[str]] = None) -> List[str]:
     """File and read every attachment on one inbound email. Returns saved names.
 
     Idempotent twice over: (message_id, filename) already stored is skipped,
@@ -388,4 +389,6 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
             saved.append(att["filename"])
         except Exception as e:
             logger.warning(f"[EmailDocs] failed to file {att.get('filename')} for {company}: {e}")
+            if errors is not None:
+                errors.append(f"{att.get('filename')}: {e}")
     return saved
