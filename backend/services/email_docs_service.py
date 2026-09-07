@@ -5,16 +5,17 @@ Three jobs, in order:
   1. EXTRACT  every attachment from an inbound, company-matched email.
   2. FILE     the bytes in GCS under email-docs/<company>/, metadata in BQ
               (email_documents), deduped on (message_id, filename).
-  3. READ     the document with AI and apply what it teaches us - but only to
-              a WHITELIST of fields, each with its own overwrite rule, and
-              every change written to the Activity Log with old value, new
-              value and which document said so.
+  3. READ     the document with AI (Document SmartFill, services/doc_smartfill.py):
+              everything it states about the company plus year-tagged
+              financials. Values the record lacks are written at once;
+              values that DISAGREE with the record are held as pending and
+              Ishu confirms them on the profile (current vs document, with
+              evidence). Every write lands in the Activity Log with old
+              value, new value and which document said so, then the fit
+              score is recomputed locally (zero AI).
 
-The whitelist exists because a founder's deck is excellent evidence for some
-fields and terrible evidence for others. Their own revenue figure beats our
-estimate; their marketing copy does not beat a longer stored description.
-AI never touches CH-filed figures (revenue_y1 etc.): a deck's numbers are
-unaudited claims, so they land in the ESTIMATE fields, clearly sourced.
+Manual uploads from a company's card ride this exact pipeline, so an
+attachment and an upload can never be treated differently.
 """
 import base64
 import hashlib
@@ -23,6 +24,10 @@ import logging
 import os
 import re
 from typing import Dict, List, Optional
+
+from services.doc_smartfill import (
+    COLUMN_TYPES, extraction_prompt, merge_writes, office_kind, office_to_text, plan_updates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,7 @@ MIN_AI_IMAGE_BYTES = 100 * 1024      # images below this are filed, not read
 AI_READS_PER_RUN = 10                # per sync run, a mass-attachment email cannot spike spend
 
 
-def should_analyse(content_type: str, size_bytes: int) -> bool:
+def should_analyse(content_type: str, size_bytes: int, filename: str = "") -> bool:
     """Is AI-reading this file worth a call? Pure, testable.
 
     PDFs always (that is where decks and accounts live, ~1p each). Images only
@@ -51,6 +56,8 @@ def should_analyse(content_type: str, size_bytes: int) -> bool:
         return True
     if content_type in _AI_READABLE:                 # the image types
         return size_bytes >= MIN_AI_IMAGE_BYTES
+    if office_kind(content_type, filename):          # pptx/xlsx/docx -> text first
+        return True
     return False
 
 
@@ -194,108 +201,158 @@ def extract_attachments(msg) -> List[Dict]:
     return out
 
 
-# ── The update whitelist ──────────────────────────────────────────────────────
-# field -> rule for when a document's value may replace the stored one.
-#   estimate   documents beat estimates, never beat CH-filed figures
-#   longer     the existing "longer wins" description rule
-#   if_empty   only fills a blank, never replaces
-UPDATABLE_FIELDS = {
-    "revenue_estimate_m": "estimate",
-    "employees": "estimate",
-    "description": "longer",
-    "sector": "if_empty",
-    "website": "if_empty",
-    "hq_city": "if_empty",
-}
+# ── Reading a document: Document SmartFill ──────────────────────────────────
+# The rules (what is extracted, fill vs confirm, financial-year merge) live in
+# services/doc_smartfill.py and are pure. This module does the I/O around them.
 
-
-def decide_updates(company: Dict, proposed: List[Dict]) -> List[Dict]:
-    """Which AI-proposed changes are actually allowed. Pure, testable.
-
-    Every rejection is silent by design: a document that fails to change a
-    field costs nothing, while a wrong overwrite corrupts a verified record.
-    """
-    allowed = []
-    for p in proposed or []:
-        field = (p.get("field") or "").strip()
-        new = p.get("new")
-        rule = UPDATABLE_FIELDS.get(field)
-        if not rule or new in (None, "", 0):
-            continue
-        old = company.get(field)
-        if rule == "if_empty" and old not in (None, ""):
-            continue
-        if rule == "longer" and isinstance(old, str) and isinstance(new, str) \
-                and len(new.strip()) <= len(old.strip()):
-            continue
-        if field in ("revenue_estimate_m", "employees"):
-            try:
-                new = float(new) if field == "revenue_estimate_m" else int(float(new))
-            except (ValueError, TypeError):
-                continue
-            if new <= 0:
-                continue
-        if old == new:
-            continue
-        allowed.append({"field": field, "old": old, "new": new,
-                        "evidence": (p.get("evidence") or "")[:300]})
-    return allowed
 
 
 def analyse_document(company: Dict, filename: str, content_type: str,
                      data: bytes) -> Dict:
-    """Read one document with Gemini (ungrounded, cheap) and propose updates.
-
-    Returns {"summary": str, "proposed": [{field, new, evidence}]}. Types the
-    model cannot read natively come back unanalysed rather than guessed at.
-    """
-    if content_type not in _AI_READABLE:
-        return {"summary": "", "proposed": []}
+    """Read one document with Gemini (ungrounded, cheap) and return the raw
+    extraction: {"summary": str, "company": {...}, "evidence": {...},
+    "financial_years": [...]}. PDFs and images go to the model as bytes;
+    pptx/xlsx/docx are converted to text first. Unreadable -> {}."""
+    kind = office_kind(content_type, filename)
+    text_doc = ""
+    if kind:
+        text_doc = office_to_text(kind, data)
+        if not text_doc:
+            return {}
+    elif content_type not in _AI_READABLE:
+        return {}
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return {"summary": "", "proposed": []}
+        return {}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, Part
 
         client = genai.Client(api_key=api_key)
-        current = {f: company.get(f) for f in UPDATABLE_FIELDS}
-        prompt = f"""A company we are evaluating, "{company.get('name')}", emailed us the attached
-document ("{filename}"). Our current record holds:
-{json.dumps(current, default=str)}
-
-1. Summarise the document in one or two sentences (what it is and its key facts).
-2. Propose field updates ONLY where the document clearly states a better value.
-   Allowed fields and meanings:
-   - revenue_estimate_m: annual revenue in GBP MILLIONS (convert if needed)
-   - employees: current headcount
-   - description: what the company does (only if the document supports a richer one)
-   - sector, website, hq_city: only if we hold nothing
-   Do NOT invent values. Every proposal needs a short quote or figure from the
-   document as evidence.
-
-Return ONLY valid JSON:
-{{"summary": "...", "proposed": [{{"field": "...", "new": ..., "evidence": "..."}}]}}"""
+        prompt = extraction_prompt(company, filename)
+        if text_doc:
+            contents = [f"DOCUMENT TEXT ({kind}):\n{text_doc}", prompt]
+        else:
+            contents = [Part.from_bytes(data=data, mime_type=content_type), prompt]
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[Part.from_bytes(data=data, mime_type=content_type), prompt],
-            config=GenerateContentConfig(temperature=0.1),
+            contents=contents,
+            config=GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
         )
         text = (response.text or "").strip()
         if text.startswith("```"):
             text = text.strip("`").replace("json", "", 1).strip()
         got = json.loads(text)
-        return {"summary": (got.get("summary") or "")[:600],
-                "proposed": got.get("proposed") or []}
+        if not isinstance(got, dict):
+            return {}
+        got["summary"] = (got.get("summary") or "")[:600]
+        return got
     except Exception as e:
         logger.warning(f"[EmailDocs] AI read failed for {filename}: {e}")
-        return {"summary": "", "proposed": []}
+        return {}
+
+
+def apply_document_writes(bq_handler, company_row: Dict, items: List[Dict],
+                          filename: str, created_by: str = "email-docs") -> Dict:
+    """Write the columns of the given items, log each as an Activity Log note
+    with old -> new and the document's evidence, then rescore locally (zero
+    AI). ONE implementation for both the automatic fills and the changes Ishu
+    confirms in the review, so the two can never drift.
+
+    Returns the updated row (in memory) plus the rescore result."""
+    from google.cloud import bigquery as bq_lib
+    company = company_row.get("name")
+    writes = merge_writes(items)
+    writes = {c: v for c, v in writes.items() if c in COLUMN_TYPES}
+    if not writes:
+        return {"row": company_row, "rescore": None, "written": 0}
+    if writes.get("revenue_source"):
+        writes["revenue_source"] = f"Company document: {filename}"
+    sets, params = [], []
+    for i, (col, val) in enumerate(writes.items()):
+        sets.append(f"{col} = @v{i}")
+        t = COLUMN_TYPES[col]
+        if val is not None:
+            val = float(val) if t == "FLOAT64" else int(val) if t == "INT64" else str(val)
+        params.append(bq_lib.ScalarQueryParameter(f"v{i}", t, val))
+    params.append(bq_lib.ScalarQueryParameter("name", "STRING", company))
+    bq_handler.client.query(
+        f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+        job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+    for it in items:
+        bq_handler.add_activity_note(
+            company,
+            f"Updated from document \"{filename}\": {it.get('label') or it.get('key')} "
+            f"{it.get('old') or '(empty)'} -> {it.get('new')}. "
+            f"Evidence: {it.get('evidence') or 'stated in the document'}",
+            created_by=created_by)
+
+    row = dict(company_row)
+    row.update(writes)
+    rescore = rescore_after_document(bq_handler, row, filename, created_by)
+    return {"row": row, "rescore": rescore, "written": len(writes)}
+
+
+def rescore_after_document(bq_handler, row: Dict, filename: str,
+                           created_by: str = "email-docs") -> Optional[Dict]:
+    """Refresh the revenue-size and revenue-growth metrics from the row as it
+    now stands, then the local rescore (the same function the book-wide
+    rescore uses). Zero AI. Returns the score movement or None."""
+    try:
+        from ai.scoring import (_compute_revenue_growth, _compute_revenue_size,
+                                compute_revenue_band, rescore_company_local)
+        from google.cloud import bigquery as bq_lib
+        try:
+            details = json.loads(row.get("score_details") or "{}")
+        except (ValueError, TypeError):
+            details = {}
+        rs = _compute_revenue_size(row)
+        if rs:
+            details["revenue_size"] = rs
+        rg = _compute_revenue_growth(row)
+        if rg:
+            details["revenue_growth"] = rg
+        row["score_details"] = json.dumps(details)
+        upd = rescore_company_local(row)
+        if not upd:
+            return None
+        old = row.get("averroes_fit_score")
+        band = compute_revenue_band(rs["value"]) if rs else row.get("revenue_band")
+        bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                    averroes_fit_score = @fit, score_revenue_size = @rs,
+                    score_revenue_growth = @rg, score_employee_growth = @eg,
+                    score_details = @sd, revenue_band = @band
+                WHERE name = @name""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("fit", "FLOAT64", upd["averroes_fit_score"]),
+                bq_lib.ScalarQueryParameter("rs", "FLOAT64", upd["score_revenue_size"]),
+                bq_lib.ScalarQueryParameter("rg", "FLOAT64", upd["score_revenue_growth"]),
+                bq_lib.ScalarQueryParameter("eg", "FLOAT64", upd["score_employee_growth"]),
+                bq_lib.ScalarQueryParameter("sd", "STRING", upd["score_details"]),
+                bq_lib.ScalarQueryParameter("band", "STRING", band),
+                bq_lib.ScalarQueryParameter("name", "STRING", row.get("name")),
+            ])).result()
+        new = upd["averroes_fit_score"]
+        if old is not None and new is not None and abs(float(old) - new) < 0.0005:
+            return {"old": old, "new": new}
+        bq_handler.add_activity_note(
+            row.get("name"),
+            f"Fit score recomputed after document \"{filename}\": "
+            f"{('%.2f' % float(old)) if old is not None else 'unscored'} -> "
+            f"{('%.2f' % new) if new is not None else 'unscored'} (local rules, no AI).",
+            created_by=created_by)
+        return {"old": old, "new": new}
+    except Exception as e:
+        logger.warning(f"[EmailDocs] rescore after document failed for {row.get('name')}: {e}")
+        return None
 
 
 def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                             company_row: Optional[Dict],
                             ai_budget: Optional[List[int]] = None,
-                            errors: Optional[List[str]] = None) -> List[str]:
+                            errors: Optional[List[str]] = None,
+                            pending_out: Optional[List[Dict]] = None) -> List[str]:
     """File and read every attachment on one inbound email. Returns saved names.
 
     Idempotent twice over: (message_id, filename) already stored is skipped,
@@ -334,38 +391,26 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
             blob = bucket.blob(path)
             blob.upload_from_string(att["data"], content_type=att["content_type"])
 
-            analysis = {"summary": "", "proposed": []}
-            if should_analyse(att["content_type"], len(att["data"])) \
+            extracted: Dict = {}
+            if should_analyse(att["content_type"], len(att["data"]), att["filename"]) \
                     and (ai_budget is None or ai_budget[0] > 0):
                 if ai_budget is not None:
                     ai_budget[0] -= 1
-                analysis = analyse_document(company_row or {"name": company},
-                                            att["filename"], att["content_type"], att["data"])
-            applied = decide_updates(company_row or {}, analysis.get("proposed"))
+                extracted = analyse_document(company_row or {"name": company},
+                                             att["filename"], att["content_type"], att["data"])
+            plan = plan_updates(company_row or {"name": company}, extracted)
+            summary = (extracted.get("summary") or "") if extracted else ""
 
-            if applied:
-                from google.cloud import bigquery as bq_lib
-                sets, params = [], []
-                for i, u in enumerate(applied):
-                    sets.append(f"{u['field']} = @v{i}")
-                    kind = "FLOAT64" if u["field"] == "revenue_estimate_m" \
-                        else "INT64" if u["field"] == "employees" else "STRING"
-                    params.append(bq_lib.ScalarQueryParameter(f"v{i}", kind, u["new"]))
-                if any(u["field"] == "revenue_estimate_m" for u in applied):
-                    sets.append("revenue_source = @rs")
-                    params.append(bq_lib.ScalarQueryParameter(
-                        "rs", "STRING", f"Company document: {att['filename']}"))
-                params.append(bq_lib.ScalarQueryParameter("name", "STRING", company))
-                bq_handler.client.query(
-                    f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
-                    job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
-                for u in applied:
-                    bq_handler.add_activity_note(
-                        company,
-                        f"Updated from document \"{att['filename']}\": {u['field']} "
-                        f"{u['old'] if u['old'] not in (None, '') else '(empty)'} -> {u['new']}. "
-                        f"Evidence: {u['evidence'] or 'stated in the document'}",
-                        created_by="email-docs")
+            # Fills (the record held nothing) are written now; conflicts (the
+            # record holds a different value) wait on the review. Same apply
+            # path for both - see apply_document_writes.
+            applied_fills = []
+            if plan["fills"]:
+                res = apply_document_writes(bq_handler, company_row or {"name": company},
+                                            plan["fills"], att["filename"])
+                applied_fills = plan["fills"]
+                if company_row is not None:
+                    company_row.update(res["row"])      # later attachments see the new state
 
             bq_handler.save_email_doc({
                 "company_name": company, "filename": att["filename"],
@@ -375,16 +420,28 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                 "email_subject": entry.get("subject") or "",
                 "sender_email": entry.get("counterparty_email") or "",
                 "received_at": entry.get("sent_at"),
-                "ai_summary": analysis.get("summary") or "",
-                "ai_updates": json.dumps(applied) if applied else "",
+                "ai_summary": summary,
+                "ai_updates": json.dumps([{k: v for k, v in i.items() if k != "writes"}
+                                          for i in applied_fills]) if applied_fills else "",
+                "pending_updates": json.dumps(plan["conflicts"]) if plan["conflicts"] else "",
             })
+            if plan["conflicts"]:
+                bq_handler.add_activity_note(
+                    company,
+                    f"Document \"{att['filename']}\" disagrees with {len(plan['conflicts'])} stored "
+                    f"value(s): {', '.join(i['label'] for i in plan['conflicts'])}. "
+                    f"Awaiting review on the profile (Email documents).",
+                    created_by="email-docs")
+            if pending_out is not None:
+                pending_out.append({"gcs_path": path, "filename": att["filename"],
+                                    "fills": len(applied_fills), "pending": plan["conflicts"]})
             how = ("downloaded from a link in their email" if att.get("origin") == "link"
                    else "received by email")
             bq_handler.add_activity_note(
                 company,
                 f"Document {how}: \"{att['filename']}\" "
                 f"({att['content_type']}, {len(att['data']) // 1024}KB) filed to Email documents."
-                + (f" {analysis['summary']}" if analysis.get("summary") else ""),
+                + (f" {summary}" if summary else ""),
                 created_by="email-docs")
             saved.append(att["filename"])
         except Exception as e:

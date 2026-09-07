@@ -152,6 +152,18 @@ export const dealApi = {
     return data;
   },
 
+  // Close a document's review: the ticked keys are written through the same
+  // path as the automatic fills; the rest are recorded as declined.
+  async reviewEmailDoc(name: string, gcsPath: string, accept: string[]): Promise<any> {
+    const response = await apiFetch(
+      `${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs/review`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gcs_path: gcsPath, accept }) });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || 'Review failed');
+    return data;
+  },
+
   // Authenticated blob open, same pattern as CH filing PDFs: these are
   // founders' own files, so the endpoint stays behind sign-in and a plain
   // link can never serve them.

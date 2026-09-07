@@ -987,3 +987,25 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 
 .rsp3-reason-add { border: 1px dashed #cbd5e1; background: none; color: #64748b; border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.68rem; font-weight: 700; cursor: pointer; font-family: inherit; }
 .rsp3-reason-add:hover:not(:disabled) { border-color: #94a3b8; color: #334155; }
+
+/* ── Document SmartFill review (CompanyProfile) ─────────────────────────── */
+.cp-review-overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.5); z-index: 900; display: flex; align-items: center; justify-content: center; animation: cpFade 0.15s ease; }
+.cp-review { background: #fff; border-radius: 14px; width: min(1040px, 94vw); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(2, 6, 23, 0.35); overflow: hidden; }
+.cp-review-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding: 1.1rem 1.4rem 0.8rem; border-bottom: 1px solid #e8edf3; }
+.cp-review-title { font-weight: 800; font-size: 1rem; color: #0f172a; }
+.cp-review-sub { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; max-width: 780px; }
+.cp-review-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; overflow: auto; display: block; max-height: 60vh; }
+.cp-review-table thead, .cp-review-table tbody { display: table; width: 100%; table-layout: fixed; }
+.cp-review-table th { text-align: left; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: #64748b; padding: 0.6rem 0.8rem; background: #f8fafc; position: sticky; top: 0; }
+.cp-review-table th:first-child, .cp-review-table td:first-child { width: 36px; text-align: center; }
+.cp-review-table th:nth-child(2) { width: 18%; }
+.cp-review-table th:nth-child(5) { width: 26%; }
+.cp-review-table td { padding: 0.6rem 0.8rem; border-top: 1px solid #eef2f7; vertical-align: top; cursor: pointer; }
+.cp-review-table tr.on td { background: #f0f7ff; }
+.cp-review-table td.lbl { font-weight: 700; color: #0f172a; }
+.cp-review-table td.val { white-space: pre-wrap; font-variant-numeric: tabular-nums; }
+.cp-review-table td.old { color: #64748b; }
+.cp-review-table td.new { color: #0b3b8c; font-weight: 600; }
+.cp-review-table td.ev { color: #64748b; font-size: 0.76rem; }
+.cp-review-foot { display: flex; justify-content: flex-end; gap: 0.6rem; padding: 0.9rem 1.4rem; border-top: 1px solid #e8edf3; background: #fbfcfe; }
+.cp-review-btn { background: #fff7ed; border-color: #fdba74; color: #9a3412; font-weight: 700; margin-left: 0.5rem; }

@@ -18,3 +18,4 @@ python-multipart==0.0.9
 google-genai>=1.0.0
 reportlab==4.2.5
 python-pptx
+python-docx

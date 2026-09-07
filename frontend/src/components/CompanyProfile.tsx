@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -221,6 +221,30 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
+  // Document SmartFill review: the document disagreed with stored values and
+  // Ishu decides, per field, which to keep. Opens right after an upload or
+  // from the "Review" button on a filed document.
+  const [docReview, setDocReview] = useState<{ gcsPath: string; filename: string; fills: number; items: DocReviewItem[] } | null>(null);
+  const [reviewAccept, setReviewAccept] = useState<Set<string>>(new Set());
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const openReview = (gcsPath: string, filename: string, items: DocReviewItem[], fills = 0) => {
+    setDocReview({ gcsPath, filename, fills, items });
+    setReviewAccept(new Set(items.map(i => i.key)));
+  };
+  const submitReview = async (accept: string[]) => {
+    if (!docReview) return;
+    setReviewBusy(true);
+    try {
+      const r = await dealApi.reviewEmailDoc(baseCompany.name, docReview.gcsPath, accept);
+      setDocReview(null);
+      const docs = await dealApi.getEmailDocs(baseCompany.name);
+      setEmailDocs(docs.documents || []);
+      await onChanged();
+      if (r?.rescore && r.rescore.old !== r.rescore.new)
+        alert(`Applied ${r.accepted} change(s). Fit score ${r.rescore.old == null ? 'unscored' : Number(r.rescore.old).toFixed(2)} → ${r.rescore.new == null ? 'unscored' : Number(r.rescore.new).toFixed(2)}.`);
+    } catch (e: any) { alert(e?.message || 'Review failed'); }
+    finally { setReviewBusy(false); }
+  };
   const [docUploading, setDocUploading] = useState(false);
   // Which fit-score dimension is expanded to show its stored evidence.
   const [scoreDim, setScoreDim] = useState<string | null>(null);
@@ -502,6 +526,13 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                         if (r.status === 'Skipped') alert(r.message);
                         const docs = await dealApi.getEmailDocs(baseCompany.name);
                         setEmailDocs(docs.documents || []);
+                        if (r.status === 'Success') {
+                          await onChanged();   // fills were written; refresh the card
+                          if (r.pending?.length) openReview(r.gcs_path, f.name, r.pending, r.fills_applied || 0);
+                          else alert(r.fills_applied
+                            ? `Filed. ${r.fills_applied} field(s) filled from the document; nothing disagreed with the record.`
+                            : 'Filed. The document added nothing the record did not already hold.');
+                        }
                       } catch (err: any) { alert(err?.message || 'Upload failed'); }
                       finally { setDocUploading(false); }
                     }} />
@@ -521,7 +552,15 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                             ? `${Math.max(1, Math.round(d.size_bytes / 1024))}KB`
                             : `${(d.size_bytes / 1048576).toFixed(1)}MB`}
                           {d.ai_updates ? ' · updated fields' : ''}
+                          {d.pending_resolved_at ? ' · reviewed' : ''}
                         </span>
+                        {parsePendingReview(d).length > 0 && (
+                          <button className="cp-chip-btn cp-review-btn"
+                            title="The document disagrees with stored values. Decide which to keep."
+                            onClick={() => openReview(d.gcs_path, d.filename, parsePendingReview(d))}>
+                            Review {parsePendingReview(d).length} change{parsePendingReview(d).length === 1 ? '' : 's'}
+                          </button>
+                        )}
                         {d.ai_summary && <p className="cp-doc-summary">{d.ai_summary}</p>}
                       </div>
                     ))}
@@ -1047,6 +1086,46 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
         <div onClick={e => e.stopPropagation()}>
           <OutreachModal company={company} onClose={() => setOutreachOpen(false)} onSent={onChanged} />
         </div>
+      )}
+      {docReview && (
+          <div className="cp-review-overlay" onClick={() => !reviewBusy && setDocReview(null)}>
+            <div className="cp-review" onClick={e => e.stopPropagation()}>
+              <div className="cp-review-head">
+                <div>
+                  <div className="cp-review-title">“{docReview.filename}” disagrees with the record</div>
+                  <div className="cp-review-sub">
+                    {docReview.fills > 0 ? `${docReview.fills} blank field(s) were filled automatically. ` : ''}
+                    Tick the values to REPLACE with the document’s; unticked rows keep what is stored. Every change is logged with its evidence.
+                  </div>
+                </div>
+                <button className="cp-chip-btn" onClick={() => setDocReview(null)} disabled={reviewBusy}>✕</button>
+              </div>
+              <table className="cp-review-table">
+                <thead>
+                  <tr><th></th><th>Field</th><th>Currently stored</th><th>In the document</th><th>Evidence</th></tr>
+                </thead>
+                <tbody>
+                  {docReview.items.map(it => (
+                    <tr key={it.key} className={reviewAccept.has(it.key) ? 'on' : ''}
+                        onClick={() => setReviewAccept(prev => { const n = new Set(prev); n.has(it.key) ? n.delete(it.key) : n.add(it.key); return n; })}>
+                      <td><input type="checkbox" readOnly checked={reviewAccept.has(it.key)} /></td>
+                      <td className="lbl">{it.label}</td>
+                      <td className="val old">{it.old}</td>
+                      <td className="val new">{it.new}</td>
+                      <td className="ev">{it.evidence || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="cp-review-foot">
+                <button className="cp-chip-btn" disabled={reviewBusy} onClick={() => submitReview([])}>Keep all stored values</button>
+                <button className="cp-chip-btn primary" disabled={reviewBusy || reviewAccept.size === 0}
+                  onClick={() => submitReview(Array.from(reviewAccept))}>
+                  {reviewBusy ? 'Applying…' : `Replace ${reviewAccept.size} selected`}
+                </button>
+              </div>
+            </div>
+          </div>
       )}
     </div>
   );

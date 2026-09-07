@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("GCP_PROJECT_ID", "averroes-deal-origination")
 
 from services.email_docs_service import (  # noqa: E402
-    decide_updates, doc_gcs_path, extract_attachments, sanitize_filename,
+    doc_gcs_path, extract_attachments, sanitize_filename,
 )
 
 fails = 0
@@ -80,51 +80,117 @@ chk("a signature-logo-sized image is filed but NOT read",
     should_analyse("image/png", 30 * 1024), False)
 chk("a large image (scanned doc, chart) IS read",
     should_analyse("image/png", 400 * 1024), True)
-chk("office docs are never sent to the model (it cannot read them natively)",
-    should_analyse("application/vnd.openxmlformats-officedocument.wordprocessingml.document", 900_000), False)
+chk("office docs ARE read now (converted to text first, Document SmartFill)",
+    should_analyse("application/vnd.openxmlformats-officedocument.wordprocessingml.document", 900_000), True)
+chk("a random binary type is still filed only",
+    should_analyse("application/zip", 900_000, "archive.zip"), False)
 chk("the image threshold is sane (50-500KB)",
     50 * 1024 <= MIN_AI_IMAGE_BYTES <= 500 * 1024, True)
 chk("the per-run read budget is bounded", 1 <= AI_READS_PER_RUN <= 50, True)
 
 print()
-print("── The update whitelist ──")
+print("── Document SmartFill: fill vs confirm (services/doc_smartfill.py) ──")
+from services.doc_smartfill import (  # noqa: E402
+    COLUMN_TYPES, office_kind, office_to_text, plan_updates, merge_writes,
+)
 company = {"name": "Acme", "revenue_estimate_m": 3.0, "employees": 20,
            "description": "A B2B SaaS platform for logistics teams.",
-           "sector": "Logistics Tech", "website": "", "hq_city": None}
+           "sector": "Logistics Tech", "website": "", "hq_city": None,
+           "revenue_y1": 4_000_000, "revenue_y1_date": "2024-03-31",
+           "revenue_y2": 3_000_000, "revenue_y2_date": "2023-03-31"}
 
-ok = decide_updates(company, [
-    {"field": "revenue_estimate_m", "new": 5.2, "evidence": "FY25 revenue GBP 5.2m"},
-    {"field": "employees", "new": "34", "evidence": "34 FTEs"},
-    {"field": "website", "new": "https://acme.co.uk", "evidence": "footer"},
-])
-chk("document revenue replaces the estimate",
-    next(u for u in ok if u["field"] == "revenue_estimate_m")["new"], 5.2)
-chk("headcount is coerced to an integer",
-    next(u for u in ok if u["field"] == "employees")["new"], 34)
-chk("an empty website is filled",
-    next(u for u in ok if u["field"] == "website")["new"], "https://acme.co.uk")
+ex = {"summary": "FY25 management accounts.",
+      "company": {"website": "https://acme.co.uk", "employees": "34", "sector": "Fintech",
+                  "description": "SaaS company.", "year_founded": 2016, "total_raised_m": 4.5,
+                  "ebitda_margin_pct": -12.5},
+      "evidence": {"website": "footer p1", "employees": "34 FTEs, slide 3", "sector": "slide 2"},
+      "financial_years": [
+          {"period_end": "2025-03-31", "basis": "actual", "revenue": 5_200_000, "gross_profit": 4_160_000,
+           "profit_before_tax": -250_000, "cash": 812_345, "evidence": "P&L p4"},
+          {"period_end": "2026-03-31", "basis": "forecast", "revenue": 9_000_000},
+      ]}
+plan = plan_updates(company, ex)
+fills = {i["key"]: i for i in plan["fills"]}
+conf = {i["key"]: i for i in plan["conflicts"]}
 
-chk("a SHORTER description never wins (longer-wins rule)",
-    decide_updates(company, [{"field": "description", "new": "SaaS company."}]), [])
-chk("a longer description does win",
-    decide_updates(company, [{"field": "description",
-                              "new": company["description"] + " Serves 200 enterprise customers across the UK."}])[0]["field"],
-    "description")
-chk("a filled sector is never replaced",
-    decide_updates(company, [{"field": "sector", "new": "Fintech"}]), [])
-chk("fields off the whitelist are ignored entirely",
-    decide_updates(company, [{"field": "revenue_y1", "new": 999},
-                             {"field": "status", "new": "Won"},
-                             {"field": "averroes_fit_score", "new": 1.0}]), [])
-chk("zero and negative numbers are refused",
-    decide_updates(company, [{"field": "revenue_estimate_m", "new": 0},
-                             {"field": "employees", "new": -5}]), [])
-chk("garbage numbers are refused",
-    decide_updates(company, [{"field": "employees", "new": "about forty"}]), [])
-chk("no-change proposals are dropped",
-    decide_updates(company, [{"field": "employees", "new": 20}]), [])
-chk("empty proposals are safe", decide_updates(company, []), [])
-chk("None proposals are safe", decide_updates(company, None), [])
+chk("blank website is FILLED automatically", fills["website"]["writes"], {"website": "https://acme.co.uk"})
+chk("blank year_founded / total_raised / margin are fills",
+    {"year_founded", "total_raised_m", "ebitda_margin_pct"} <= set(fills), True)
+chk("negative EBITDA margin allowed (signed field)", fills["ebitda_margin_pct"]["writes"]["ebitda_margin_pct"], -12.5)
+chk("existing employees 20 vs document 34 is a CONFLICT, not a write", conf["employees"]["writes"], {"employees": 34})
+chk("conflict shows current and document values", (conf["employees"]["old"], conf["employees"]["new"]), ("20", "34"))
+chk("conflict carries the evidence", conf["employees"]["evidence"], "34 FTEs, slide 3")
+chk("existing sector vs different sector is a conflict", "sector" in conf, True)
+chk("a SHORTER description never wins and is not even a conflict",
+    "description" in fills or "description" in conf, False)
+chk("a longer description is a fill (longer-wins doctrine)",
+    "description" in {i["key"] for i in plan_updates(company, {"company": {
+        "description": company["description"] + " Serves 200 enterprise customers across the UK."}})["fills"]}, True)
+
+fin = fills.get("financials") or conf.get("financials")
+chk("financials item produced", fin is not None, True)
+chk("a NEWER actual year is a FILL (adds a year, shifts the rest down)", "financials" in fills, True)
+w = fin["writes"]
+chk("new y1 = FY25 from the document", (w["revenue_y1"], w["revenue_y1_date"]), (5_200_000.0, "2025-03-31"))
+chk("old y1 shifted to y2", (w["revenue_y2"], w["revenue_y2_date"]), (4_000_000.0, "2024-03-31"))
+chk("old y2 shifted to y3", (w["revenue_y3"], w["revenue_y3_date"]), (3_000_000.0, "2023-03-31"))
+chk("loss kept as a negative PBT", w["profit_y1"], -250_000.0)
+chk("forecast year is IGNORED for the filed table", 9_000_000.0 not in (w["revenue_y1"], w["revenue_y2"], w["revenue_y3"]), True)
+chk("derived latest revenue conflicts with the stored 3.0m estimate",
+    conf["revenue_estimate_m"]["writes"]["revenue_estimate_m"], 5.2)
+chk("derived growth 4.0m -> 5.2m = +30% is a fill (nothing stored)",
+    fills["revenue_growth_pct"]["writes"]["revenue_growth_pct"], 30.0)
+
+# Same year, different number -> conflict; same number -> nothing.
+same = plan_updates(company, {"financial_years": [{"period_end": "2024-03-31", "basis": "actual", "revenue": 4_010_000}]})
+chk("shared year within 1% is NOT a change", same["fills"] + same["conflicts"] == [] or
+    all(i["key"] != "financials" for i in same["fills"] + same["conflicts"]), True)
+diff = plan_updates(company, {"financial_years": [{"period_end": "2024-03-31", "basis": "actual", "revenue": 4_800_000}]})
+chk("shared year that DISAGREES is a conflict", "financials" in {i["key"] for i in diff["conflicts"]}, True)
+chk("...and figures DERIVED from an unconfirmed table wait too (growth is not auto-written)",
+    diff["fills"], [])
+# 4th year would push a stored year out of the window -> confirmation.
+full = dict(company, revenue_y3=2_000_000, revenue_y3_date="2022-03-31")
+drop = plan_updates(full, {"financial_years": [{"period_end": "2025-03-31", "basis": "actual", "revenue": 5_200_000}]})
+chk("a year falling off the 3-year window needs confirmation", "financials" in {i["key"] for i in drop["conflicts"]}, True)
+chk("...and the label says which year", "2022-03-31" in next(i for i in drop["conflicts"] if i["key"] == "financials")["label"], True)
+# Stored values without dates cannot be aligned -> confirmation.
+undated = plan_updates({"name": "X", "revenue_y1": 1_000_000},
+                       {"financial_years": [{"period_end": "2025-03-31", "basis": "actual", "revenue": 2_000_000}]})
+chk("undated stored figures -> conflict (never silently replaced)",
+    "financials" in {i["key"] for i in undated["conflicts"]} and not undated["fills"], True)
+
+chk("fields off the schema are ignored entirely",
+    plan_updates(company, {"company": {"status": "Won", "averroes_fit_score": 1.0, "contact_email": "x@y.z"}}),
+    {"fills": [], "conflicts": []})
+chk("zero/negative headcount and garbage numbers are refused",
+    plan_updates({"name": "X"}, {"company": {"employees": -5, "total_raised_m": "about forty"}}),
+    {"fills": [], "conflicts": []})
+chk("a no-change proposal is dropped", plan_updates(company, {"company": {"employees": 20}}), {"fills": [], "conflicts": []})
+chk("empty extraction is safe", plan_updates(company, {}), {"fills": [], "conflicts": []})
+chk("None extraction is safe", plan_updates(company, None), {"fills": [], "conflicts": []})
+chk("every write column has a declared BigQuery type",
+    all(c in COLUMN_TYPES for i in plan["fills"] + plan["conflicts"] for c in i["writes"]), True)
+chk("merge_writes flattens items", merge_writes([{"writes": {"a": 1}}, {"writes": {"b": 2}}]), {"a": 1, "b": 2})
+
+print()
+print("── Office files become text ──")
+chk("pptx by content type", office_kind("application/vnd.openxmlformats-officedocument.presentationml.presentation", "x"), "pptx")
+chk("octet-stream + .xlsx falls back to the extension", office_kind("application/octet-stream", "Model v3.XLSX"), "xlsx")
+chk("pdf is not an office kind", office_kind("application/pdf", "deck.pdf"), None)
+import io as _io
+from pptx import Presentation as _P
+_prs = _P(); _s = _prs.slides.add_slide(_prs.slide_layouts[5]); _s.shapes.title.text = "FY25 revenue GBP 5.2m"
+_b = _io.BytesIO(); _prs.save(_b)
+chk("pptx text extracted with slide labels", "Slide 1" in office_to_text("pptx", _b.getvalue())
+    and "5.2m" in office_to_text("pptx", _b.getvalue()), True)
+from openpyxl import Workbook as _W
+_wb = _W(); _ws = _wb.active; _ws.title = "P&L"; _ws.append(["Revenue", 5200000]); _ws.append(["EBITDA", -250000])
+_b2 = _io.BytesIO(); _wb.save(_b2)
+_t = office_to_text("xlsx", _b2.getvalue())
+chk("xlsx rows extracted with sheet label", "Sheet P&L" in _t and "5200000" in _t, True)
+chk("corrupt bytes never raise", office_to_text("docx", b"not a docx"), "")
+chk("office files are worth an AI read", should_analyse("application/octet-stream", 10, "deck.pptx"), True)
 
 print()
 print("── PDF links in the body (the Plastometrex case) ──")

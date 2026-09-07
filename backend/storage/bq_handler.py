@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 import logging
 from typing import List, Dict, Optional
@@ -1573,9 +1574,21 @@ class BigQueryHandler:
                 ("email_subject", "STRING"), ("sender_email", "STRING"),
                 ("received_at", "TIMESTAMP"), ("saved_at", "TIMESTAMP"),
                 ("ai_summary", "STRING"), ("ai_updates", "STRING"),
+                ("pending_updates", "STRING"), ("pending_resolved_at", "TIMESTAMP"),
             ]]
             self.client.create_table(bigquery.Table(table_id, schema=schema))
             logger.info("Created email_documents table")
+        # Document SmartFill (7 Sep 2026): conflicts awaiting Ishu's confirmation
+        # live on the document row - a fact about the document, not a second
+        # copy of company state. Older tables gain the columns in place.
+        if not getattr(self, "_email_docs_cols_ok", False):
+            try:
+                self.client.query(f"""ALTER TABLE `{table_id}`
+                    ADD COLUMN IF NOT EXISTS pending_updates STRING,
+                    ADD COLUMN IF NOT EXISTS pending_resolved_at TIMESTAMP""").result()
+            except Exception as e:
+                logger.warning(f"email_documents column check: {e}")
+            self._email_docs_cols_ok = True
         return table_id
 
     def email_doc_exists(self, message_id: str, filename: str) -> bool:
@@ -1619,9 +1632,10 @@ class BigQueryHandler:
             self.client.query(f"""
                 INSERT INTO `{t}` (company_name, filename, gcs_path, content_type, content_sha256,
                                    size_bytes, message_id, email_subject, sender_email,
-                                   received_at, saved_at, ai_summary, ai_updates)
-                VALUES (@c, @f, @g, @ct, @sha, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd)
+                                   received_at, saved_at, ai_summary, ai_updates, pending_updates)
+                VALUES (@c, @f, @g, @ct, @sha, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd, @pend)
             """, job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("pend", "STRING", meta.get("pending_updates") or ""),
                 bigquery.ScalarQueryParameter("c", "STRING", meta.get("company_name") or ""),
                 bigquery.ScalarQueryParameter("f", "STRING", meta.get("filename") or ""),
                 bigquery.ScalarQueryParameter("g", "STRING", meta.get("gcs_path") or ""),
@@ -1649,13 +1663,39 @@ class BigQueryHandler:
                 SELECT filename, gcs_path, content_type, size_bytes,
                        email_subject, sender_email,
                        CAST(received_at AS STRING) AS received_at,
-                       ai_summary, ai_updates
+                       ai_summary, ai_updates,
+                       IFNULL(pending_updates, '') AS pending_updates,
+                       CAST(pending_resolved_at AS STRING) AS pending_resolved_at
                 FROM `{t}` WHERE company_name = @c
                 ORDER BY received_at DESC
             """, params=[bigquery.ScalarQueryParameter("c", "STRING", company_name)])
         except Exception as e:
             logger.error(f"get_email_docs failed for {company_name}: {e}")
             return []
+
+    def get_email_doc(self, company_name: str, gcs_path: str) -> Optional[Dict]:
+        docs = [d for d in self.get_email_docs(company_name) if d.get("gcs_path") == gcs_path]
+        return docs[0] if docs else None
+
+    def resolve_email_doc_pending(self, gcs_path: str, decisions: Dict) -> bool:
+        """Close the review on one document: pending_updates becomes the record
+        of what was accepted/declined and pending_resolved_at is stamped, so
+        the profile stops asking and the decision is auditable."""
+        if not self.client:
+            return False
+        t = self._ensure_email_docs_table()
+        try:
+            self.client.query(f"""
+                UPDATE `{t}` SET pending_updates = @d, pending_resolved_at = CURRENT_TIMESTAMP()
+                WHERE gcs_path = @g
+            """, job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("d", "STRING", json.dumps(decisions)),
+                bigquery.ScalarQueryParameter("g", "STRING", gcs_path),
+            ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"resolve_email_doc_pending failed for {gcs_path}: {e}")
+            return False
 
     def get_message_id_entity_map(self) -> Dict[str, Dict]:
         """Every real logged Message-ID -> its entity, for thread matching in

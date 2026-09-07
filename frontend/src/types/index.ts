@@ -375,6 +375,28 @@ export interface EmailDoc {
   received_at: string;
   ai_summary: string;
   ai_updates: string;   // JSON of the field changes the document caused, '' if none
+  // Document SmartFill: values that DISAGREE with the record wait for a
+  // decision. JSON array of DocReviewItem while open; after the review it
+  // holds {accepted, declined} and pending_resolved_at is set.
+  pending_updates: string;
+  pending_resolved_at?: string | null;
+}
+
+export interface DocReviewItem {
+  key: string;        // column, or 'financials' for the year table
+  label: string;
+  kind: 'fill' | 'conflict';
+  old: string;        // current value, display form ('(empty)' when blank)
+  new: string;        // the document's value, display form
+  evidence: string;
+}
+
+export function parsePendingReview(doc: EmailDoc): DocReviewItem[] {
+  if (!doc.pending_updates || doc.pending_resolved_at) return [];
+  try {
+    const v = JSON.parse(doc.pending_updates);
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
 }
 
 export interface ReplyRuleMove {

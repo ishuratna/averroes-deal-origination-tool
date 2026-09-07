@@ -4060,13 +4060,69 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
     # path keeps swallowing per-attachment errors so one bad file cannot
     # stop a 500-message run).
     errors: List[str] = []
-    filed = process_email_documents(bq_handler, gcs_handler, entry, company, ai_budget=[2], errors=errors)
+    pending: List[dict] = []
+    filed = process_email_documents(bq_handler, gcs_handler, entry, company, ai_budget=[2],
+                                    errors=errors, pending_out=pending)
     if errors and not filed:
         raise HTTPException(status_code=500, detail=f"Upload failed: {errors[0]}")
     if not filed:
         return {"status": "Skipped",
                 "message": "Nothing filed - identical bytes are already on file for this company."}
-    return {"status": "Success", "filed": filed}
+    first = pending[0] if pending else {}
+    return {"status": "Success", "filed": filed,
+            "fills_applied": first.get("fills", 0),
+            "gcs_path": first.get("gcs_path", ""),
+            "pending": first.get("pending", [])}
+
+
+class DocReviewRequest(BaseModel):
+    gcs_path: str
+    accept: List[str]                    # item keys Ishu ticked; the rest are declined
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+@app.post("/company/{company_name}/email-docs/review")
+async def email_docs_review(company_name: str, req: DocReviewRequest):
+    """Close the review on one document: write the accepted changes through the
+    SAME apply path as the automatic fills (old -> new + evidence in the
+    Activity Log, then the local rescore), record the declined ones, and
+    stamp the document resolved so the profile stops asking."""
+    from services.email_docs_service import apply_document_writes
+
+    doc = bq_handler.get_email_doc(company_name, req.gcs_path)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this company")
+    if doc.get("pending_resolved_at"):
+        raise HTTPException(status_code=409, detail="This document's review is already closed")
+    try:
+        pending = json.loads(doc.get("pending_updates") or "[]")
+    except ValueError:
+        pending = []
+    if not pending:
+        raise HTTPException(status_code=400, detail="Nothing awaiting review on this document")
+    company = bq_handler.get_company_full(company_name)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+
+    accepted = [i for i in pending if i.get("key") in set(req.accept)]
+    declined = [i for i in pending if i.get("key") not in set(req.accept)]
+    result = {"written": 0, "rescore": None}
+    if accepted:
+        result = apply_document_writes(bq_handler, company, accepted, doc.get("filename") or "document",
+                                       created_by=req.created_by or "Ishu Ratna")
+    if declined:
+        bq_handler.add_activity_note(
+            company_name,
+            f"Kept stored values over document \"{doc.get('filename')}\" for: "
+            + ", ".join(i.get("label") or i.get("key") for i in declined) + ".",
+            created_by=req.created_by or "Ishu Ratna")
+    bq_handler.resolve_email_doc_pending(req.gcs_path, {
+        "accepted": [{k: v for k, v in i.items() if k != "writes"} for i in accepted],
+        "declined": [{k: v for k, v in i.items() if k != "writes"} for i in declined],
+        "by": req.created_by,
+    })
+    return {"status": "Success", "accepted": len(accepted), "declined": len(declined),
+            "columns_written": result.get("written", 0), "rescore": result.get("rescore")}
 
 
 @app.post("/email/docs/backfill")

@@ -10,6 +10,7 @@ entry here, dated with the commit date.
 
 # (date YYYY-MM-DD, one line a non-engineer understands)
 TOOL_UPDATES = [
+    ("2026-09-07", "Document SmartFill: a deck, accounts or data-room file (PDF, PowerPoint, Excel or Word) uploaded on a company card - or attached to the company's email - is read in full. Anything the record lacks (financials by year, headcount, funding, investors, founders, description...) is filled at once; anything that disagrees with a stored value is shown side by side with its evidence and you tick what to replace. The fit score is recomputed after every change. The upload button itself was also fixed (it failed with 'Failed to fetch')."),
     ("2026-09-07", "Outreach emails now carry Bea's full signature: the Averroes Capital logo, name and title, the outreach email link, and the regulatory disclaimer - matching her real signature."),
     ("2026-08-28", "Companies House accounts are now read from the machine-tagged iXBRL filing instead of an AI reading the PDF: every figure (revenue, cash, employees, net assets) is exact, auditable and free. The AI read remains only for old paper-scan filings - this removes the single largest AI cost inside SmartFill."),
     ("2026-08-28", "Delivery check fix: when an email bounced but a newer email was later sent (usually to a corrected address), the old bounce no longer drags the company back to Qualified - the newest send takes precedence and is judged on its own."),
