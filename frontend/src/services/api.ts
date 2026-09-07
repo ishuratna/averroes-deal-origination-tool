@@ -139,16 +139,39 @@ export const dealApi = {
   },
 
   // Manual upload into the same email-documents pipeline (for decks shared
-  // as Drive/Dropbox links the sync cannot fetch). No Content-Type header:
-  // the browser sets the multipart boundary itself.
+  // as Drive/Dropbox links the sync cannot fetch). Two transports, ONE
+  // backend ingest: small files go through the API as multipart; anything
+  // near Cloud Run's 32MB request ceiling goes browser -> Cloud Storage via a
+  // resumable session the backend opens, then the backend ingests it from the
+  // bucket (a 35MB deck failed with a bare "Failed to fetch", 7 Sep 2026).
   async uploadEmailDoc(name: string, file: globalThis.File): Promise<any> {
-    const form = new FormData();
-    form.append('file', file);
-    const response = await apiFetch(
-      `${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs/upload`,
-      { method: 'POST', body: form });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data?.detail || 'Upload failed');
+    const DIRECT_LIMIT = 25 * 1024 * 1024;
+    const base = `${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs`;
+    const contentType = file.type || 'application/octet-stream';
+    if (file.size <= DIRECT_LIMIT) {
+      const form = new FormData();
+      form.append('file', file);          // no Content-Type header: the browser sets the boundary
+      const response = await apiFetch(`${base}/upload`, { method: 'POST', body: form });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.detail || 'Upload failed');
+      return data;
+    }
+    // 1. open the session
+    const open = await apiFetch(`${base}/upload-url`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, content_type: contentType, size: file.size }) });
+    const session = await open.json().catch(() => null);
+    if (!open.ok) throw new Error(session?.detail || 'Could not start the upload');
+    // 2. the bytes go straight to Cloud Storage (single PUT; the session URL
+    //    is bound to this page's origin and to this one object)
+    const put = await fetch(session.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
+    if (!put.ok) throw new Error(`Upload to storage failed (${put.status})`);
+    // 3. the backend reads it back and runs the one ingest path
+    const ingest = await apiFetch(`${base}/ingest`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ staging_path: session.staging_path, filename: file.name, content_type: contentType }) });
+    const data = await ingest.json().catch(() => null);
+    if (!ingest.ok) throw new Error(data?.detail || 'Upload failed');
     return data;
   },
 

@@ -31,7 +31,14 @@ from services.doc_smartfill import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024   # one file
+MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024   # one file arriving by email
+# A manual upload from the company card is a deliberate act on a document
+# Ishu has already judged worth reading, so it may be much larger (a 35MB
+# image-heavy deck was the first real case, 7 Sep 2026). Large files travel
+# browser -> Cloud Storage directly, never through Cloud Run's 32MB request
+# ceiling, and go to Gemini through its Files API rather than inline bytes.
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+GEMINI_INLINE_LIMIT = 18 * 1024 * 1024    # inline request parts stop at 20MB
 MAX_ATTACHMENTS_PER_EMAIL = 10
 
 # Types Gemini can read natively. Everything else is still FILED (per Ishu:
@@ -230,8 +237,16 @@ def analyse_document(company: Dict, filename: str, content_type: str,
 
         client = genai.Client(api_key=api_key)
         prompt = extraction_prompt(company, filename)
+        uploaded = None
         if text_doc:
             contents = [f"DOCUMENT TEXT ({kind}):\n{text_doc}", prompt]
+        elif len(data) > GEMINI_INLINE_LIMIT:
+            # Files API: the only route for a large PDF. Deleted after the read.
+            import io as _io
+            uploaded = client.files.upload(file=_io.BytesIO(data),
+                                           config={"mime_type": content_type,
+                                                   "display_name": filename[:100]})
+            contents = [uploaded, prompt]
         else:
             contents = [Part.from_bytes(data=data, mime_type=content_type), prompt]
         response = client.models.generate_content(
@@ -240,6 +255,11 @@ def analyse_document(company: Dict, filename: str, content_type: str,
             config=GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
         )
         text = (response.text or "").strip()
+        if uploaded is not None:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass
         if text.startswith("```"):
             text = text.strip("`").replace("json", "", 1).strip()
         got = json.loads(text)

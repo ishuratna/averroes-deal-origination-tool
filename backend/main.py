@@ -4021,14 +4021,12 @@ async def download_email_doc(path: str = Query(..., description="gcs_path from t
                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
-@app.post("/company/{company_name}/email-docs/upload")
-async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
-    """Manual route into the SAME document pipeline (per Ishu, 27 Aug 2026):
-    a founder shares a deck behind a Drive/Dropbox link the sync cannot fetch,
-    Ishu downloads it and uploads it here. Filed to GCS, hashed, AI-read and
-    whitelisted-field-updated exactly like an email attachment."""
+def _ingest_manual_document(company_name: str, filename: str, content_type: str, data: bytes) -> dict:
+    """ONE implementation behind both manual routes (direct multipart for small
+    files, Cloud Storage hand-off for large ones): file, hash, AI-read, fill
+    blanks, hold conflicts for review. Exactly what an email attachment gets."""
     import uuid
-    from services.email_docs_service import MAX_ATTACHMENT_BYTES, process_email_documents, sanitize_filename
+    from services.email_docs_service import MAX_UPLOAD_BYTES, process_email_documents, sanitize_filename
 
     # ONE row, not the universe. This handler used to call get_universe()
     # (SELECT * over 13k rows including every blob column) just to find the
@@ -4037,11 +4035,10 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
     company = bq_handler.get_company_full(company_name)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
-    data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise HTTPException(status_code=413, detail="File is over the 15MB limit.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File is over the {MAX_UPLOAD_BYTES // (1024*1024)}MB limit.")
 
     entry = {
         "entity_type": "company", "entity_name": company_name,
@@ -4050,8 +4047,8 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
         "counterparty_email": "",
         "sent_at": datetime.now().astimezone().isoformat(),
         "attachments": [{
-            "filename": sanitize_filename(file.filename or "document"),
-            "content_type": file.content_type or "application/octet-stream",
+            "filename": sanitize_filename(filename or "document"),
+            "content_type": content_type or "application/octet-stream",
             "data": data,
         }],
     }
@@ -4073,6 +4070,95 @@ async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
             "fills_applied": first.get("fills", 0),
             "gcs_path": first.get("gcs_path", ""),
             "pending": first.get("pending", [])}
+
+
+@app.post("/company/{company_name}/email-docs/upload")
+async def email_docs_upload(company_name: str, file: UploadFile = File(...)):
+    """Manual route into the SAME document pipeline (per Ishu, 27 Aug 2026):
+    a founder shares a deck behind a Drive/Dropbox link the sync cannot fetch,
+    Ishu downloads it and uploads it here. Small files only - Cloud Run caps a
+    request body at 32MB; bigger files use upload-url + ingest below."""
+    data = await file.read()
+    return _ingest_manual_document(company_name, file.filename or "document",
+                                   file.content_type or "application/octet-stream", data)
+
+
+class UploadUrlRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = "application/octet-stream"
+    size: int
+
+
+class IngestRequest(BaseModel):
+    staging_path: str
+    filename: str
+    content_type: Optional[str] = "application/octet-stream"
+
+
+_STAGING_PREFIX = "email-docs/_staging/"
+
+
+@app.post("/company/{company_name}/email-docs/upload-url")
+async def email_docs_upload_url(company_name: str, req: UploadUrlRequest, request: Request):
+    """Large-file hand-off, step 1 of 2. Cloud Run refuses request bodies over
+    32MB before the container ever sees them (a 35MB deck failed with a bare
+    'Failed to fetch', 7 Sep 2026). So the browser sends big files straight to
+    Cloud Storage: this opens a RESUMABLE upload session on a staging object,
+    bound to the caller's Origin so the browser's PUT passes CORS without any
+    bucket configuration, and returns the session URL. No signed URL, no
+    private key: the session is minted with the service's own credentials and
+    is only good for this one object."""
+    import uuid
+    from services.email_docs_service import MAX_UPLOAD_BYTES, sanitize_filename
+    if not bq_handler.get_company_full(company_name):
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+    if req.size <= 0:
+        raise HTTPException(status_code=400, detail="The file is empty.")
+    if req.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File is over the {MAX_UPLOAD_BYTES // (1024*1024)}MB limit.")
+    if gcs_handler.storage_client is None:
+        raise HTTPException(status_code=503, detail="Cloud Storage is not available")
+    staging_path = f"{_STAGING_PREFIX}{uuid.uuid4().hex}/{sanitize_filename(req.filename)}"
+    try:
+        blob = gcs_handler.storage_client.bucket(gcs_handler.bucket_name).blob(staging_path)
+        session_url = blob.create_resumable_upload_session(
+            content_type=req.content_type or "application/octet-stream",
+            size=req.size,
+            origin=request.headers.get("origin") or None,
+        )
+    except Exception as e:
+        logger.error(f"upload-url failed for {company_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not open an upload session: {e}")
+    return {"upload_url": session_url, "staging_path": staging_path}
+
+
+@app.post("/company/{company_name}/email-docs/ingest")
+async def email_docs_ingest(company_name: str, req: IngestRequest):
+    """Large-file hand-off, step 2 of 2: the browser has finished its PUT to
+    the staging object; read it back, run the one ingest path, delete the
+    staging copy (the pipeline files the document under its canonical path)."""
+    from services.email_docs_service import MAX_UPLOAD_BYTES
+    if not req.staging_path.startswith(_STAGING_PREFIX) or ".." in req.staging_path:
+        raise HTTPException(status_code=400, detail="Not a staging object")
+    if gcs_handler.storage_client is None:
+        raise HTTPException(status_code=503, detail="Cloud Storage is not available")
+    blob = gcs_handler.storage_client.bucket(gcs_handler.bucket_name).blob(req.staging_path)
+    try:
+        blob.reload()
+    except Exception:
+        raise HTTPException(status_code=404, detail="Uploaded file not found - the upload may not have completed")
+    if (blob.size or 0) > MAX_UPLOAD_BYTES:
+        blob.delete()
+        raise HTTPException(status_code=413, detail=f"File is over the {MAX_UPLOAD_BYTES // (1024*1024)}MB limit.")
+    data = blob.download_as_bytes()
+    try:
+        return _ingest_manual_document(company_name, req.filename,
+                                       req.content_type or blob.content_type or "application/octet-stream", data)
+    finally:
+        try:
+            blob.delete()
+        except Exception:
+            pass
 
 
 class DocReviewRequest(BaseModel):
