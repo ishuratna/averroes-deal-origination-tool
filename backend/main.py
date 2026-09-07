@@ -4897,6 +4897,25 @@ async def identity_repair(request: Request,
     return _stream_json(_run)
 
 
+@app.post("/admin/signature-test")
+async def signature_test(request: Request,
+                         to: str = Query(..., description="Recipient - must be an @averroescapital.com address")):
+    """Send ONE test email from the outreach mailbox to an internal address so
+    the signature can be eyeballed in a real client. Internal recipients only:
+    this must never become a way to email founders outside the pipeline."""
+    _require_token(request)
+    if not (to or "").strip().lower().endswith("@averroescapital.com"):
+        raise HTTPException(status_code=400, detail="Test emails go to @averroescapital.com addresses only.")
+    from services.outreach_service import send_email
+    body = ("Hi Ishu,\n\nThis is a signature test from the outreach mailbox. Nothing below this "
+            "line is written by hand - it is the signature the tool appends to every founder email.\n\nBest,")
+    res = send_email(to.strip(), "Signature test - Averroes outreach", body)
+    if res.get("status") != "sent":
+        raise HTTPException(status_code=502, detail=res.get("detail") or "Send failed")
+    return {"status": "Success", "to": to.strip(),
+            "message": "Sent. Check the signature: logo, name, title, email link, disclaimer."}
+
+
 @app.post("/company/{company_name}/news/refresh")
 async def company_news_refresh(company_name: str):
     """The profile's NEWS section: one grounded search for recent coverage

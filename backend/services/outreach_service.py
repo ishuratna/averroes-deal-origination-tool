@@ -480,22 +480,73 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
 
 
 # ── Email signature (appended automatically at send time) ────────────────────
+# Matches Bea's real signature (per Ishu, 7 Sep 2026): the Averroes logo,
+# name in bold, title, contact line, then the regulatory disclaimer in small
+# bold grey. The logo is EMBEDDED (CID attachment, multipart/related) so it
+# renders in every client without a hosted URL.
+#
+# The email shown is the OUTREACH mailbox, not Bea's personal bcarrara@
+# address: replies must land where the sync reads them, and a founder who
+# copies the signature address into a new email would otherwise vanish from
+# the pipeline.
 SIG_NAME = os.getenv("SIGNATURE_NAME", "Maria Beatrice Carrara")
 SIG_TITLE = os.getenv("SIGNATURE_TITLE", "Partner")
-SIG_PHONE = os.getenv("SIGNATURE_PHONE", "+44 7384 357070")
+SIG_PHONE = os.getenv("SIGNATURE_PHONE", "")   # blank = no phone line (Ishu's copy omits it)
 SIG_EMAIL = os.getenv("SIGNATURE_EMAIL", "beatrice@averroescapital.com")
-SIG_LOGO_URL = os.getenv("SIGNATURE_LOGO_URL", "")  # hosted Averroes logo, optional
+SIG_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "averroes_logo.png")
+SIG_LOGO_CID = "averroes-logo"
 
-# Body ends with "Best,"; the signature follows directly beneath it
-SIGNATURE_TEXT = f"\n{SIG_NAME}\n{SIG_TITLE}\n{SIG_PHONE} | {SIG_EMAIL}"
+SIG_DISCLAIMER = (
+    "Averroes Capital Limited is an Appointed Representative of Capricorn Fund Managers Limited, "
+    "which is authorised and regulated by the Financial Conduct Authority. Averroes Capital Limited "
+    "provides investment management services to Averroes Fund under a secondment arrangement with "
+    "Capricorn Fund Managers Limited, the AIFM of record. Averroes Capital Limited is incorporated in "
+    "England and the registered office is at 77 Charlotte Street, London, W1T 4PW. The investment "
+    "products and services of Averroes Capital Limited are only available to professional clients and "
+    "eligible counterparties. They are not available to retail clients. This email does not constitute "
+    "an offer to buy or sell shares in any of the products offered by Averroes Capital Limited. This "
+    "email contains confidential information and is intended only for the individual or entity named. "
+    "If you are not the named addressee you should not disseminate, distribute or copy this email. "
+    "Please notify the sender immediately by email if you have received this email by mistake and "
+    "delete this email from your system."
+)
+
+_contact_line_text = f"{SIG_PHONE} | {SIG_EMAIL}" if SIG_PHONE else SIG_EMAIL
+_contact_line_html = (
+    (f'<a href="tel:{SIG_PHONE.replace(" ", "")}" style="color:#1a56db; text-decoration:underline;">{SIG_PHONE}</a>'
+     f'<span style="color:#9ca3af;"> | </span>' if SIG_PHONE else "")
+    + f'<a href="mailto:{SIG_EMAIL}" style="color:#1a56db; text-decoration:underline;">{SIG_EMAIL}</a>'
+)
+
+# Body ends with "Best,"; the signature follows directly beneath it.
+SIGNATURE_TEXT = (f"\n{SIG_NAME}\n{SIG_TITLE}\n{_contact_line_text}\n\n{SIG_DISCLAIMER}")
 
 SIGNATURE_HTML = f"""
 <br>
-{f'<img src="{SIG_LOGO_URL}" alt="Averroes Capital" style="height:44px; margin:6px 0;"><br>' if SIG_LOGO_URL else ''}
-<span style="color:#6b7280;"><b style="color:#374151;">{SIG_NAME}</b><br>
-{SIG_TITLE}<br>
-{SIG_PHONE} | <a href="mailto:{SIG_EMAIL}" style="color:#2563eb;">{SIG_EMAIL}</a></span>
+<img src="cid:{SIG_LOGO_CID}" alt="Averroes Capital" width="150" style="display:block; width:150px; height:auto; margin:10px 0 14px;">
+<div style="font-family: Arial, Helvetica, sans-serif; font-size:14px; line-height:1.5; color:#6b7280;">
+  <b style="color:#4b5563;">{SIG_NAME}</b><br>
+  {SIG_TITLE}<br>
+  {_contact_line_html}
+</div>
+<p style="font-family: Arial, Helvetica, sans-serif; font-size:11px; line-height:1.7; color:#9ca3af; font-weight:bold; margin:18px 0 0; max-width:760px;">
+  {SIG_DISCLAIMER}
+</p>
 """
+
+
+def _logo_part():
+    """The embedded logo as a related MIME part, or None if the asset is absent."""
+    try:
+        from email.mime.image import MIMEImage
+        with open(SIG_LOGO_PATH, "rb") as f:
+            img = MIMEImage(f.read(), _subtype="png")
+        img.add_header("Content-ID", f"<{SIG_LOGO_CID}>")
+        img.add_header("Content-Disposition", "inline", filename="averroes_logo.png")
+        return img
+    except Exception as e:
+        logger.warning(f"Signature logo unavailable ({e}); sending without it.")
+        return None
 
 
 def send_email(to: str, subject: str, body: str,
@@ -519,7 +570,11 @@ def send_email(to: str, subject: str, body: str,
         return {"status": "error", "detail": "No recipient email address provided."}
 
     try:
-        msg = MIMEMultipart("alternative")
+        # multipart/related wraps the alternative (text + html) AND the inline
+        # logo, so the <img src="cid:..."> in the html resolves to the
+        # attached bytes in every client. Plain-text readers still get the
+        # full signature text including the disclaimer.
+        msg = MIMEMultipart("related")
         msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
         msg["To"] = to
         msg["Subject"] = subject
@@ -528,13 +583,16 @@ def send_email(to: str, subject: str, body: str,
         if references:
             msg["References"] = references
 
-        # Plain text version + signature
-        msg.attach(MIMEText(body + SIGNATURE_TEXT, "plain"))
-
-        # HTML version (newlines to <br>) + styled signature
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body + SIGNATURE_TEXT, "plain"))
         html_body = body.replace("\n", "<br>")
         html = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">{html_body}{SIGNATURE_HTML}</body></html>"""
-        msg.attach(MIMEText(html, "html"))
+        alt.attach(MIMEText(html, "html"))
+        msg.attach(alt)
+
+        logo = _logo_part()
+        if logo is not None:
+            msg.attach(logo)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(SENDER_EMAIL, SMTP_PASSWORD)
