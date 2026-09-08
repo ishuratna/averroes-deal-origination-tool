@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { Investor, INVESTOR_STAGES } from "../../types";
+import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, parseTags } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
@@ -12,6 +12,7 @@ import OutreachModal from '../../components/OutreachModal';
 import SyncEmailsButton from '../../components/SyncEmailsButton';
 import InvestorStageControl from '../../components/InvestorStageControl';
 import InvestorProfile from '../../components/InvestorProfile';
+import { PriorityChip, TagChips } from '../../components/InvestorPriority';
 import { outreachButtonState } from '../../lib/outreach';
 
 const INVESTOR_DEFS: Record<string, string> = {
@@ -43,6 +44,9 @@ function InvestorsInner() {
   const [stageFilter, setStageFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
+  const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [uploadTags, setUploadTags] = useState('');   // stamped on every row of the next upload (e.g. GCC)
   const [mining, setMining] = useState(false);
   const [filling, setFilling] = useState<string | null>(null);
   const [fillResult, setFillResult] = useState<any | null>(null);
@@ -131,7 +135,7 @@ function InvestorsInner() {
     setSuBusy(true);
     try {
       const label = suPreview.dataset_guess || suFilename.replace(/\.[a-z]+$/i, '');
-      const r = await dealApi.smartUploadConfirm(label, suPreview.companies, 'investors');
+      const r = await dealApi.smartUploadConfirm(label, suPreview.companies, 'investors', parseTags(uploadTags));
       alert(r.message || `Ingested ${r.found} investors, ${r.added} new.`);
       setSuPreview(null); setSuFilename('');
       await loadData();
@@ -177,7 +181,7 @@ function InvestorsInner() {
   const handleUpload = async (file: File) => {
     setUploading(true);
     try {
-      const res = await dealApi.uploadInvestorFile(file);
+      const res = await dealApi.uploadInvestorFile(file, parseTags(uploadTags));
       alert(res.message || `Parsed ${res.parsed} investors (${res.inserted_new} new).`);
       await loadData();
     } catch (e: any) { alert(`Upload failed: ${e.message}`); }
@@ -249,6 +253,8 @@ function InvestorsInner() {
 
   const regionOf = (i: Investor) => i.global_region || i.hq_country || i.region || '';
   const regions = Array.from(new Set(investors.map(regionOf).filter(Boolean))).sort();
+  const allTags = Array.from(new Set(investors.flatMap(i => parseTags(i.network_tags)))).sort();
+  const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
 
   const filtered = investors.filter(i => {
     const q = searchQuery.toLowerCase();
@@ -256,7 +262,9 @@ function InvestorsInner() {
     const matchesStage = stageFilter.length === 0 || stageFilter.includes(i.status || '');
     const matchesType = typeFilter.length === 0 || typeFilter.includes(i.investor_type || '');
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
-    return matchesSearch && matchesStage && matchesType && matchesRegion;
+    const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
+    const matchesTag = tagFilter.length === 0 || parseTags(i.network_tags).some(t => tagFilter.includes(t));
+    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesTier && matchesTag;
   });
 
   const stats = {
@@ -329,6 +337,11 @@ function InvestorsInner() {
           <MultiSelect label="All stages" options={[...INVESTOR_STAGES]} selected={stageFilter} onChange={setStageFilter} />
           <MultiSelect label="All types" options={types} selected={typeFilter} onChange={setTypeFilter} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
+          <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
+          <MultiSelect label="All tags" options={allTags} selected={tagFilter} onChange={setTagFilter} />
+          <button className={`quick-chip ${tagFilter.length === 1 && tagFilter[0] === 'GCC' ? 'on' : ''}`}
+                  title="KSA + GCC network: rows tagged GCC" onClick={() => setTagFilter(tagFilter.length === 1 && tagFilter[0] === 'GCC' ? [] : ['GCC'])}>GCC</button>
+          <span className="tier-summary">{tierCounts.map(([t, n]) => `${t} ${n}`).join(' · ')}</span>
         </section>
 
         {/* Table */}
@@ -338,6 +351,7 @@ function InvestorsInner() {
               <thead>
                 <tr>
                   <th><InfoTip label="Investor" tip={INVESTOR_DEFS.name} /></th>
+                  <th><InfoTip label="Priority" tip="Co-investment priority for the raise (deal by deal, GBP 250K-2M per LP): co-invest appetite, ticket fit, software affinity, home geography (UK/IE, GCC, Europe), recency, plus a warm-path boost from network tags and portfolio overlap. A = fits and contactable; B = fits, not yet contactable or partial; C = weak. Open the card for the breakdown." /></th>
                   <th><InfoTip label="Fit" tip={INVESTOR_DEFS.fit} /></th>
                   <th><InfoTip label="Type" tip={INVESTOR_DEFS.type} /></th>
                   <th><InfoTip label="AUM" tip={INVESTOR_DEFS.aum} /></th>
@@ -359,7 +373,7 @@ function InvestorsInner() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={18} className="empty-row">Loading…</td></tr>
+                  <tr><td colSpan={19} className="empty-row">Loading…</td></tr>
                 ) : filtered.length > 0 ? (
                   filtered.map((inv, idx) => (
                     <tr key={idx}>
@@ -367,6 +381,7 @@ function InvestorsInner() {
                         <button className="inv-name-btn" onClick={() => setProfileName(inv.name)}
                           title="Open the investor card">{inv.name}</button>
                       </td>
+                      <td><PriorityChip inv={inv} /><TagChips inv={inv} /></td>
                       <td>
                         {inv.lp_fit_score != null ? (
                           <span className={`fit-badge ${inv.lp_fit_score >= 0.7 ? 'high' : inv.lp_fit_score >= 0.4 ? 'mid' : 'low'}`}>
@@ -423,7 +438,7 @@ function InvestorsInner() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={18} className="empty-row">
+                  <tr><td colSpan={19} className="empty-row">
                     No investors yet. Click &quot;Mine from High-Fit Companies&quot; to extract investors from your qualified deal universe.
                   </td></tr>
                 )}
@@ -451,6 +466,15 @@ function InvestorsInner() {
                   <p className="sources-subtitle">{investors.length} investors ingested across {[mined, uploaded].filter(l => l.length > 0).length} active sources</p>
                 </div>
                 <button className="sources-close" onClick={() => setShowSources(false)}>&times;</button>
+              </div>
+
+              {/* Warm-path tags stamped on EVERY row of the next upload (Smart Upload
+                  or PitchBook). "GCC" for the KSA/GCC list, "Bea" for her network, etc.
+                  Tags feed the priority (warm-path boost) and the GCC quick filter. */}
+              <div className="upload-tags-row">
+                <label>Tag this upload</label>
+                <input value={uploadTags} onChange={e => setUploadTags(e.target.value)} placeholder="e.g. GCC, Bea" />
+                <span>Applied to every investor in the file, new or already known.</span>
               </div>
 
               <h3 className="source-type-label">Smart Upload (AI)</h3>
@@ -854,6 +878,12 @@ function InvestorsInner() {
         .outreach-btn.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
         .outreach-btn.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
         .park-reason { font-size: 0.68rem; color: #9a3412; margin-top: 0.2rem; white-space: nowrap; }
+        .quick-chip { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.76rem; font-weight: 800; cursor: pointer; }
+        .quick-chip.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+        .tier-summary { font-size: 0.74rem; color: #64748b; margin-left: auto; white-space: nowrap; }
+        .upload-tags-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.9rem; font-size: 0.8rem; color: #64748b; }
+        .upload-tags-row label { font-weight: 800; color: #0f172a; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+        .upload-tags-row input { border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.4rem 0.6rem; font-size: 0.82rem; min-width: 180px; }
         .export-btn { background: #fff; border: 1px solid #e2e8f0; color: #334155; border-radius: 8px; padding: 0.55rem 1rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); transition: all 0.15s; }
         .export-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12); }
         .export-btn:hover:not(:disabled) { border-color: #16a34a; color: #16a34a; }

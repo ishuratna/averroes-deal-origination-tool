@@ -174,6 +174,17 @@ mistake is both visible and correctable. This one logged nothing, which is why
   Responded (in the sync and its self-heal pass); autoresponders and bounces
   never do. Follow-ups use the SAME `/followups` endpoint with
   `entity=investor` and the same 14 / 7 day thresholds; never a second SQL.
+- PRIORITY (`ai/lp_priority.py`, pure, zero AI) is the ONE ranking of
+  investors for the raise: deal-by-deal co-investment at GBP 250K-2M per LP
+  (Ishu, 9 Sep 2026). Weighted fit (co-invest appetite, ticket, software
+  affinity, home geography UK/IE + GCC, recency, readiness) plus a capped
+  warm-path boost from `network_tags` and portfolio overlap; tier A needs a
+  contactable principal. Stored as `priority_score/tier/details`, recomputed
+  by `investor_handler.write_priorities` after InvestorFill, uploads and tag
+  edits (never edited by hand). `lp_fit_score` is the older fund-raise fit
+  and stays informational. Warm-path sources: PitchBook GCC export and network
+  lists uploaded WITH a tag; public registers (DIFC/ADGM/CMA) are bot-protected
+  and off limits (TBU #168).
 - LP email STRUCTURE v1 lives only in `draft_lp_outreach_email` (zero em
   dashes; fund facts the tool cannot verify carry `[confirm: ...]` markers
   until Ishu locks the positioning, editable via `INVESTOR_EMAIL_FUND_LINE`).

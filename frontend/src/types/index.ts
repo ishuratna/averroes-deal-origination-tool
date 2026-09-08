@@ -518,6 +518,11 @@ export interface Investor {
   park_reason?: string;
   park_reason_detail?: string;
   bounced_email?: string;
+  // Co-investment priority (ai/lp_priority.py): the one ranking for the raise
+  network_tags?: string;      // 'GCC, Bea'
+  priority_score?: number;    // 0-100
+  priority_tier?: string;     // A | B | C | Parked
+  priority_details?: string;  // JSON breakdown
   // PitchBook LP export fields (USD figures)
   pb_id?: string;
   aka?: string;
@@ -571,4 +576,10 @@ export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: nu
   if (revM < 2.5) return 'Too Early';
   if (revM <= 40) return 'Target Band';
   return 'Too Large';
+}
+
+export const PRIORITY_TIERS = ['A', 'B', 'C', 'Parked'];
+export const NETWORK_TAG_SUGGESTIONS = ['GCC', 'Bea', 'Partner', 'Co-investor', 'Network', 'Warm'];
+export function parseTags(s?: string): string[] {
+  return (s || '').split(/[,;|]/).map(t => t.trim()).filter(Boolean);
 }

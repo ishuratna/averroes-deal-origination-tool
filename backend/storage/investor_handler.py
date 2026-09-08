@@ -108,6 +108,11 @@ class InvestorBQHandler:
         ("last_reply_at", "TIMESTAMP"), ("reply_classification", "STRING"),
         ("park_reason", "STRING"), ("park_reason_detail", "STRING"),
         ("bounced_email", "STRING"),         # dead address preserved after a bounce
+        # ── Prioritisation for the co-investment raise (ai/lp_priority.py) ──
+        ("network_tags", "STRING"),          # comma list: GCC, Bea, Partner, Co-investor, ...
+        ("priority_score", "FLOAT64"),       # 0-100, recomputed on every write that changes an input
+        ("priority_tier", "STRING"),         # A | B | C | Parked
+        ("priority_details", "STRING"),      # JSON: each component's score, weight and why
         # Smart Upload: unmapped source columns preserved as JSON
         ("extra_data", "STRING"),
         ("ingested_at", "TIMESTAMP"),
@@ -509,6 +514,88 @@ class InvestorBQHandler:
         except Exception as e:
             logger.error(f"pull_back_undelivered failed for investor '{name}': {e}")
             return False
+
+    # ── Priority (ai/lp_priority.lp_priority is the ONE definition) ────────────
+
+    def write_priorities(self, rows: List[Dict]) -> int:
+        """Recompute and store priority for the given investor rows (full rows,
+        as returned by get_all/get_by_name). One MERGE per 400 rows."""
+        if not self.client or not rows:
+            return 0
+        from ai.lp_priority import lp_priority, priority_json
+        done = 0
+        for start in range(0, len(rows), 400):
+            chunk = rows[start:start + 400]
+            structs, params = [], []
+            for i, r in enumerate(chunk):
+                res = lp_priority(r)
+                structs.append(f"(@n{i}, @s{i}, @t{i}, @d{i})")
+                params += [
+                    bigquery.ScalarQueryParameter(f"n{i}", "STRING", r.get("name")),
+                    bigquery.ScalarQueryParameter(f"s{i}", "FLOAT64", res["score"]),
+                    bigquery.ScalarQueryParameter(f"t{i}", "STRING", res["tier"]),
+                    bigquery.ScalarQueryParameter(f"d{i}", "STRING", priority_json(res)),
+                ]
+            query = f"""
+                MERGE `{self.table_id}` T
+                USING (SELECT * FROM UNNEST([STRUCT<name STRING, s FLOAT64, t STRING, d STRING>
+                       {', '.join(structs)}])) S
+                ON T.name = S.name
+                WHEN MATCHED THEN UPDATE SET priority_score = S.s, priority_tier = S.t, priority_details = S.d"""
+            self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+            done += len(chunk)
+        return done
+
+    def recompute_priority(self, name: Optional[str] = None) -> int:
+        """One investor (after a write that changed an input) or the whole book."""
+        if name:
+            row = self.get_by_name(name)
+            return self.write_priorities([row]) if row else 0
+        return self.write_priorities(self.get_all())
+
+    def set_tags(self, name: str, tags: List[str], created_by: str = "Ishu Ratna") -> bool:
+        """Replace the network tags (warm paths) and recompute priority."""
+        if not self.client:
+            return False
+        from ai.lp_priority import parse_tags
+        clean = parse_tags(", ".join(tags))
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}` SET network_tags = @t, updated_at = CURRENT_TIMESTAMP()
+                                  WHERE LOWER(name) = LOWER(@n)""",
+                              job_config=bigquery.QueryJobConfig(query_parameters=[
+                                  bigquery.ScalarQueryParameter("t", "STRING", ", ".join(clean)),
+                                  bigquery.ScalarQueryParameter("n", "STRING", name)])).result()
+            self.add_note(name, f"Network tags set: {', '.join(clean) or '(none)'} [{created_by}]")
+            self.recompute_priority(name)
+            return True
+        except Exception as e:
+            logger.error(f"set_tags failed for investor '{name}': {e}")
+            return False
+
+    def add_tags_bulk(self, names: List[str], tags: List[str]) -> int:
+        """Union the given tags onto many investors (uploads tag their rows)."""
+        if not self.client or not names or not tags:
+            return 0
+        from ai.lp_priority import parse_tags
+        clean = parse_tags(", ".join(tags))
+        if not clean:
+            return 0
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}` SET
+                    network_tags = ARRAY_TO_STRING(ARRAY(
+                        SELECT DISTINCT x FROM UNNEST(ARRAY_CONCAT(
+                            SPLIT(IFNULL(network_tags, ''), ','), @tags)) x WHERE TRIM(x) != ''), ', '),
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE name IN UNNEST(@names)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ArrayQueryParameter("tags", "STRING", clean),
+                    bigquery.ArrayQueryParameter("names", "STRING", names)])).result()
+            rows = [r for r in self.get_all() if r.get("name") in set(names)]
+            self.write_priorities(rows)
+            return len(names)
+        except Exception as e:
+            logger.error(f"add_tags_bulk failed: {e}")
+            return 0
 
     def stamp_reply(self, name: str, reply_at: str, classification: str) -> bool:
         """The sync's stamp: their last genuine message and its class."""

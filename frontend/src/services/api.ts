@@ -405,6 +405,21 @@ export const dealApi = {
     return await response.json();
   },
 
+  async setInvestorTags(name: string, tags: string[]): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/tags`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Tag update failed');
+    return data;
+  },
+
+  async recomputeInvestorPriority(name?: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/recompute-priority${name ? `?name=${encodeURIComponent(name)}` : ''}`, { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Recompute failed');
+    return data;
+  },
+
   async getInvestorEmails(name: string, limit = 30): Promise<{ emails: any[]; count: number }> {
     const response = await apiFetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/emails?limit=${limit}`);
     if (!response.ok) return { emails: [], count: 0 };
@@ -444,10 +459,10 @@ export const dealApi = {
     return await response.json();
   },
 
-  async uploadInvestorFile(file: File): Promise<any> {
+  async uploadInvestorFile(file: File, tags: string[] = []): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await apiFetch(`${API_BASE_URL}/investors/upload`, { method: 'POST', body: formData });
+    const response = await apiFetch(`${API_BASE_URL}/investors/upload?tags=${encodeURIComponent(tags.join(','))}`, { method: 'POST', body: formData });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || 'Investor upload failed');
@@ -513,10 +528,10 @@ export const dealApi = {
     return data;
   },
 
-  async smartUploadConfirm(label: string, companies: any[], kind: string = 'companies'): Promise<any> {
+  async smartUploadConfirm(label: string, companies: any[], kind: string = 'companies', tags: string[] = []): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/upload/smart/confirm`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, companies, kind }),
+      body: JSON.stringify({ label, companies, kind, tags }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Ingest failed');

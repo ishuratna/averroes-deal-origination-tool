@@ -1421,6 +1421,7 @@ class SmartUploadConfirmRequest(BaseModel):
     label: str
     companies: List[Dict]
     kind: Optional[str] = "companies"  # or "investors" (LPs)
+    tags: Optional[List[str]] = None   # investors only: network tags to stamp (e.g. ["GCC", "Bea"])
 
 
 @app.post("/upload/smart/preview")
@@ -1439,9 +1440,11 @@ async def smart_upload_preview(file: UploadFile = File(...),
     return _stream_json(lambda: smart_parse(data, fname, kind=k))
 
 
-def _smart_confirm_investors(label: str, investors: list) -> dict:
+def _smart_confirm_investors(label: str, investors: list, tags: Optional[list] = None) -> dict:
     """LP flavour: previewed rows -> investors table (name-dedup insert),
-    extra_data filled only where empty."""
+    extra_data filled only where empty. Network tags (a warm path such as
+    GCC or Bea) are stamped on every row of the upload, new or existing, and
+    priorities recomputed."""
     from google.cloud import bigquery as bq_lib
     rows, extras = [], []
     for c in investors:
@@ -1458,6 +1461,14 @@ def _smart_confirm_investors(label: str, investors: list) -> dict:
     if not rows:
         return {"status": "Success", "found": 0, "added": 0, "label": label}
     added = investor_handler.save_investors(rows)
+    try:
+        names = [r["name"] for r in rows]
+        if tags:
+            investor_handler.add_tags_bulk(names, tags)
+        else:
+            investor_handler.write_priorities([r for r in investor_handler.get_all() if r.get("name") in set(names)])
+    except Exception as e:
+        logger.warning(f"[SmartUpload] investor tagging/priority failed: {e}")
     if extras:
         try:
             bq_handler.client.query(
@@ -1486,7 +1497,7 @@ async def smart_upload_confirm(req: SmartUploadConfirmRequest):
     from google.cloud import bigquery as bq_lib
     label = (req.label or "Smart Upload").strip()[:80]
     if (req.kind or "companies") == "investors":
-        return _smart_confirm_investors(label, req.companies or [])
+        return _smart_confirm_investors(label, req.companies or [], tags=req.tags or [])
     rows, extras = [], []
     for c in req.companies or []:
         name = str(c.get("name") or "").strip()
@@ -6698,7 +6709,8 @@ async def scrape_investors(source_name: str = Query(..., description="Investor s
 
 
 @app.post("/investors/upload")
-async def upload_investor_file(file: UploadFile = File(...)):
+async def upload_investor_file(file: UploadFile = File(...),
+                               tags: str = Query("", description="comma-separated network tags to stamp on every row, e.g. GCC")):
     """
     Upload a PitchBook LP export (Excel/CSV) → parse (152-column 'All Columns'
     format supported) → insert new + merge-fill existing investors. No AI.
@@ -6727,6 +6739,15 @@ async def upload_investor_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail="No investors found — expected a PitchBook LP export with a 'Limited Partners' column.")
 
     result = investor_handler.upsert_investors(investors)
+    try:
+        names = [i.get("name") for i in investors if i.get("name")]
+        from ai.lp_priority import parse_tags
+        if parse_tags(tags):
+            investor_handler.add_tags_bulk(names, parse_tags(tags))
+        else:
+            investor_handler.write_priorities([r for r in investor_handler.get_all() if r.get("name") in set(names)])
+    except Exception as e:
+        logger.warning(f"[InvestorUpload] tagging/priority failed: {e}")
     return {
         "status": "Success",
         "parsed": len(investors),
@@ -6831,6 +6852,10 @@ async def investorfill(investor_name: str):
 
     if not investor_handler.update_enrichment(investor_name, result):
         raise HTTPException(status_code=500, detail="Database update failed")
+    try:
+        investor_handler.recompute_priority(investor_name)   # inputs changed -> tier may change
+    except Exception as e:
+        logger.warning(f"priority recompute skipped for {investor_name}: {e}")
 
     # Count this run against the shared grounding budget (best-effort)
     try:
@@ -7004,6 +7029,40 @@ async def update_investor_status(investor_name: str, req: InvestorStatusRequest)
                                           reason=req.reason or "", reason_detail=req.reason_detail or ""):
         raise HTTPException(status_code=500, detail="Status update failed")
     return {"status": "Success", "investor": investor_name, "new_status": req.status}
+
+
+class InvestorTagsRequest(BaseModel):
+    tags: List[str]
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+@app.put("/investors/{investor_name}/tags")
+async def set_investor_tags(investor_name: str, req: InvestorTagsRequest):
+    """Replace an investor's network tags (warm paths: GCC, Bea, Partner,
+    Co-investor, ...). Priority is recomputed in the same call."""
+    if not investor_handler.get_by_name(investor_name):
+        raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
+    if not investor_handler.set_tags(investor_name, req.tags, created_by=req.created_by or "Ishu Ratna"):
+        raise HTTPException(status_code=500, detail="Tag update failed")
+    return {"status": "Success", "investor": investor_name, "tags": req.tags}
+
+
+def _recompute_investor_priority(name: Optional[str]) -> dict:
+    n = investor_handler.recompute_priority(name)
+    return {"status": "Success", "recomputed": n, "scope": name or "all"}
+
+
+@app.post("/investors/recompute-priority")
+async def recompute_investor_priority(name: Optional[str] = Query(None)):
+    """Session route: recompute the co-investment priority for one investor or all."""
+    return _recompute_investor_priority(name)
+
+
+@app.post("/admin/investors/recompute-priority")
+async def recompute_investor_priority_admin(request: Request, name: Optional[str] = Query(None)):
+    """Token alias of the same handler, for the terminal / scheduler."""
+    _require_token(request)
+    return _recompute_investor_priority(name)
 
 
 @app.get("/investors/{investor_name}/emails")

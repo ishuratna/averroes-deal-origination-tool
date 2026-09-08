@@ -21,6 +21,8 @@ import OutreachModal from '../../../components/OutreachModal';
 import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
+import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
+import { PRIORITY_TIERS, parseTags } from '../../../types';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
@@ -45,6 +47,8 @@ function InvestorPipelineInner() {
   const [showParked, setShowParked] = useState(false);
   const [profileName, setProfileName] = useState<string | null>(null);
   const profileInv = profileName ? investors.find(x => x.name === profileName) || null : null;
+  const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [gccOnly, setGccOnly] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,7 +71,9 @@ function InvestorPipelineInner() {
     const matchesSearch = !q || i.name.toLowerCase().includes(q) || (i.investor_type || '').toLowerCase().includes(q)
       || (i.contact_name || '').toLowerCase().includes(q);
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
-    return matchesSearch && matchesRegion;
+    const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
+    const matchesGcc = !gccOnly || parseTags(i.network_tags).some(t => t.toLowerCase() === 'gcc');
+    return matchesSearch && matchesRegion && matchesTier && matchesGcc;
   });
 
   const identifiedCount = visible.filter(i => (i.status || 'Identified') === 'Identified').length;
@@ -84,6 +90,8 @@ function InvestorPipelineInner() {
         <button className="ikb-name" title={inv.source_companies ? `Portfolio overlap: ${inv.source_companies}` : 'Open the investor card'}
                 onClick={() => setProfileName(inv.name)}>{inv.name}</button>
         <div className="ikb-meta">
+          <PriorityChip inv={inv} compact />
+          <TagChips inv={inv} />
           {inv.investor_type && inv.investor_type !== 'Unknown' && <span className="ikb-chip">{inv.investor_type}</span>}
           {inv.lp_fit_score != null && (
             <span className={`ikb-chip ${inv.lp_fit_score >= 0.7 ? 'fit-high' : inv.lp_fit_score >= 0.4 ? 'fit-mid' : ''}`}>
@@ -135,6 +143,8 @@ function InvestorPipelineInner() {
         <div className="ikb-toolbar">
           <input className="ikb-search" placeholder="Search investors, contacts..." value={search} onChange={e => setSearch(e.target.value)} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
+          <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
+          <button className={`ikb-parked-toggle ${gccOnly ? 'on' : ''}`} title="KSA + GCC network only" onClick={() => setGccOnly(v => !v)}>GCC</button>
           <button className="ikb-parked-toggle" onClick={() => setShowParked(v => !v)}>
             {showParked ? 'Hide' : 'Show'} parked ({parked.length})
           </button>
@@ -185,7 +195,8 @@ function InvestorPipelineInner() {
             {BOARD_STAGES.map(stage => {
               const cards = visible.filter(i => i.status === stage)
                 .sort((a, b) => {
-                  if (stage === 'Researched') return (b.lp_fit_score ?? -1) - (a.lp_fit_score ?? -1);
+                  // Researched = the outreach queue: highest co-investment priority first
+                  if (stage === 'Researched') return (b.priority_score ?? -1) - (a.priority_score ?? -1) || (b.lp_fit_score ?? -1) - (a.lp_fit_score ?? -1);
                   // Responded: the ones awaiting our answer first
                   if (stage === 'Responded') {
                     const oa = owesReply(a) ? 0 : 1, ob = owesReply(b) ? 0 : 1;

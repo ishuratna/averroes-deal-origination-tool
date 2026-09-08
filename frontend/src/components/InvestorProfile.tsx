@@ -12,6 +12,7 @@ import { Investor } from '@/types';
 import OutreachModal from './OutreachModal';
 import InvestorStageControl from './InvestorStageControl';
 import { outreachButtonState } from '@/lib/outreach';
+import { PriorityChip, PriorityBreakdown, TagEditor } from './InvestorPriority';
 
 interface Email { direction: string; counterparty_email: string; subject: string; snippet: string;
                   classification?: string; summary?: string; sent_at: string; }
@@ -91,6 +92,7 @@ export default function InvestorProfile({ investor, onClose, onChanged }: {
           <h2>{inv.name}</h2>
           <div className="ip-sub">
             {[inv.investor_type, inv.hq_city, inv.hq_country || inv.global_region].filter(Boolean).join(' · ')}
+            <PriorityChip inv={inv} />
             {inv.lp_fit_score != null && <span className="ip-fit">LP fit {Math.round(inv.lp_fit_score * 100)}</span>}
             {inv.park_reason && <span className="ip-park" title={inv.park_reason_detail || ''}>Parked: {inv.park_reason}</span>}
           </div>
@@ -99,6 +101,19 @@ export default function InvestorProfile({ investor, onClose, onChanged }: {
 
         <div className="cp-two-col">
           <div>
+            <div className="cp-section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem' }}>
+              Priority for the raise
+              <button className="cp-chip-btn" style={{ fontSize: '0.68rem' }}
+                      onClick={async () => { try { await dealApi.recomputeInvestorPriority(inv.name); await onChanged(); } catch (e: any) { alert(e?.message || 'Recompute failed'); } }}>
+                Recompute
+              </button>
+            </div>
+            <div className="cp-card">
+              <PriorityBreakdown inv={inv} />
+              <div className="cp-section-title" style={{ marginTop: '0.8rem' }}>Warm-path tags</div>
+              <TagEditor inv={inv} onChanged={onChanged} />
+            </div>
+
             <div className="cp-section-title">Profile</div>
             <div className="cp-card">
               {fact('Contact', [inv.contact_name, inv.contact_title].filter(Boolean).join(', '))}
