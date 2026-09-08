@@ -1027,3 +1027,20 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-fin td.num.neg { color: #dc2626; }
 .cp-fin td.num.fc { color: #94a3b8; font-style: italic; }
 .cp-fin-foot { margin-top: 0.5rem; font-size: 0.72rem; color: #94a3b8; }
+
+/* ── Investor Pipeline: the investor loop's board signals ─────────────────── */
+.ikb-header-actions { display: flex; gap: 0.6rem; align-items: center; }
+.ikb-parked-toggle { border: 1px solid #e2e8f0; background: #fff; color: #64748b; border-radius: 8px; padding: 0.45rem 0.8rem; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+.ikb-card.owes { border-color: #fecaca; box-shadow: 0 0 0 2px #fee2e2; }
+.ikb-card.stale { border-color: #fde68a; }
+.ikb-chip.owe { background: #fee2e2; color: #b91c1c; }
+.ikb-chip.stale { background: #fef3c7; color: #92400e; }
+.ikb-row.park { color: #9a3412; }
+.ikb-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; align-items: center; }
+.ikb-actions .ikb-move { margin-top: 0; flex: 1; min-width: 0; }
+.ikb-outreach { border: 1px solid #2563eb; background: #fff; color: #2563eb; border-radius: 7px; padding: 0.32rem 0.6rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.ikb-outreach.drafted { background: #eff6ff; }
+.ikb-outreach.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
+.ikb-outreach.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
+.ikb-col.parked { background: #f8fafc; border: 1px dashed #e2e8f0; }
+.ikb-empty { font-size: 0.75rem; color: #94a3b8; padding: 0.4rem; }

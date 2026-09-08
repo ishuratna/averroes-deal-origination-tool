@@ -1838,7 +1838,7 @@ class BigQueryHandler:
             logger.error(f"get_message_id_entity_map failed: {e}")
             return {}
 
-    def get_thread_ids(self, company_name: str) -> Dict:
+    def get_thread_ids(self, company_name: str, entity_type: str = "company") -> Dict:
         """The Message-IDs of the email thread with a company, for reply headers.
 
         Returns {"in_reply_to": newest id, "references": chronological ids}.
@@ -1855,10 +1855,11 @@ class BigQueryHandler:
         try:
             rows = self._run_query(f"""
                 SELECT message_id FROM `{log}`
-                WHERE entity_type = 'company' AND entity_name = @name
+                WHERE entity_type = @etype AND entity_name = @name
                   AND message_id LIKE '<%'
                 ORDER BY sent_at ASC
-            """, params=[bigquery.ScalarQueryParameter("name", "STRING", company_name)])
+            """, params=[bigquery.ScalarQueryParameter("name", "STRING", company_name),
+                         bigquery.ScalarQueryParameter("etype", "STRING", entity_type)])
         except Exception as e:
             logger.warning(f"get_thread_ids failed for {company_name}: {e}")
             return {"in_reply_to": "", "references": ""}

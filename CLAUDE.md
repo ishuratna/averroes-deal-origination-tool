@@ -138,6 +138,40 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - Parked companies (`not_fit_no_respond`, `declined_close`) never nag:
   intentional silence is not an oversight.
 
+## 2c. THE INVESTOR LOOP (LPs mirror founders; one machinery, two tables)
+
+- Stages (`investor_handler.INVESTOR_STAGES`): Identified → Researched
+  (InvestorFill done) → Contacted (we emailed) → Responded (they GENUINELY
+  replied) → Meeting → Committed; Passed and Talk Later are PARKED and require
+  a `PARK_REASONS` bucket (the same list companies use). Meeting/Committed and
+  the parked stages are never changed automatically.
+- `investors` carries the SAME outreach column names as `targets`
+  (`outreach_draft_*`, `outreach_drafted_at`, `outreach_sent_at`,
+  `contacted_at`, `last_reply_at`, `stage_entered_at`, `park_reason*`) so the
+  shared frontend logic (`lib/outreach.ts`, `OutreachModal` with
+  `entity="investor"`, `InvestorStageControl`) applies unchanged. Never write
+  an investor-specific copy of the button state or the modal.
+- ONE writer for investor status: `investor_handler.update_status` (stamps
+  `stage_entered_at`, first-entry columns, park reason, and the notes audit
+  trail). Sends go through `record_send` (forward-only: Identified/Researched →
+  Contacted, later stages untouched). Drafts are persisted once; the fallback
+  template is never persisted.
+- SENDER PROFILES (`outreach_service.sender_profile`): founder = Bea's outreach
+  mailbox; investor = a SEPARATE mailbox from `INVESTOR_OUTREACH_EMAIL` /
+  `INVESTOR_OUTREACH_NAME` / `INVESTOR_SMTP_PASSWORD` (+ `INVESTOR_SIGNATURE_*`),
+  with its own signature. An unconfigured profile FAILS CLOSED: an LP email
+  must never quietly go out from the founder mailbox. `sync_mailbox` reads
+  every configured mailbox; direction is detected per mailbox.
+- The reply rule is the same one: a received `email_log` row for the investor
+  whose classification is not in `NON_REPLY_CLASSES` moves Contacted →
+  Responded (in the sync and its self-heal pass); autoresponders and bounces
+  never do. Follow-ups use the SAME `/followups` endpoint with
+  `entity=investor` and the same 14 / 7 day thresholds; never a second SQL.
+- LP email STRUCTURE v1 lives only in `draft_lp_outreach_email` (zero em
+  dashes; fund facts the tool cannot verify carry `[confirm: ...]` markers
+  until Ishu locks the positioning, editable via `INVESTOR_EMAIL_FUND_LINE`).
+  `tests_investor_loop.py` enforces all of the above without BigQuery.
+
 ## 3. Event truth
 
 - Timestamps record when the EVENT happened, not when we processed it

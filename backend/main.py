@@ -1534,7 +1534,8 @@ async def smart_upload_confirm(req: SmartUploadConfirmRequest):
 
 @app.get("/followups")
 async def get_followups(days: int = Query(14, description="'Waiting on them' threshold (our last email unanswered)"),
-                        reply_days: int = Query(7, description="'We owe a reply' threshold (their email unanswered by us)")):
+                        reply_days: int = Query(7, description="'We owe a reply' threshold (their email unanswered by us)"),
+                        entity: str = Query("company", description="company | investor - same rule, same thresholds, the other table")):
     """
     The follow-up queue, both directions, from email_log (single source of truth).
 
@@ -1555,6 +1556,25 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
     we-owe items lead.
     """
     from google.cloud import bigquery as bq_lib
+    # ONE rule, two tables (per Ishu, 8 Sep 2026: the investor loop mirrors the
+    # founder loop with the same 14 / 7 day thresholds). Only the entity-specific
+    # fragments differ; the thresholds, the owed logic and the ordering are shared.
+    if entity == "investor":
+        entity_type = "investor"
+        table = investor_handler.table_id
+        fit_col = "t.lp_fit_score AS averroes_fit_score"
+        extra_cols = ("CAST(NULL AS STRING) AS action_bucket, CAST(NULL AS STRING) AS track, "
+                      "CAST(NULL AS STRING) AS ooo_until, CAST(NULL AS STRING) AS ooo_note")
+        ooo_expr = "CAST(NULL AS STRING)"          # investors carry no OOO stamps yet
+        stage_filter = "t.status IN ('Contacted', 'Responded', 'Meeting')"
+    else:
+        entity_type = "company"
+        table = bq_handler.table_id
+        fit_col = "t.averroes_fit_score"
+        extra_cols = "t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note"
+        ooo_expr = "NULLIF(t.ooo_until, '')"
+        stage_filter = ("t.status IN ('Contacted', 'Responded', 'Meeting', 'DD', 'Offer') "
+                        "AND IFNULL(t.source, '') != 'Internal Test'")
     try:
         email_table = bq_handler._ensure_email_log_table()
         rows = bq_handler.client.query(f"""
@@ -1562,7 +1582,7 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 SELECT entity_name, direction, subject, snippet, counterparty_email, sent_at,
                        IFNULL(classification, '') = 'out_of_office' AS is_ooo
                 FROM `{email_table}`
-                WHERE entity_type = 'company'
+                WHERE entity_type = '{entity_type}'
             ),
             -- Our last outbound. The follow-up clock runs from HERE, never from
             -- an autoresponder that happened to arrive afterwards.
@@ -1583,8 +1603,8 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 ) WHERE rn = 1
             ),
             calc AS (
-                SELECT t.name, t.status, t.contact_name, t.averroes_fit_score,
-                       t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note,
+                SELECT t.name, t.status, t.contact_name, {fit_col},
+                       {extra_cols},
                        s.sent_at AS last_sent_at, s.subject AS sent_subject,
                        s.snippet AS sent_snippet, s.counterparty_email AS sent_to,
                        r.sent_at AS last_recv_at, r.subject AS recv_subject,
@@ -1598,18 +1618,17 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                        -- base rule. (A plain GREATEST() would, and did — it
                        -- effectively triggers from length > 13.) Anything
                        -- shorter, absent or already past keeps the 14 days.
-                       IF(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')) IS NOT NULL
-                          AND DATE_DIFF(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')),
+                       IF(SAFE.PARSE_DATE('%Y-%m-%d', {ooo_expr}) IS NOT NULL
+                          AND DATE_DIFF(SAFE.PARSE_DATE('%Y-%m-%d', {ooo_expr}),
                                         DATE(s.sent_at), DAY) > @days,
-                          TIMESTAMP(DATE_ADD(SAFE.PARSE_DATE('%Y-%m-%d', NULLIF(t.ooo_until, '')),
+                          TIMESTAMP(DATE_ADD(SAFE.PARSE_DATE('%Y-%m-%d', {ooo_expr}),
                                              INTERVAL 1 DAY)),
                           TIMESTAMP_ADD(s.sent_at, INTERVAL @days DAY)
                        ) AS due_at
-                FROM `{bq_handler.table_id}` t
+                FROM `{table}` t
                 JOIN last_sent s ON s.entity_name = t.name
                 LEFT JOIN last_recv r ON r.entity_name = t.name
-                WHERE t.status IN ('Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
-                  AND IFNULL(t.source, '') != 'Internal Test'
+                WHERE {stage_filter}
             )
             SELECT name, status, contact_name, averroes_fit_score, action_bucket,
                    ooo_until, ooo_note,
@@ -1654,12 +1673,12 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
         items = [dict(r) for r in rows]
         owe = sum(1 for i in items if i["type"] == "we_owe_reply")
         deferred = sum(1 for i in items if (i.get("threshold_days") or 0) > days)
-        return {"days_threshold": days, "reply_days_threshold": reply_days,
+        return {"entity": entity_type, "days_threshold": days, "reply_days_threshold": reply_days,
                 "count": len(items), "we_owe_count": owe,
                 "ooo_deferred_count": deferred, "followups": items}
     except Exception as e:
-        logger.warning(f"Follow-up query failed: {e}")
-        return {"days_threshold": days, "count": 0, "followups": [], "error": str(e)}
+        logger.warning(f"Follow-up query failed ({entity_type}): {e}")
+        return {"entity": entity_type, "days_threshold": days, "count": 0, "followups": [], "error": str(e)}
 
 
 # ── Deep diagnostic: everything we read for ONE company, step by step ───────
@@ -6070,6 +6089,10 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
             # setdefault: if an address belongs to BOTH a company and an LP,
             # the company wins — stage moves matter more than an LP note
             known.setdefault(em, {"type": "investor", "name": inv.get("name"), "status": inv.get("status")})
+        # The address we actually wrote to (may differ from contact_email after an edit at send time)
+        em2 = (inv.get("outreach_draft_to") or "").strip().lower()
+        if em2 and em2 != em:
+            known.setdefault(em2, {"type": "investor", "name": inv.get("name"), "status": inv.get("status")})
             d = _dom(em)
             if d:
                 known_domains.setdefault(d, known[em])
@@ -6348,7 +6371,16 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
                     except Exception as be:
                         bucket_errors.append(f"{ename}: {be}")
             else:
+                # THE INVESTOR LOOP mirrors the founder loop: stamp their last
+                # message and its class; a GENUINE reply (never an autoresponder
+                # or a bounce, NON_REPLY_CLASSES) moves Contacted -> Responded.
+                # Meeting/Committed and the parked stages are never touched.
+                investor_handler.stamp_reply(ename, r["sent_at"], cls)
                 investor_handler.add_note(ename, note)
+                sender = _sender_of(r["counterparty_email"])
+                if cls not in bq_handler.NON_REPLY_CLASSES and sender.get("status") == "Contacted":
+                    investor_handler.update_status(ename, "Responded", created_by="email-sync")
+                    advanced.append(f"{ename} (investor)")
         except Exception as e:
             logger.warning(f"Reply processing failed for {ename}: {e}")
 
@@ -6361,7 +6393,26 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     past_contact = {"Responded", "Meeting", "DD", "Offer", "Won"}
     for r in sorted((e for e in entries if e["direction"] == "received"), key=lambda x: x.get("sent_at") or ""):
         ename = r["entity_name"]
-        if r["entity_type"] != "company" or ename in handled:
+        if ename in handled:
+            continue
+        if r["entity_type"] == "investor":
+            # Same self-heal for investors: a genuine reply logged in an earlier
+            # run whose investor still sits in Contacted.
+            try:
+                from services.ooo_detect import is_auto_reply as _is_auto_inv
+                if _is_auto_inv(r.get("subject", ""), r.get("snippet", ""), r.get("headers", "")):
+                    continue
+                if r.get("classification") in bq_handler.NON_REPLY_CLASSES:
+                    continue
+                inv_status = _sender_of(r["counterparty_email"]).get("status")
+                if inv_status == "Contacted":
+                    investor_handler.update_status(ename, "Responded", created_by="email-sync")
+                    advanced.append(f"{ename} (investor, self-heal)")
+                    handled.add(ename)
+            except Exception as ex:
+                logger.warning(f"Investor self-heal failed for {ename}: {ex}")
+            continue
+        if r["entity_type"] != "company":
             continue
         # An autoresponder is not a reply, so it must not trigger the advance
         # here either. Re-checked (not read off `_ooo`) because this pass also
@@ -6522,6 +6573,9 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
 
 class InvestorStatusRequest(BaseModel):
     status: str
+    reason: Optional[str] = None          # required for Passed / Talk Later (PARK_REASONS bucket)
+    reason_detail: Optional[str] = None
+    created_by: Optional[str] = "Ishu Ratna"
 
 class InvestorNoteRequest(BaseModel):
     note: str
@@ -6721,39 +6775,109 @@ class InvestorOutreachSendRequest(BaseModel):
 
 @app.post("/investors/outreach/draft/{investor_name}")
 async def draft_investor_outreach(investor_name: str):
-    """Draft a personalised LP introduction email from stored data. No search calls."""
-    investor = None
-    for inv in investor_handler.get_all():
-        if inv.get("name", "").lower() == investor_name.lower():
-            investor = inv
-            break
+    """Draft the LP introduction (structure v1, outreach_service) from stored
+    data, no search calls, and SAVE it so the button reads 'Review & Send' and
+    the modal reopens it without another AI run. A fallback template is
+    returned but not saved (same rule as the founder draft)."""
+    investor = investor_handler.get_by_name(investor_name)
     if not investor:
         raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
     from services.outreach_service import draft_lp_outreach_email
-    return draft_lp_outreach_email(investor)
+    result = draft_lp_outreach_email(investor)
+    if not result.get("is_fallback"):
+        investor_handler.save_outreach_draft(investor_name, result.get("to", ""),
+                                             result.get("subject", ""), result.get("body", ""))
+        investor_handler.add_note(investor_name,
+                                  f"Outreach draft generated, to: {result.get('to') or '(no address)'}, "
+                                  f"subject: {result.get('subject')}")
+    return result
+
+
+@app.get("/investors/outreach/followup-draft/{investor_name}")
+async def investor_followup_draft(investor_name: str):
+    """The 14-day LP follow-up template, Re: the original subject, same thread.
+    Not persisted (persisting would overwrite the first draft)."""
+    investor = investor_handler.get_by_name(investor_name)
+    if not investor:
+        raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
+    from services.outreach_service import draft_lp_followup_email
+    return draft_lp_followup_email(investor)
+
+
+@app.get("/investors/outreach/compose-draft/{investor_name}")
+async def investor_compose_draft(investor_name: str):
+    """Blank reply for a live conversation: To and Re: subject from their last
+    genuine message in email_log, body empty. Same shape as the company one."""
+    investor = investor_handler.get_by_name(investor_name)
+    if not investor:
+        raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
+    from services.outreach_service import sender_label
+    from google.cloud import bigquery
+    to, subject = investor.get("outreach_draft_to") or investor.get("contact_email") or "", ""
+    try:
+        rows = bq_handler._run_query(f"""
+            SELECT counterparty_email, subject FROM `{bq_handler._ensure_email_log_table()}`
+            WHERE entity_type = 'investor' AND entity_name = @n AND direction = 'received'
+              AND IFNULL(classification, '') NOT IN UNNEST(@non_reply)
+            ORDER BY sent_at DESC LIMIT 1""",
+            params=[bigquery.ScalarQueryParameter("n", "STRING", investor_name),
+                    bigquery.ArrayQueryParameter("non_reply", "STRING", list(bq_handler.NON_REPLY_CLASSES))])
+        if rows:
+            to = rows[0].get("counterparty_email") or to
+            subj = rows[0].get("subject") or ""
+            subject = subj if subj.lower().startswith("re:") else (f"Re: {subj}" if subj else "")
+    except Exception as e:
+        logger.warning(f"investor compose-draft lookup failed for {investor_name}: {e}")
+    if not subject:
+        base = investor.get("outreach_draft_subject") or f"Averroes Capital, {investor_name}"
+        subject = base if base.lower().startswith("re:") else f"Re: {base}"
+    return {"to": to, "subject": subject, "body": "", "investor": investor_name, "from": sender_label("investor")}
 
 
 @app.post("/investors/outreach/send")
 async def send_investor_outreach(req: InvestorOutreachSendRequest):
-    """Send an LP outreach email via Gmail SMTP; bumps stage to Contacted on success."""
+    """Send an LP email from the INVESTOR mailbox (sender profile 'investor',
+    fails closed if not configured). Threads Re: subjects under the existing
+    conversation, stamps outreach_sent_at / contacted_at, and moves the stage
+    FORWARD only (Identified/Researched -> Contacted; Responded and later are
+    never changed by a send). Every send is written to the notes audit trail."""
     logger.info(f"Sending LP outreach to: {req.to} (investor: {req.investor_name})")
-    result = send_email(req.to, req.subject, req.body)
+    in_reply_to = references = ""
+    if req.investor_name and req.subject.lower().startswith("re:"):
+        try:
+            t = bq_handler.get_thread_ids(req.investor_name, entity_type="investor")
+            in_reply_to, references = t.get("in_reply_to", ""), t.get("references", "")
+        except Exception as e:
+            logger.warning(f"thread lookup failed for investor {req.investor_name}: {e}")
+    result = send_email(req.to, req.subject, req.body, in_reply_to=in_reply_to,
+                        references=references, sender="investor")
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result["detail"])
     if req.investor_name:
-        try:
-            investor_handler.update_status(req.investor_name, "Contacted")
-        except Exception as e:
-            logger.warning(f"Failed to bump investor status after outreach: {e}")
+        before = (investor_handler.get_by_name(req.investor_name) or {}).get("status") or ""
+        investor_handler.record_send(req.investor_name, req.to)
+        after = (investor_handler.get_by_name(req.investor_name) or {}).get("status") or ""
+        note = f"Outreach email sent to {req.to}, subject: {req.subject}"
+        if before != after:
+            note += f" | Stage {before or 'Unknown'} -> {after}"
+        investor_handler.add_note(req.investor_name, note)
+        result["new_status"] = after
     return result
 
 
 @app.put("/investors/{investor_name}/status")
 async def update_investor_status(investor_name: str, req: InvestorStatusRequest):
-    """Move an investor through the relationship pipeline."""
+    """Move an investor through the relationship pipeline. Passed and Talk
+    Later REQUIRE a reason bucket (same PARK_REASONS as companies)."""
     if req.status not in INVESTOR_STAGES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {INVESTOR_STAGES}")
-    if not investor_handler.update_status(investor_name, req.status):
+    from storage.investor_handler import INVESTOR_PARKED
+    if req.status in INVESTOR_PARKED:
+        if not req.reason or req.reason not in bq_handler.PARK_REASONS:
+            raise HTTPException(status_code=422,
+                                detail=f"A reason is required for {req.status}. One of: {list(bq_handler.PARK_REASONS)}")
+    if not investor_handler.update_status(investor_name, req.status, created_by=req.created_by or "Ishu Ratna",
+                                          reason=req.reason or "", reason_detail=req.reason_detail or ""):
         raise HTTPException(status_code=500, detail="Status update failed")
     return {"status": "Success", "investor": investor_name, "new_status": req.status}
 

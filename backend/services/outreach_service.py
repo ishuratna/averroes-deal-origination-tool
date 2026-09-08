@@ -388,73 +388,105 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
         return _fallback_template(company_data)
 
 
+# ── Investor (LP) outreach: structure v1 ─────────────────────────────────────
+# Per Ishu (8 Sep 2026): mirror the founder loop for LPs, tailored content.
+# Drafted from what the tool holds; fund facts the tool cannot verify are
+# marked [confirm: ...] so they are edited in the review modal, never sent
+# blind. When the positioning is locked, replace the markers here (and ONLY
+# here: this is the one place LP email structure lives).
+#
+# Structure (5-7 sentences, understated, ZERO em dashes anywhere):
+#   1. Greeting by first name.
+#   2. Who writes: sender name + role at Averroes Capital, a London-based
+#      growth equity investor backing founder-led UK B2B software companies
+#      (GBP 2.5-10M revenue), with proprietary AI-driven origination.
+#   3. Why them, SPECIFIC: their PE strategy preferences, geographic mandate,
+#      first-time-fund stance, or portfolio overlap with our pipeline.
+#   4. What we are raising: fund / co-investment programme [confirm].
+#   5. Portfolio proof, plain (Glowday, Journey).
+#   6. Soft ask: a short introductory call or our strategy note.
+#   7. "Best," then the signature (added on send).
+INVESTOR_EMAIL_FUND_LINE = os.getenv(
+    "INVESTOR_EMAIL_FUND_LINE",
+    "We are raising [confirm: fund name and target size] and also offer co-investment "
+    "alongside the fund on a deal by deal basis [confirm].")
+
+
 def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
-    """
-    Draft a personalised LP introduction email using stored investor data
-    (PitchBook fields + InvestorFill research). No Google Search - saves credits.
-    """
+    """Draft a personalised LP introduction email from stored investor data
+    (PitchBook fields + InvestorFill research). No Google Search. Signed by
+    the INVESTOR sender profile; falls back to a fixed template without AI."""
     api_key = os.getenv("GEMINI_API_KEY")
+    prof = sender_profile("investor")
+    signer = prof["sig_name"] or prof["name"] or "[confirm: sender name]"
+    signer_title = prof["sig_title"] or "[confirm: title]"
 
     name = investor.get("name", "")
     contact_name = investor.get("contact_name", "")
     contact_email = investor.get("contact_email", "")
+    first = contact_name.split()[0] if contact_name.strip() else ""
 
     context_parts = []
     for label, key in [
         ("Type", "investor_type"), ("Description", "description"),
-        ("HQ", "hq_country"), ("AUM ($M)", "aum_m"),
+        ("HQ", "hq_country"), ("AUM (GBP m)", "aum_m"),
         ("PE strategy preferences", "strategy_preferences"),
         ("Geographic mandate", "geo_preferences"),
         ("Open to first-time funds", "open_to_first_time"),
         ("PE fund commitments", "num_pe_commitments"),
         ("Portfolio overlap with our pipeline", "source_companies"),
         ("Contact title", "contact_title"),
+        ("Policy", "policy_description"),
     ]:
         val = investor.get(key)
         if val not in (None, ""):
             context_parts.append(f"{label}: {val}")
     lp_context = "\n".join(context_parts) if context_parts else f"Investor: {name}"
 
-    fallback = {
-        "subject": f"Introduction from Averroes Capital",
-        "body": (f"Dear {contact_name.split()[0] if contact_name.strip() else 'colleague'},\n\n"
-                 f"I lead investor relations at Averroes Capital, a UK private equity firm focused on founder-led "
-                 f"B2B software companies with £2.5-10M revenue, a segment we believe is underserved.\n\n"
-                 f"Given {name}'s activity in private markets, I thought a brief introduction could be mutually interesting. "
-                 f"Would you be open to a short call in the coming weeks?\n\n"
-                 f"Best regards,\nBeatrice Carrara\nPartner, Averroes Capital"),
-        "to": contact_email or "",
-        "contact_name": contact_name or "",
-        "investor": name,
-    }
+    subject = f"Averroes Capital, {name}"
+    fallback_body = (
+        f"Hi {first or 'there'},\n\n"
+        f"I am {signer}, {signer_title} at Averroes Capital, a London-based growth equity investor "
+        f"backing founder-led UK B2B software companies with GBP 2.5-10M of revenue, a segment we "
+        f"believe is underserved by institutional capital.\n\n"
+        f"Given {name}'s activity in private markets, I thought a short introduction could be of interest. "
+        f"{INVESTOR_EMAIL_FUND_LINE}\n\n"
+        f"{PORTFOLIO_PROOF}\n\n"
+        f"Would you be open to a short introductory call in the coming weeks? Happy to share our strategy "
+        f"note beforehand if that is easier.\n\n"
+        f"Best,")
+    fallback = {"subject": subject, "body": fallback_body, "to": contact_email or "",
+                "contact_name": contact_name or "", "investor": name,
+                "from": sender_label("investor"), "is_fallback": True}
     if not api_key:
         return fallback
 
-    prompt = f"""
-    You are Beatrice Carrara, Partner at Averroes Capital, a UK lower-mid-market private
-    equity firm investing in founder-led B2B SaaS and software companies (£2.5-10M revenue).
+    prompt = f"""You are {signer}, {signer_title} at Averroes Capital, a London-based growth equity
+investor backing founder-led UK B2B software companies with GBP 2.5-10M revenue, using
+proprietary AI-driven origination that covers the whole UK and Ireland universe.
 
-    Write a SHORT, professional LP introduction email to {contact_name or 'the principal'}
-    at {name}, a potential LIMITED PARTNER (investor in our fund / co-investor in deals).
+Write a SHORT introduction email to {contact_name or 'the principal'} at {name}, a potential
+LIMITED PARTNER (investor in our fund or co-investor in our deals).
 
-    INVESTOR INTELLIGENCE (from our database, use to personalise):
-    {lp_context}
+INVESTOR INTELLIGENCE (from our database, use it to personalise):
+{lp_context}
 
-    EMAIL GUIDELINES:
-    - This is INVESTOR RELATIONS, not deal sourcing: we are inviting them to hear about
-      our strategy, not pitching a specific transaction.
-    - Reference something SPECIFIC about them: their strategy preferences (e.g. buyout/growth),
-      geographic mandate, or portfolio overlap with our pipeline if present.
-    - Position Averroes: disciplined UK lower-mid-market software specialist; proprietary
-      AI-driven origination covering the whole UK/Ireland universe; founder-friendly.
-    - Length: 5-7 sentences. Senior investors skim.
-    - No hyperbole, no "exciting opportunity" language. Understated and credible.
-    - CTA: offer a short introductory call or to share our strategy note.
-    - Sign off: Beatrice Carrara, Partner, Averroes Capital
-    - No email headers. Just subject and body.
+STRUCTURE, in this order, 5 to 7 sentences total:
+1. "Hi {first or '[first name]'}," then one line of who you are (name, title, Averroes in one clause).
+2. WHY THEM, one specific sentence drawn from the intelligence above: their PE strategy
+   preferences, geographic mandate, stance on first-time funds, or the portfolio overlap
+   with our pipeline. Never generic praise.
+3. WHAT WE ARE RAISING, exactly this sentence, verbatim: "{INVESTOR_EMAIL_FUND_LINE}"
+4. PORTFOLIO PROOF, exactly this, verbatim: "{PORTFOLIO_PROOF}"
+5. SOFT ASK: a short introductory call in the coming weeks, or to share our strategy note.
+6. End with "Best," on its own line. NO name after it (the signature is added on send).
 
-    Return ONLY valid JSON: {{"subject": "...", "body": "..."}} with \\n for line breaks.
-    """
+RULES: investor relations tone, understated and credible, no hyperbole, no "exciting".
+Senior investors skim, so short sentences. British spelling. Do not use em dashes or en
+dashes anywhere, use commas or full stops. Keep every [confirm: ...] marker exactly as
+written. Subject line: exactly "{subject}".
+
+Return ONLY valid JSON: {{"subject": "{subject}", "body": "..."}} with \\n for line breaks."""
 
     try:
         from google import genai
@@ -467,16 +499,32 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         result = json.loads(text)
-        return {
-            "subject": result.get("subject", fallback["subject"]),
-            "body": result.get("body", fallback["body"]),
-            "to": contact_email or "",
-            "contact_name": contact_name or "",
-            "investor": name,
-        }
+        body = (result.get("body") or "").replace("—", ",").replace("–", ",")
+        if not body.strip():
+            return fallback
+        return {"subject": subject, "body": body, "to": contact_email or "",
+                "contact_name": contact_name or "", "investor": name,
+                "from": sender_label("investor")}
     except Exception as e:
-        logger.error(f"LP outreach draft failed for {name}: {e}")
+        logger.warning(f"LP draft failed for {name}: {e}")
         return fallback
+
+
+def draft_lp_followup_email(investor: Dict) -> Dict[str, str]:
+    """The 14-day LP follow-up: fixed template, same thread (Re: subject),
+    zero AI. Short, one nudge, no new ask."""
+    contact_name = investor.get("contact_name", "")
+    first = contact_name.split()[0] if contact_name.strip() else "there"
+    subj = investor.get("outreach_draft_subject") or f"Averroes Capital, {investor.get('name', '')}"
+    body = (f"Hi {first},\n\n"
+            f"Following up on my note below in case it slipped through. We are speaking with a small "
+            f"number of investors about Averroes Capital's strategy in UK B2B software and would value "
+            f"a short conversation if the timing works on your side.\n\n"
+            f"If it is easier, I can send our strategy note first.\n\n"
+            f"Best,")
+    return {"to": investor.get("outreach_draft_to") or investor.get("contact_email") or "",
+            "subject": subj if subj.lower().startswith("re:") else f"Re: {subj}",
+            "body": body, "investor": investor.get("name", ""), "from": sender_label("investor")}
 
 
 # ── Email signature (appended automatically at send time) ────────────────────
@@ -511,28 +559,72 @@ SIG_DISCLAIMER = (
     "delete this email from your system."
 )
 
-_contact_line_text = f"{SIG_PHONE} | {SIG_EMAIL}" if SIG_PHONE else SIG_EMAIL
-_contact_line_html = (
-    (f'<a href="tel:{SIG_PHONE.replace(" ", "")}" style="color:#1a56db; text-decoration:underline;">{SIG_PHONE}</a>'
-     f'<span style="color:#9ca3af;"> | </span>' if SIG_PHONE else "")
-    + f'<a href="mailto:{SIG_EMAIL}" style="color:#1a56db; text-decoration:underline;">{SIG_EMAIL}</a>'
-)
 
-# Body ends with "Best,"; the signature follows directly beneath it.
-SIGNATURE_TEXT = (f"\n{SIG_NAME}\n{SIG_TITLE}\n{_contact_line_text}\n\n{SIG_DISCLAIMER}")
-
-SIGNATURE_HTML = f"""
+def build_signature(name: str, title: str, email: str, phone: str = "") -> Dict[str, str]:
+    """The signature block for one sender: plain text and HTML (logo via CID,
+    contact line, regulatory disclaimer). Body ends with "Best,"; the
+    signature follows directly beneath it."""
+    contact_text = f"{phone} | {email}" if phone else email
+    contact_html = (
+        (f'<a href="tel:{phone.replace(" ", "")}" style="color:#1a56db; text-decoration:underline;">{phone}</a>'
+         f'<span style="color:#9ca3af;"> | </span>' if phone else "")
+        + f'<a href="mailto:{email}" style="color:#1a56db; text-decoration:underline;">{email}</a>'
+    )
+    text = f"\n{name}\n{title}\n{contact_text}\n\n{SIG_DISCLAIMER}"
+    html = f"""
 <br>
 <img src="cid:{SIG_LOGO_CID}" alt="Averroes Capital" width="150" style="display:block; width:150px; height:auto; margin:10px 0 14px;">
 <div style="font-family: Arial, Helvetica, sans-serif; font-size:14px; line-height:1.5; color:#6b7280;">
-  <b style="color:#4b5563;">{SIG_NAME}</b><br>
-  {SIG_TITLE}<br>
-  {_contact_line_html}
+  <b style="color:#4b5563;">{name}</b><br>
+  {title}<br>
+  {contact_html}
 </div>
 <p style="font-family: Arial, Helvetica, sans-serif; font-size:11px; line-height:1.7; color:#9ca3af; font-weight:bold; margin:18px 0 0; max-width:760px;">
   {SIG_DISCLAIMER}
 </p>
 """
+    return {"text": text, "html": html}
+
+
+_founder_sig = build_signature(SIG_NAME, SIG_TITLE, SIG_EMAIL, SIG_PHONE)
+SIGNATURE_TEXT = _founder_sig["text"]
+SIGNATURE_HTML = _founder_sig["html"]
+
+
+# ── Sender profiles ──────────────────────────────────────────────────────────
+# Founder outreach goes from Bea's outreach mailbox. Investor (LP) outreach
+# goes from a SEPARATE mailbox (per Ishu, 8 Sep 2026), configured on Cloud Run
+# with INVESTOR_OUTREACH_EMAIL / INVESTOR_OUTREACH_NAME / INVESTOR_SMTP_PASSWORD
+# (+ optional INVESTOR_SIGNATURE_NAME / _TITLE / _PHONE). Each profile has its
+# own signature and its own mailbox for the reply sync to read. An
+# unconfigured profile FAILS CLOSED: an LP email must never quietly go out
+# from the founder mailbox.
+def sender_profile(kind: str = "founder") -> Dict[str, str]:
+    if kind == "investor":
+        email = os.getenv("INVESTOR_OUTREACH_EMAIL", "")
+        name = os.getenv("INVESTOR_OUTREACH_NAME", "")
+        return {
+            "kind": "investor", "email": email, "name": name,
+            "password": os.getenv("INVESTOR_SMTP_PASSWORD", ""),
+            "sig_name": os.getenv("INVESTOR_SIGNATURE_NAME", name),
+            "sig_title": os.getenv("INVESTOR_SIGNATURE_TITLE", ""),
+            "sig_phone": os.getenv("INVESTOR_SIGNATURE_PHONE", ""),
+            "configured": bool(email and os.getenv("INVESTOR_SMTP_PASSWORD", "")),
+        }
+    return {
+        "kind": "founder", "email": SENDER_EMAIL, "name": SENDER_NAME, "password": SMTP_PASSWORD,
+        "sig_name": SIG_NAME, "sig_title": SIG_TITLE, "sig_phone": SIG_PHONE,
+        "configured": bool(SENDER_EMAIL and SMTP_PASSWORD),
+    }
+
+
+def sender_label(kind: str = "founder") -> str:
+    """'Name <address>' for the UI, or a plain statement that it is not set up."""
+    p = sender_profile(kind)
+    if not p["configured"]:
+        return "not configured (INVESTOR_OUTREACH_EMAIL / INVESTOR_SMTP_PASSWORD)" if kind == "investor" \
+            else "not configured (OUTREACH_EMAIL / OUTREACH_SMTP_PASSWORD)"
+    return f"{p['name'] or p['email']} <{p['email']}>"
 
 
 def _logo_part():
@@ -550,7 +642,8 @@ def _logo_part():
 
 
 def send_email(to: str, subject: str, body: str,
-               in_reply_to: str = "", references: str = "") -> Dict[str, str]:
+               in_reply_to: str = "", references: str = "",
+               sender: str = "founder") -> Dict[str, str]:
     """
     Send an email via Gmail SMTP using App Password. Beatrice's signature
     (name, title, phone, email, logo if configured) is appended automatically.
@@ -563,19 +656,22 @@ def send_email(to: str, subject: str, body: str,
     context of the first one, which is the whole point of following up.
     Callers pass the ids from email_log; blank means a fresh conversation.
     """
-    if not SMTP_PASSWORD:
-        return {"status": "error", "detail": "OUTREACH_SMTP_PASSWORD not configured. Set it as a Cloud Run env var."}
+    prof = sender_profile(sender)
+    if not prof["configured"]:
+        return {"status": "error", "detail": f"Sender mailbox for {sender} outreach is {sender_label(sender)}. Set it as Cloud Run env vars."}
 
     if not to:
         return {"status": "error", "detail": "No recipient email address provided."}
 
+    sig = _founder_sig if sender == "founder" else build_signature(
+        prof["sig_name"] or prof["name"], prof["sig_title"], prof["email"], prof["sig_phone"])
     try:
         # multipart/related wraps the alternative (text + html) AND the inline
         # logo, so the <img src="cid:..."> in the html resolves to the
         # attached bytes in every client. Plain-text readers still get the
         # full signature text including the disclaimer.
         msg = MIMEMultipart("related")
-        msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
+        msg["From"] = f"{prof['name'] or prof['email']} <{prof['email']}>"
         msg["To"] = to
         msg["Subject"] = subject
         if in_reply_to:
@@ -584,9 +680,9 @@ def send_email(to: str, subject: str, body: str,
             msg["References"] = references
 
         alt = MIMEMultipart("alternative")
-        alt.attach(MIMEText(body + SIGNATURE_TEXT, "plain"))
+        alt.attach(MIMEText(body + sig["text"], "plain"))
         html_body = body.replace("\n", "<br>")
-        html = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">{html_body}{SIGNATURE_HTML}</body></html>"""
+        html = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">{html_body}{sig["html"]}</body></html>"""
         alt.attach(MIMEText(html, "html"))
         msg.attach(alt)
 
@@ -595,15 +691,15 @@ def send_email(to: str, subject: str, body: str,
             msg.attach(logo)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(SENDER_EMAIL, SMTP_PASSWORD)
-            server.sendmail(SENDER_EMAIL, to, msg.as_string())
+            server.login(prof["email"], prof["password"])
+            server.sendmail(prof["email"], to, msg.as_string())
 
         logger.info(f"Outreach email sent to {to} (subject: {subject})")
         return {"status": "sent", "to": to, "subject": subject}
 
     except smtplib.SMTPAuthenticationError:
         logger.error("Gmail SMTP auth failed - check App Password")
-        return {"status": "error", "detail": "Gmail authentication failed. Check OUTREACH_SMTP_PASSWORD."}
+        return {"status": "error", "detail": f"Gmail authentication failed for {prof['email']}. Check the app password env var."}
     except Exception as e:
         logger.error(f"Email send failed: {e}")
         return {"status": "error", "detail": str(e)}

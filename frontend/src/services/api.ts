@@ -405,6 +405,18 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getInvestorFollowupDraft(name: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/outreach/followup-draft/${encodeURIComponent(name)}`);
+    if (!response.ok) throw new Error('Follow-up template failed');
+    return await response.json();
+  },
+
+  async getInvestorComposeDraft(name: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/outreach/compose-draft/${encodeURIComponent(name)}`);
+    if (!response.ok) throw new Error('Compose draft failed');
+    return await response.json();
+  },
+
   async sendInvestorOutreach(to: string, subject: string, body: string, investorName?: string): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/investors/outreach/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -437,11 +449,15 @@ export const dealApi = {
     return await response.json();
   },
 
-  async updateInvestorStatus(name: string, status: string): Promise<any> {
+  async updateInvestorStatus(name: string, status: string, reason?: string, reasonDetail?: string): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/status`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, reason: reason || null, reason_detail: reasonDetail || null }),
     });
-    if (!response.ok) throw new Error('Investor status update failed');
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Status update failed');
+    }
     return await response.json();
   },
 
@@ -553,8 +569,8 @@ export const dealApi = {
   // The agreed reminder thresholds. days = they have not answered our email
   // (Contacted, 14 days, overridden by a stated out-of-office return date).
   // replyDays = they wrote and we have not answered (Responded, 7 days).
-  async getFollowups(days: number = 14, replyDays: number = 7): Promise<any> {
-    const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}&reply_days=${replyDays}`);
+  async getFollowups(days: number = 14, replyDays: number = 7, entity: 'company' | 'investor' = 'company'): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}&reply_days=${replyDays}&entity=${entity}`);
     if (!response.ok) return { count: 0, followups: [] };
     return await response.json();
   },

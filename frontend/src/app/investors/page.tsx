@@ -8,6 +8,10 @@ import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
 import SideNav from '../../components/SideNav';
 import MultiSelect from '../../components/MultiSelect';
+import OutreachModal from '../../components/OutreachModal';
+import SyncEmailsButton from '../../components/SyncEmailsButton';
+import InvestorStageControl from '../../components/InvestorStageControl';
+import { outreachButtonState } from '../../lib/outreach';
 
 const INVESTOR_DEFS: Record<string, string> = {
   name: "Investor / LP name. Mined from portfolio companies' cap tables, uploaded from PitchBook LP exports, or found via AI search. Hover a name to see the description.",
@@ -22,13 +26,8 @@ const INVESTOR_DEFS: Record<string, string> = {
   commitments: "Track record: total fund commitments (count · $M, all asset classes, PitchBook USD). Hover for active commitments, average ticket, VC breakdown and secondaries activity.",
   peCommitments: "PE-specific track record: commitments to PE funds (count · $M). The strongest single proof of appetite for our asset class.",
   portfolio: "Companies in OUR deal universe this investor has backed — warm-intro path and evidence of relevant appetite.",
-  stage: "Relationship stage: Identified → Researched (after InvestorFill) → Contacted → Meeting → Committed / Passed.",
-  actions: "InvestorFill researches this investor via AI + web search: classifies type, finds AUM/ticket/contacts, scores LP fit.",
-};
-
-const STAGE_COLORS: Record<string, string> = {
-  Identified: '#64748b', Researched: '#2563eb', Contacted: '#8b5cf6',
-  Meeting: '#f59e0b', Committed: '#16a34a', Passed: '#dc2626',
+  stage: "Relationship stage, mirroring the founder loop: Identified → Researched (after InvestorFill) → Contacted (we emailed) → Responded (they genuinely replied; autoresponders never count) → Meeting → Committed. Passed and Talk Later are parked with a reason.",
+  actions: "InvestorFill researches this investor via AI + web search: classifies type, finds AUM/ticket/contacts, scores LP fit. Outreach opens the LP email (drafted once and saved, then Review & Send; after sending, Follow up in the same thread; once they reply, Reply).",
 };
 
 export default function Investors() {
@@ -46,7 +45,6 @@ function InvestorsInner() {
   const [mining, setMining] = useState(false);
   const [filling, setFilling] = useState<string | null>(null);
   const [fillResult, setFillResult] = useState<any | null>(null);
-  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [showSources, setShowSources] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -57,10 +55,8 @@ function InvestorsInner() {
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string; ok: number; failed: number } | null>(null);
   const bulkCancelRef = useRef(false);
 
-  // LP Outreach
-  const [outreachDraft, setOutreachDraft] = useState<any | null>(null);
-  const [outreachLoading, setOutreachLoading] = useState<string | null>(null);
-  const [outreachSending, setOutreachSending] = useState(false);
+  // LP Outreach: the SAME modal as founder outreach, entity 'investor'
+  const [outreachFor, setOutreachFor] = useState<Investor | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -235,28 +231,6 @@ function InvestorsInner() {
     setBulkProgress(null);
   };
 
-  // ── LP Outreach ──
-  const openOutreach = async (inv: Investor) => {
-    setOutreachLoading(inv.name);
-    try {
-      const draft = await dealApi.draftInvestorOutreach(inv.name);
-      setOutreachDraft({ ...draft, investor: inv.name });
-    } catch (e: any) { alert(`Draft failed: ${e.message}`); }
-    finally { setOutreachLoading(null); }
-  };
-
-  const sendOutreach = async () => {
-    if (!outreachDraft?.to) { alert('No recipient email — run InvestorFill to find contacts first.'); return; }
-    setOutreachSending(true);
-    try {
-      await dealApi.sendInvestorOutreach(outreachDraft.to, outreachDraft.subject, outreachDraft.body, outreachDraft.investor);
-      alert('Sent. Stage moved to Contacted.');
-      setOutreachDraft(null);
-      await loadData();
-    } catch (e: any) { alert(`Send failed: ${e.message}`); }
-    finally { setOutreachSending(false); }
-  };
-
   // ── CSV export of the current filtered view ──
   const exportCsv = () => {
     const cols = ['name', 'investor_type', 'lp_fit_score', 'aum_m', 'net_assets_m', 'ticket_min_m', 'ticket_max_m', 'hq_city', 'hq_country', 'strategy_preferences', 'geo_preferences', 'open_to_first_time', 'num_commitments', 'total_commitments_m', 'num_active_commitments', 'total_active_commitments_m', 'num_pe_commitments', 'total_pe_commitments_m', 'num_vc_commitments', 'total_vc_commitments_m', 'sold_secondaries', 'bought_secondaries', 'contact_name', 'contact_title', 'contact_email', 'contact_phone', 'psc_summary', 'officers_summary', 'registration_number', 'source', 'source_companies', 'status'];
@@ -274,14 +248,6 @@ function InvestorsInner() {
     URL.revokeObjectURL(url);
   };
 
-  const handleStatusChange = async (name: string, status: string) => {
-    setUpdatingStatus(name);
-    try {
-      await dealApi.updateInvestorStatus(name, status);
-      setInvestors(prev => prev.map(i => i.name === name ? { ...i, status } : i));
-    } catch (e) { alert("Status update failed."); }
-    finally { setUpdatingStatus(null); }
-  };
 
   const types = Array.from(new Set(investors.map(i => i.investor_type).filter(Boolean))) as string[];
 
@@ -342,6 +308,7 @@ function InvestorsInner() {
               Sources
               <span className="sources-badge">{Array.from(new Set(investors.map(i => i.source).filter(Boolean))).length}</span>
             </button>
+            <SyncEmailsButton onSynced={loadData} />
             <button className="export-btn" onClick={exportCsv} disabled={filtered.length === 0}>
               ⬇ Export ({filtered.length})
             </button>
@@ -441,24 +408,20 @@ function InvestorsInner() {
                       <td className="source-cell">{inv.source || '—'}</td>
                       <td className="num-cell">{inv.ingested_at ? new Date(inv.ingested_at).toLocaleDateString('en-GB') : '—'}</td>
                       <td>
-                        <select
-                          className="stage-select"
-                          style={{ color: STAGE_COLORS[inv.status || 'Identified'] }}
-                          value={inv.status || 'Identified'}
-                          disabled={updatingStatus === inv.name}
-                          onChange={e => handleStatusChange(inv.name, e.target.value)}
-                        >
-                          {INVESTOR_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <InvestorStageControl name={inv.name} status={inv.status}
+                          onChanged={async () => { await loadData(); }} />
+                        {inv.park_reason && <div className="park-reason" title={inv.park_reason_detail || ''}>Reason: {inv.park_reason}</div>}
                       </td>
                       <td>
                         <div className="action-btns">
                           <button className="fill-btn" disabled={filling === inv.name} onClick={() => handleFill(inv.name)}>
                             {filling === inv.name ? '…' : 'InvestorFill'}
                           </button>
-                          <button className="outreach-btn" disabled={outreachLoading === inv.name} onClick={() => openOutreach(inv)}>
-                            {outreachLoading === inv.name ? '…' : 'Outreach'}
-                          </button>
+                          {(() => { const ob = outreachButtonState(inv); return (
+                            <button className={`outreach-btn ${ob.cls}`} title={ob.title} onClick={() => setOutreachFor(inv)}>
+                              {ob.label}
+                            </button>
+                          ); })()}
                         </div>
                       </td>
                     </tr>
@@ -766,31 +729,9 @@ function InvestorsInner() {
         </div>
       )}
 
-      {/* ── LP Outreach modal ── */}
-      {outreachDraft && (
-        <div className="modal-overlay" onClick={() => setOutreachDraft(null)}>
-          <div className="fill-modal" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
-            <div className="fill-modal-header">
-              <h3>LP Outreach — {outreachDraft.investor}</h3>
-              <button className="modal-close" onClick={() => setOutreachDraft(null)}>&times;</button>
-            </div>
-            <label className="or-label">To</label>
-            <input className="or-input" value={outreachDraft.to || ''} placeholder="No email on file — run InvestorFill first"
-              onChange={e => setOutreachDraft({ ...outreachDraft, to: e.target.value })} />
-            <label className="or-label">Subject</label>
-            <input className="or-input" value={outreachDraft.subject || ''}
-              onChange={e => setOutreachDraft({ ...outreachDraft, subject: e.target.value })} />
-            <label className="or-label">Body</label>
-            <textarea className="or-textarea" rows={11} value={outreachDraft.body || ''}
-              onChange={e => setOutreachDraft({ ...outreachDraft, body: e.target.value })} />
-            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '0.8rem' }}>
-              <button className="modal-ok" style={{ width: 'auto', background: '#fff', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={() => setOutreachDraft(null)}>Cancel</button>
-              <button className="modal-ok" style={{ width: 'auto' }} onClick={sendOutreach} disabled={outreachSending || !outreachDraft.to}>
-                {outreachSending ? 'Sending…' : 'Send & mark Contacted'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {outreachFor && (
+        <OutreachModal entity="investor" company={outreachFor} onClose={() => setOutreachFor(null)}
+                       onSent={loadData} />
       )}
 
       {/* InvestorFill result modal */}
@@ -912,6 +853,11 @@ function InvestorsInner() {
         .action-btns { display: flex; gap: 0.35rem; }
         .outreach-btn { background: #fff; border: 1px solid #2563eb; color: #2563eb; border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .outreach-btn:hover:not(:disabled) { background: #eff6ff; }
+        /* Same three states as the founder button (lib/outreach.ts): drafted = review, followup = amber nudge, sent = done/green */
+        .outreach-btn.drafted { background: #eff6ff; }
+        .outreach-btn.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
+        .outreach-btn.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
+        .park-reason { font-size: 0.68rem; color: #9a3412; margin-top: 0.2rem; white-space: nowrap; }
         .export-btn { background: #fff; border: 1px solid #e2e8f0; color: #334155; border-radius: 8px; padding: 0.55rem 1rem; font-size: 0.82rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); transition: all 0.15s; }
         .export-btn:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.12); }
         .export-btn:hover:not(:disabled) { border-color: #16a34a; color: #16a34a; }

@@ -16,7 +16,20 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
-INVESTOR_STAGES = ["Identified", "Researched", "Contacted", "Meeting", "Committed", "Passed"]
+# THE INVESTOR LOOP mirrors the founder loop (per Ishu, 8 Sep 2026):
+#   Identified   in the Investor Universe, not yet researched
+#   Researched   InvestorFill done (the LP equivalent of Qualified)
+#   Contacted    we emailed them, no genuine reply yet
+#   Responded    they genuinely replied (autoresponders and bounces never count)
+#   Meeting / Committed  real work, never changed automatically
+#   Passed       closed out, with a park reason
+#   Talk Later   parked, with a park reason; resurfaces later
+INVESTOR_STAGES = ["Identified", "Researched", "Contacted", "Responded", "Meeting",
+                   "Committed", "Passed", "Talk Later"]
+INVESTOR_PARKED = ("Passed", "Talk Later")
+# First-entry stamps, set once and never overwritten (event truth).
+INVESTOR_STAGE_STAMPS = {"Contacted": "contacted_at", "Responded": "responded_at",
+                         "Meeting": "meeting_at", "Committed": "committed_at"}
 
 INVESTOR_TYPES = [
     "Family Office", "Fund of Funds", "HNWI", "UHNWI",
@@ -84,6 +97,16 @@ class InvestorBQHandler:
         ("psc_summary", "STRING"),           # who controls the vehicle — UHNWI discovery
         ("officers_summary", "STRING"),      # active directors (principals to contact)
         ("net_assets_m", "FLOAT64"),         # filed net assets, £M — AUM proxy
+        # ── The outreach loop (same column names as targets, so the shared
+        #    frontend button/modal logic in lib/outreach.ts applies unchanged) ──
+        ("outreach_draft_subject", "STRING"), ("outreach_draft_body", "STRING"),
+        ("outreach_draft_to", "STRING"), ("outreach_drafted_at", "TIMESTAMP"),
+        ("outreach_sent_at", "TIMESTAMP"),   # refreshed on every send
+        ("contacted_at", "TIMESTAMP"),       # first send only
+        ("responded_at", "TIMESTAMP"), ("meeting_at", "TIMESTAMP"), ("committed_at", "TIMESTAMP"),
+        ("stage_entered_at", "TIMESTAMP"),
+        ("last_reply_at", "TIMESTAMP"), ("reply_classification", "STRING"),
+        ("park_reason", "STRING"), ("park_reason_detail", "STRING"),
         # Smart Upload: unmapped source columns preserved as JSON
         ("extra_data", "STRING"),
         ("ingested_at", "TIMESTAMP"),
@@ -407,21 +430,122 @@ class InvestorBQHandler:
             logger.error(f"Merge failed for investor '{name}': {e}")
             return False
 
-    def update_status(self, name: str, new_status: str) -> bool:
+    def get_by_name(self, name: str) -> Optional[Dict]:
+        if not self.client:
+            return None
+        try:
+            rows = list(self.client.query(
+                f"SELECT * FROM `{self.table_id}` WHERE LOWER(name) = LOWER(@name) LIMIT 1",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("name", "STRING", name)])).result())
+            if not rows:
+                return None
+            d = dict(rows[0])
+            for k, v in d.items():
+                if hasattr(v, "isoformat"):
+                    d[k] = v.isoformat()
+            return d
+        except Exception as e:
+            logger.error(f"get_by_name failed for investor '{name}': {e}")
+            return None
+
+    def update_status(self, name: str, new_status: str, created_by: str = "Ishu Ratna",
+                      reason: str = "", reason_detail: str = "") -> bool:
+        """Move an investor to a stage. Stamps stage_entered_at (reset on every
+        real move) and the first-entry column for the stage (once), records
+        the park reason for Passed / Talk Later and clears it on unpark, and
+        writes the move into the notes audit trail. ONE writer for status."""
         if not self.client or new_status not in INVESTOR_STAGES:
             return False
-        query = f"""UPDATE `{self.table_id}`
-                    SET status = @status, updated_at = CURRENT_TIMESTAMP()
-                    WHERE LOWER(name) = LOWER(@name)"""
+        cur = self.get_by_name(name) or {}
+        old_status = cur.get("status") or "Unknown"
+        sets = ["status = @status", "updated_at = CURRENT_TIMESTAMP()",
+                "stage_entered_at = CASE WHEN IFNULL(status, '') != @status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END"]
+        stamp = INVESTOR_STAGE_STAMPS.get(new_status)
+        if stamp:
+            sets.append(f"{stamp} = IFNULL({stamp}, CURRENT_TIMESTAMP())")
+        if new_status in INVESTOR_PARKED:
+            sets += ["park_reason = @reason", "park_reason_detail = @detail"]
+        else:
+            sets += ["park_reason = NULL", "park_reason_detail = NULL"]
+        query = f"UPDATE `{self.table_id}` SET {', '.join(sets)} WHERE LOWER(name) = LOWER(@name)"
         job_config = bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("status", "STRING", new_status),
+            bigquery.ScalarQueryParameter("reason", "STRING", reason or ""),
+            bigquery.ScalarQueryParameter("detail", "STRING", reason_detail or ""),
             bigquery.ScalarQueryParameter("name", "STRING", name),
         ])
         try:
             self.client.query(query, job_config=job_config).result()
+            if old_status != new_status:
+                why = f" ({reason}{': ' + reason_detail if reason_detail else ''})" if reason else ""
+                self.add_note(name, f"Stage {old_status} -> {new_status}{why} [{created_by}]")
             return True
         except Exception as e:
             logger.error(f"Failed to update investor status: {e}")
+            return False
+
+    def stamp_reply(self, name: str, reply_at: str, classification: str) -> bool:
+        """The sync's stamp: their last genuine message and its class."""
+        if not self.client:
+            return False
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}`
+                    SET last_reply_at = @ts, reply_classification = @cls, updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("ts", "TIMESTAMP", reply_at),
+                    bigquery.ScalarQueryParameter("cls", "STRING", classification or ""),
+                    bigquery.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"stamp_reply failed for investor '{name}': {e}")
+            return False
+
+    def save_outreach_draft(self, name: str, to: str, subject: str, body: str) -> bool:
+        if not self.client:
+            return False
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}`
+                    SET outreach_draft_to = @to, outreach_draft_subject = @s, outreach_draft_body = @b,
+                        outreach_drafted_at = CURRENT_TIMESTAMP(), updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("to", "STRING", to or ""),
+                    bigquery.ScalarQueryParameter("s", "STRING", subject or ""),
+                    bigquery.ScalarQueryParameter("b", "STRING", body or ""),
+                    bigquery.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"save_outreach_draft failed for investor '{name}': {e}")
+            return False
+
+    def record_send(self, name: str, to: str) -> bool:
+        """After a successful send: outreach_sent_at refreshed, contacted_at
+        stamped once, the address actually used kept, stage moved FORWARD
+        only (Identified/Researched -> Contacted; anything later untouched)."""
+        if not self.client:
+            return False
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}` SET
+                    outreach_sent_at = CURRENT_TIMESTAMP(),
+                    contacted_at = IFNULL(contacted_at, CURRENT_TIMESTAMP()),
+                    outreach_draft_to = @to,
+                    stage_entered_at = CASE WHEN IFNULL(status, '') IN ('Identified', 'Researched', '')
+                                            THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+                    status = CASE WHEN IFNULL(status, '') IN ('Identified', 'Researched', '')
+                                  THEN 'Contacted' ELSE status END,
+                    updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("to", "STRING", to or ""),
+                    bigquery.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"record_send failed for investor '{name}': {e}")
             return False
 
     def update_enrichment(self, name: str, fields: Dict) -> bool:

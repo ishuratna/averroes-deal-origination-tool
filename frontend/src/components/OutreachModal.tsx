@@ -20,17 +20,44 @@ import { useState, useEffect, useCallback } from 'react';
 import { dealApi } from '@/services/api';
 import { outreachMode } from '@/lib/outreach';
 
-interface Draft { to: string; subject: string; body: string; company: string; }
+interface Draft { to: string; subject: string; body: string; company: string; from?: string; }
+
+// The same modal serves founders (entity 'company', Bea's mailbox) and
+// investors (entity 'investor', the LP mailbox). Same three modes, same
+// button states, same forward-only send rule; only the endpoints behind the
+// dealApi calls and the From line differ. Never fork this per entity.
+type Entity = 'company' | 'investor';
+const API = {
+  company: {
+    draft: (n: string) => dealApi.draftOutreach(n),
+    followup: (n: string) => dealApi.getFollowupDraft(n),
+    compose: (n: string) => dealApi.getComposeDraft(n),
+    send: (to: string, s: string, b: string, n: string) => dealApi.sendOutreach(to, s, b, n),
+    from: 'Beatrice Carrara <beatrice@averroescapital.com>',
+    noun: 'company',
+  },
+  investor: {
+    draft: (n: string) => dealApi.draftInvestorOutreach(n),
+    followup: (n: string) => dealApi.getInvestorFollowupDraft(n),
+    compose: (n: string) => dealApi.getInvestorComposeDraft(n),
+    send: (to: string, s: string, b: string, n: string) => dealApi.sendInvestorOutreach(to, s, b, n),
+    from: 'the investor mailbox',
+    noun: 'investor',
+  },
+};
 
 export default function OutreachModal({
   company,
   onClose,
   onSent,
+  entity = 'company',
 }: {
   company: any | null;
   onClose: () => void;
   onSent?: () => void;
+  entity?: Entity;
 }) {
+  const api = API[entity];
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -39,18 +66,19 @@ export default function OutreachModal({
   const generateDraft = useCallback(async (c: any) => {
     setLoading(true);
     try {
-      const d = await dealApi.draftOutreach(c.name);
+      const d = await api.draft(c.name);
       setDraft({
         to: d.to || c.contact_email || '',
         subject: d.subject || '',
         body: d.body || '',
         company: c.name,
+        from: d.from,
       });
     } catch (err: any) {
       alert(`Failed to generate draft: ${err.message}`);
       onClose();
     } finally { setLoading(false); }
-  }, [onClose]);
+  }, [onClose, api]);
 
   const mode = company ? outreachMode(company) : 'outreach';
 
@@ -64,18 +92,18 @@ export default function OutreachModal({
       // founder answers from a personal address), threaded as Re: under their
       // last subject. Only the body is blank — the words are Ishu's.
       setLoading(true);
-      dealApi.getComposeDraft(company.name)
+      api.compose(company.name)
         .then(d => setDraft({ to: d.to || company.contact_email || '', subject: d.subject || '',
-                              body: '', company: company.name }))
+                              body: '', company: company.name, from: d.from }))
         .catch(() => setDraft({ to: company.contact_email || '', subject: '', body: '', company: company.name }))
         .finally(() => setLoading(false));
       return;
     }
     if (mode === 'followup') {
       setLoading(true);
-      dealApi.getFollowupDraft(company.name)
+      api.followup(company.name)
         .then(d => setDraft({ to: d.to || company.contact_email || '', subject: d.subject || '',
-                              body: d.body || '', company: company.name }))
+                              body: d.body || '', company: company.name, from: d.from }))
         .catch((err: any) => { alert(`Failed to load the follow-up template: ${err.message}`); onClose(); })
         .finally(() => setLoading(false));
       return;
@@ -100,7 +128,7 @@ export default function OutreachModal({
     if (!draft?.to) return;
     setSending(true);
     try {
-      await dealApi.sendOutreach(draft.to, draft.subject, draft.body, draft.company);
+      await api.send(draft.to, draft.subject, draft.body, draft.company);
       setSent(true);
       onSent?.();  // stage bumps to Contacted — let the parent reload
     } catch (err: any) {
@@ -126,19 +154,19 @@ export default function OutreachModal({
             <div className="outreach-loading">
               <div className="spinner"></div>
               <p>Drafting personalised email with AI...</p>
-              <p className="loading-sub">Researching {company.name} to craft the perfect intro</p>
+              <p className="loading-sub">Personalising the intro to {company.name} from what the tool holds</p>
             </div>
           ) : sent ? (
             <div className="outreach-sent">
               <div className="sent-icon">&#10003;</div>
               <h4>Email Sent</h4>
-              <p>Sent to <strong>{draft?.to}</strong> from Beatrice Carrara &lt;beatrice@averroescapital.com&gt;.</p>
+              <p>Sent to <strong>{draft?.to}</strong> from {draft?.from || api.from}.</p>
               <p className="sent-sub">
                 {mode === 'compose'
                   ? 'The stage is unchanged — a send never moves a company backward.'
                   : mode === 'followup'
                     ? 'Still Contacted; the 14-day follow-up clock has restarted from this send.'
-                    : "The company's stage has moved to Contacted."}
+                    : `The ${api.noun}'s stage has moved to Contacted.`}
               </p>
             </div>
           ) : draft ? (
@@ -166,7 +194,7 @@ export default function OutreachModal({
                 <textarea rows={12} value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
               </div>
               <div className="form-row from-row">
-                <span className="from-label">From: Beatrice Carrara &lt;beatrice@averroescapital.com&gt; · Full signature (name, title, phone, logo) is added automatically on send</span>
+                <span className="from-label">From: {draft.from || api.from} · Full signature (name, title, logo, disclaimer) is added automatically on send</span>
               </div>
             </div>
           ) : null}

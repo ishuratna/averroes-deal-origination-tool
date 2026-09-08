@@ -24,7 +24,8 @@ export function outreachMode(company: {
   outreach_sent_at?: string;
 }): 'outreach' | 'followup' | 'compose' {
   const s = company.status || '';
-  if (['Responded', 'Meeting', 'DD', 'Offer', 'Won'].includes(s)) return 'compose';
+  // Company stages and investor stages (Committed) alike: the conversation is live.
+  if (['Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Committed'].includes(s)) return 'compose';
   if (company.outreach_sent_at) return 'followup';
   return 'outreach';
 }
@@ -83,7 +84,7 @@ export function outreachButtonState(company: {
       state: 'compose',
       cls: 'sent',
       label: '✉ Email',
-      title: 'Write an email to this company (blank draft, sends from Bea’s mailbox, stage is never changed by a send from here)',
+      title: 'Write an email (blank draft, in their thread; the stage is never changed by a send from here)',
     };
   }
   if (mode === 'followup') {

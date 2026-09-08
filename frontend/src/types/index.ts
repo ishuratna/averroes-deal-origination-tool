@@ -504,6 +504,19 @@ export interface Investor {
   score_tech_affinity?: number;
   fit_details?: string;
   notes?: string;
+  // The outreach loop (same names as CompanyTarget so lib/outreach.ts applies)
+  outreach_draft_subject?: string;
+  outreach_draft_body?: string;
+  outreach_draft_to?: string;
+  outreach_drafted_at?: string;
+  outreach_sent_at?: string;
+  contacted_at?: string;
+  responded_at?: string;
+  stage_entered_at?: string;
+  last_reply_at?: string;
+  reply_classification?: string;
+  park_reason?: string;
+  park_reason_detail?: string;
   // PitchBook LP export fields (USD figures)
   pb_id?: string;
   aka?: string;
@@ -538,7 +551,9 @@ export interface Investor {
   updated_at?: string;
 }
 
-export const INVESTOR_STAGES = ['Identified', 'Researched', 'Contacted', 'Meeting', 'Committed', 'Passed'] as const;
+// Mirrors storage/investor_handler.py INVESTOR_STAGES: the investor loop follows the founder loop.
+export const INVESTOR_STAGES = ['Identified', 'Researched', 'Contacted', 'Responded', 'Meeting', 'Committed', 'Passed', 'Talk Later'];
+export const INVESTOR_PARKED = ['Passed', 'Talk Later'];
 
 // Revenue band v3 — calibrated to the mandate: £15–40M equity cheques for
 // majority or significant minority (25%+) stakes → investable revenue

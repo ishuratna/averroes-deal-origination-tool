@@ -235,9 +235,13 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     limits the search list to contacts we actually corresponded with (the
     full universe would mean thousands of IMAP searches and a timeout).
     """
-    sender = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
-    password = os.getenv("OUTREACH_SMTP_PASSWORD", "")
-    if not password:
+    # Every configured sender mailbox is read: the founder mailbox (Bea) and,
+    # when set up, the investor mailbox (per Ishu, 8 Sep 2026). Direction is
+    # detected per message against the mailbox being read, so a reply to the
+    # LP mailbox is matched and logged exactly like one to the founder mailbox.
+    from services.outreach_service import sender_profile
+    mailboxes = [p for p in (sender_profile("founder"), sender_profile("investor")) if p["configured"]]
+    if not mailboxes:
         raise RuntimeError("OUTREACH_SMTP_PASSWORD not configured (same App Password as sending)")
 
     addresses = None
@@ -249,32 +253,46 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
         max_fetch = 2000
 
     since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
-    mail = imaplib.IMAP4_SSL(IMAP_HOST)
-    try:
-        mail.login(sender, password)
-        # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
-        # one pass; direction is detected per message inside _fetch_folder.
-        entries = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
-                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
-        if not entries:
-            # Fallback for non-Gmail IMAP layouts
-            entries = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
-                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
-            entries += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
-                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
-        # Dedup by message id (All Mail + fallback can overlap)
-        seen_ids, unique = set(), []
-        for e in entries:
-            if e["message_id"] not in seen_ids:
-                seen_ids.add(e["message_id"])
-                unique.append(e)
-        logger.info(f"[EmailSync] {len(unique)} known-contact messages found (last {days} days)")
-        return unique
-    finally:
+    entries: List[dict] = []
+    for box in mailboxes:
+        sender, password = box["email"], box["password"]
+        mail = imaplib.IMAP4_SSL(IMAP_HOST)
         try:
-            mail.logout()
-        except Exception:
-            pass
+            mail.login(sender, password)
+            # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
+            # one pass; direction is detected per message inside _fetch_folder.
+            got = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
+                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+            if not got:
+                # Fallback for non-Gmail IMAP layouts
+                got = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
+                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+                got += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
+                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+            for e in got:
+                e["mailbox"] = sender
+            entries += got
+        except Exception as e:
+            # One mailbox failing (bad app password, IMAP off) must not hide
+            # the other's replies; the failure is logged and reported.
+            logger.error(f"[EmailSync] mailbox {sender} failed: {e}")
+            if box is mailboxes[0] and len(mailboxes) == 1:
+                raise
+        finally:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+    # Dedup by message id (All Mail + fallback can overlap; a CC across both
+    # mailboxes appears once)
+    seen_ids, unique = set(), []
+    for e in entries:
+        if e["message_id"] not in seen_ids:
+            seen_ids.add(e["message_id"])
+            unique.append(e)
+    logger.info(f"[EmailSync] {len(unique)} known-contact messages found (last {days} days, "
+                f"{len(mailboxes)} mailbox(es))")
+    return unique
 
 
 def assess_sender_relation(company_name: str, sender_name: str, sender_email: str,
