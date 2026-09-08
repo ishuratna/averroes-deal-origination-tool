@@ -61,13 +61,14 @@ SCALAR_FIELDS: Dict[str, Tuple[str, str, str]] = {
     "last_financing_type":  ("STRING",  "Last financing type",      "fill_or_confirm"),
     "active_investors":     ("STRING",  "Investors",                "fill_or_confirm"),
     "competitors":          ("STRING",  "Competitors",              "fill_or_confirm"),
-    "revenue_growth_pct":   ("FLOAT64", "Revenue growth (%)",       "fill_or_confirm"),
+    "revenue_growth_pct":   ("FLOAT64", "Revenue growth, last year (%)", "fill_or_confirm"),
+    "revenue_cagr_3yr_pct": ("FLOAT64", "Revenue CAGR, multi-year (%)", "fill_or_confirm"),
     "ebitda_margin_pct":    ("FLOAT64", "EBITDA margin (%)",        "fill_or_confirm"),
     "revenue_estimate_m":   ("FLOAT64", "Revenue (GBP m, latest)",  "fill_or_confirm"),
 }
 
 # Figures that may legitimately be negative.
-_SIGNED = {"revenue_growth_pct", "ebitda_margin_pct"}
+_SIGNED = {"revenue_growth_pct", "revenue_cagr_3yr_pct", "ebitda_margin_pct"}
 
 # Comma-separated SET fields. A document naming investors/verticals/keywords we
 # already hold adds nothing; naming NEW ones is new information and is merged
@@ -284,7 +285,8 @@ EVERY company field is an object {{"value": ..., "evidence": "quote + where (pag
     "last_financing_type": {{"value": "Seed | Series A | ...", "evidence": "..."}},
     "active_investors": {{"value": "comma-separated", "evidence": "..."}},
     "competitors": {{"value": "comma-separated", "evidence": "..."}},
-    "revenue_growth_pct": {{"value": 30.0, "evidence": "..."}},
+    "revenue_growth_pct": {{"value": 30.0, "evidence": "latest year vs the year before ONLY"}},
+    "revenue_cagr_3yr_pct": {{"value": 92.0, "evidence": "a multi-year average/CAGR goes HERE, never in revenue_growth_pct"}},
     "ebitda_margin_pct": {{"value": -12.0, "evidence": "..."}}
   }},
   "financial_years": [
@@ -298,7 +300,15 @@ Rules: all money in GBP as absolute numbers (not thousands) except the *_m
 fields, which are GBP millions; convert other currencies and state the rate in
 evidence. Use "basis": "actual" only for reported/historic figures; budgets and
 forecasts are never "actual". If the period end is only given as a year, use
-that year's 31 December unless the document states the year end."""
+that year's 31 December unless the document states the year end.
+
+FINANCIAL YEARS: return ONE ENTRY PER YEAR the document shows, historic and
+current alike - not just the latest. Revenue-by-year CHARTS count: read every
+bar/point, use the data labels where printed, otherwise your best reading of
+the axis, and say "read from chart, approx." in that year's evidence. A deck
+that says "92% growth 2021-2025" has revenue for 2021, 2022, 2023, 2024 and
+2025 somewhere in it; find them. Prior years of a table (e.g. FY24 column
+beside FY25) are separate entries with their own period_end."""
 
 
 # ── Normalisation helpers ────────────────────────────────────────────────────

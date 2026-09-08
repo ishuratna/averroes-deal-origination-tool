@@ -173,6 +173,9 @@ chk("NEW investors are merged in as a fill, nothing removed",
 chk("...and the label names what was added", "added: Martlet Capital" in add["fills"][0]["label"], True)
 chk("{value, evidence} shape carries the evidence through",
     plan_updates({"name": "X", "employees": 20}, {"company": {"employees": {"value": 34, "evidence": "slide 3"}}})["conflicts"][0]["evidence"], "slide 3")
+cagr = plan_updates({"name": "X"}, {"company": {"revenue_cagr_3yr_pct": {"value": 92, "evidence": "p6"}}})
+chk("multi-year CAGR lands in its own column, not last-year growth",
+    cagr["fills"][0]["writes"], {"revenue_cagr_3yr_pct": 92.0})
 chk("fields off the schema are ignored entirely",
     plan_updates(company, {"company": {"status": "Won", "averroes_fit_score": 1.0, "contact_email": "x@y.z"}}),
     {"fills": [], "conflicts": []})
