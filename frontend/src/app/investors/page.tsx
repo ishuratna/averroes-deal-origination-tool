@@ -255,7 +255,6 @@ function InvestorsInner() {
   const regionOf = (i: Investor) => i.global_region || i.hq_country || i.region || '';
   const regions = Array.from(new Set(investors.map(regionOf).filter(Boolean))).sort();
   const allTags = Array.from(new Set(investors.flatMap(i => parseTags(i.network_tags)))).sort();
-  const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
 
   const filtered = investors.filter(i => {
     const q = searchQuery.toLowerCase();
@@ -268,6 +267,8 @@ function InvestorsInner() {
     const matchesGcc = !gccOnly || isGcc(i);
     return matchesSearch && matchesStage && matchesType && matchesRegion && matchesTier && matchesTag && matchesGcc;
   });
+  // Computed AFTER filtered (a use-before-declaration here crashed the page at runtime, 8 Sep 2026)
+  const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
 
   const stats = {
     total: investors.length,
