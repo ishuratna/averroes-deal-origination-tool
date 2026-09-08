@@ -2747,6 +2747,22 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
 
+    # Companies House figures also land in the multi-year store, FILL-ONLY: a
+    # (period, metric) we already hold - from an earlier filing or a founder's
+    # document - is never overwritten by an automated run (the same rule as
+    # the IFNULL writes above; only a person confirms a replacement).
+    try:
+        from services.doc_smartfill import cells_from_columns
+        ch_cells = cells_from_columns(ch_data, "Companies House")
+        if ch_cells:
+            held = {(c["period_end"], c["metric"], c.get("segment") or "")
+                    for c in bq_handler.ensure_financials_seeded({"name": company_name, **ch_data})}
+            new_cells = [c for c in ch_cells if (c["period_end"], c["metric"], "") not in held]
+            if new_cells:
+                bq_handler.upsert_financials(company_name, new_cells, "Companies House", recorded_by="smartfill")
+    except Exception as e:
+        logger.warning(f"[SmartFill] financials store update skipped for {company_name}: {e}")
+
     # Auto-draft: a freshly Qualified company gets its outreach email drafted
     # immediately, so the button already reads "Review & Send" the moment it
     # lands in the pipeline. Cost-safe: ONE ungrounded Gemini call — the news
@@ -4164,6 +4180,50 @@ async def email_docs_ingest(company_name: str, req: IngestRequest):
             pass
 
 
+@app.get("/company/{company_name}/financials")
+async def company_financials(company_name: str):
+    """Every figure held for the company, by period and metric, with source and
+    evidence (company_financials). Seeds the store from the legacy columns on
+    first read so nothing already known disappears from the new view."""
+    company = bq_handler.get_company_full(company_name)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+    return {"company": company_name, "cells": bq_handler.ensure_financials_seeded(company)}
+
+
+@app.post("/admin/financials-backfill")
+async def financials_backfill(request: Request, dry_run: int = Query(1), limit: int = Query(20000)):
+    """Seed company_financials from the legacy y1..y3 columns for every company
+    that has figures but no rows yet. Idempotent; defaults to a preview."""
+    _require_token(request)
+    from services.doc_smartfill import cells_from_columns
+    rows = bq_handler.get_universe_slim(include_hidden=True)
+    have = set()
+    try:
+        have = {r["company_name"] for r in bq_handler._run_query(
+            f"SELECT DISTINCT company_name FROM `{bq_handler._ensure_financials_table()}`")}
+    except Exception:
+        pass
+    todo = []
+    for c in rows:
+        if c.get("name") in have:
+            continue
+        cells = cells_from_columns(c, "Companies House" if c.get("ch_company_number") else "Record (import)")
+        if cells:
+            todo.append((c["name"], cells))
+    if dry_run:
+        return {"status": "Preview", "companies_with_figures": len(todo), "already_seeded": len(have),
+                "sample": [n for n, _ in todo[:10]]}
+    done, failed = 0, []
+    for name, cells in todo[:limit]:
+        try:
+            bq_handler.upsert_financials(name, cells, cells[0]["source"], recorded_by="backfill")
+            done += 1
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+    return {"status": "Success", "seeded": done, "failed": failed[:20]}
+
+
 class DocReviewRequest(BaseModel):
     gcs_path: str
     accept: List[str]                    # item keys Ishu ticked; the rest are declined
@@ -4192,6 +4252,7 @@ async def email_docs_review(company_name: str, req: DocReviewRequest):
     company = bq_handler.get_company_full(company_name)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+    company["_financials"] = bq_handler.ensure_financials_seeded(company)
 
     accepted = [i for i in pending if i.get("key") in set(req.accept)]
     declined = [i for i in pending if i.get("key") not in set(req.accept)]

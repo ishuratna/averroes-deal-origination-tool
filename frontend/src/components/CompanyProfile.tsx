@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, FinCell, FIN_METRIC_LABELS, FIN_METRIC_ORDER, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -209,6 +209,58 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
   );
 }
 
+// ── Financials by year: metrics x periods from company_financials ──────────
+// Every figure we hold, whatever the source (Companies House filings, founder
+// documents, imports), one column per period, forecast columns flagged, a
+// revenue split by segment under the revenue row. Hover a cell for its source
+// and evidence. This is the VIEW of the store; nothing here is computed.
+function FinGrid({ cells }: { cells: FinCell[] }) {
+  if (!cells.length) return <p className="cp-empty">No year-by-year figures held yet. Companies House filings and uploaded documents fill this in.</p>;
+  const periods = Array.from(new Set(cells.map(c => c.period_end))).sort();
+  const basisOf: Record<string, string> = {};
+  cells.forEach(c => { if (c.basis && c.basis !== 'actual') basisOf[c.period_end] = c.basis; });
+  const whole = cells.filter(c => !c.segment);
+  const segs = cells.filter(c => c.segment && c.metric === 'revenue');
+  const metrics = FIN_METRIC_ORDER.filter(m => whole.some(c => c.metric === m));
+  const segNames = Array.from(new Set(segs.map(c => c.segment))).sort();
+  const cell = (m: string, p: string, seg = '') => cells.find(c => c.metric === m && c.period_end === p && (c.segment || '') === seg);
+  const fmt = (c?: FinCell) => {
+    if (!c) return '';
+    if (c.unit === 'pct') return `${c.value.toFixed(1)}%`;
+    if (c.unit === 'count') return Math.round(c.value).toLocaleString();
+    const a = Math.abs(c.value);
+    const s = a >= 1e6 ? `£${(a / 1e6).toFixed(2)}m` : a >= 1e3 ? `£${Math.round(a / 1e3)}k` : `£${Math.round(a)}`;
+    return c.value < 0 ? `(${s})` : s;
+  };
+  const fy = (p: string) => { const [y, m] = p.split('-'); return m === '12' ? `FY${y}` : `FY${y} (${m}/${y})`; };
+  const row = (label: string, m: string, seg = '', sub = false) => (
+    <tr key={`${m}:${seg}`} className={sub ? 'sub' : ''}>
+      <td className="lbl">{label}</td>
+      {periods.map(p => { const c = cell(m, p, seg); return (
+        <td key={p} className={`num${c && c.value < 0 ? ' neg' : ''}${c && c.basis !== 'actual' ? ' fc' : ''}`}
+            title={c ? `${c.source}${c.evidence ? ` — ${c.evidence}` : ''}` : ''}>{fmt(c) || '·'}</td>
+      ); })}
+    </tr>
+  );
+  return (
+    <div className="cp-fin-wrap">
+      <table className="cp-fin">
+        <thead><tr><th></th>{periods.map(p => (
+          <th key={p}>{fy(p)}{basisOf[p] ? <span className="fc-tag">{basisOf[p]}</span> : null}</th>))}</tr></thead>
+        <tbody>
+          {metrics.flatMap(m => [
+            row(FIN_METRIC_LABELS[m] || m, m),
+            ...(m === 'revenue' ? segNames.map(sn => row(`· ${sn}`, 'revenue', sn, true)) : []),
+          ])}
+        </tbody>
+      </table>
+      <div className="cp-fin-foot">
+        Sources: {Array.from(new Set(cells.map(c => c.source))).join(' · ')}. Hover a figure for its evidence. Greyed columns are budget/forecast.
+      </div>
+    </div>
+  );
+}
+
 export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged, initialTab }: Props) {
   // The profile follows a COMPANY, not a list position. `index` is where the
   // user clicked (and moves when they use the arrows); but after onChanged()
@@ -228,6 +280,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
+  const [finCells, setFinCells] = useState<FinCell[]>([]);
   // Document SmartFill review: the document disagreed with stored values and
   // Ishu decides, per field, which to keep. Opens right after an upload or
   // from the "Review" button on a filed document.
@@ -246,6 +299,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
       setDocReview(null);
       const docs = await dealApi.getEmailDocs(docReview.company);
       setEmailDocs(docs.documents || []);
+      dealApi.getFinancials(docReview.company).then(r => setFinCells(r.cells || [])).catch(() => {});
       await onChanged();
       if (r?.rescore && r.rescore.old !== r.rescore.new)
         alert(`Applied ${r.accepted} change(s). Fit score ${r.rescore.old == null ? 'unscored' : Number(r.rescore.old).toFixed(2)} → ${r.rescore.new == null ? 'unscored' : Number(r.rescore.new).toFixed(2)}.`);
@@ -265,7 +319,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
   useEffect(() => {
     if (!baseCompany) return;
-    setActivity([]); setEmails([]); setEmailDocs([]); setConnections({ investors: [], siblings: [] });
+    setActivity([]); setEmails([]); setEmailDocs([]); setFinCells([]); setConnections({ investors: [], siblings: [] });
     setFullCompany(null);
     dealApi.getCompanyFull(baseCompany.name).then(r => {
       if (r && r.name) {
@@ -277,6 +331,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
     dealApi.getEmailDocs(baseCompany.name).then(r => setEmailDocs(r.documents || [])).catch(() => {});
+    dealApi.getFinancials(baseCompany.name).then(r => setFinCells(r.cells || [])).catch(() => {});
     dealApi.getCompanyConnections(baseCompany.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
   }, [baseCompany?.name]);
 
@@ -536,6 +591,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       // drop the socket while the backend finishes regardless).
                       const settle = async (r: { gcs_path: string; pending: DocReviewItem[]; fills_applied: number; filled?: DocReviewItem[]; summary?: string; read_error?: string }) => {
                         await onChanged();
+                        dealApi.getFinancials(baseCompany.name).then(x => setFinCells(x.cells || [])).catch(() => {});
                         if (r.pending?.length || r.filled?.length) openReview(r.gcs_path, f.name, r.pending || [], r.fills_applied || 0, r.filled || []);
                         else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
                         else alert(`Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
@@ -633,6 +689,9 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
           {tab === 'Financials' && (
             <>
+              <div className="cp-section-title">Financials by year</div>
+              <div className="cp-card"><FinGrid cells={finCells} /></div>
+
               <div className="cp-stats">
                 <div className="cp-stat"><span className="cp-stat-label">Revenue {company.revenue_y1_date ? `(${company.revenue_y1_date})` : ''}</span><span className="cp-stat-value">{fmtRaw(company.revenue_y1) || fmtM(company.revenue_m) || '—'}</span></div>
                 <div className="cp-stat"><span className="cp-stat-label">Gross profit</span><span className="cp-stat-value">{fmtRaw(company.gross_profit_y1) || '—'}</span></div>

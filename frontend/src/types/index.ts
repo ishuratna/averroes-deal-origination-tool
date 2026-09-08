@@ -383,6 +383,27 @@ export interface EmailDoc {
   read_error?: string;   // why the AI read failed, '' when it succeeded
 }
 
+// One figure in company_financials: (period_end, metric, segment) -> value.
+export interface FinCell {
+  period_end: string;     // YYYY-MM-DD
+  metric: string;         // revenue | arr | gross_profit | gross_margin_pct | ebitda | ... | employees | customers
+  segment: string;        // '' for the whole company; a product/segment name for a revenue split
+  value: number;
+  unit: 'GBP' | 'pct' | 'count' | string;
+  basis: 'actual' | 'budget' | 'forecast' | string;
+  source: string;
+  evidence: string;
+  recorded_at?: string;
+}
+
+export const FIN_METRIC_LABELS: Record<string, string> = {
+  revenue: 'Revenue', arr: 'ARR', gross_profit: 'Gross profit', gross_margin_pct: 'Gross margin',
+  ebitda: 'EBITDA', ebitda_margin_pct: 'EBITDA margin', profit_before_tax: 'Profit before tax',
+  net_income: 'Net income', cash: 'Cash', net_assets: 'Net assets', total_assets: 'Total assets',
+  employees: 'Employees', customers: 'Customers',
+};
+export const FIN_METRIC_ORDER = Object.keys(FIN_METRIC_LABELS);
+
 export interface DocReviewItem {
   key: string;        // column, or 'financials' for the year table
   label: string;

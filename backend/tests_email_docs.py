@@ -127,38 +127,72 @@ chk("a longer description is a fill (longer-wins doctrine)",
     "description" in {i["key"] for i in plan_updates(company, {"company": {
         "description": company["description"] + " Serves 200 enterprise customers across the UK."}})["fills"]}, True)
 
-fin = fills.get("financials") or conf.get("financials")
-chk("financials item produced", fin is not None, True)
-chk("a NEWER actual year is a FILL (adds a year, shifts the rest down)", "financials" in fills, True)
-w = fin["writes"]
-chk("new y1 = FY25 from the document", (w["revenue_y1"], w["revenue_y1_date"]), (5_200_000.0, "2025-03-31"))
-chk("old y1 shifted to y2", (w["revenue_y2"], w["revenue_y2_date"]), (4_000_000.0, "2024-03-31"))
-chk("old y2 shifted to y3", (w["revenue_y3"], w["revenue_y3_date"]), (3_000_000.0, "2023-03-31"))
-chk("loss kept as a negative PBT", w["profit_y1"], -250_000.0)
-chk("forecast year is IGNORED for the filed table", 9_000_000.0 not in (w["revenue_y1"], w["revenue_y2"], w["revenue_y3"]), True)
+# ── Multi-year store: cells, not slots ──
+from services.doc_smartfill import cells_from_columns, project_to_columns  # noqa: E402
+fin_fill = fills.get("financials:2025-03-31:new")
+chk("a year we do not hold is a FILL item, grouped per period", fin_fill is not None, True)
+cells = fin_fill["writes"]["financials"]
+chk("all four stated metrics become cells",
+    sorted(c["metric"] for c in cells), ["cash", "gross_profit", "profit_before_tax", "revenue"])
+chk("loss kept as a negative PBT cell", next(c["value"] for c in cells if c["metric"] == "profit_before_tax"), -250_000.0)
+chk("forecast year is a separate, flagged fill (never actual)",
+    fills["financials:2026-03-31:new"]["writes"]["financials"][0]["basis"], "forecast")
+chk("...and its label says so", "(forecast)" in fills["financials:2026-03-31:new"]["label"], True)
 chk("derived latest revenue conflicts with the stored 3.0m estimate",
     conf["revenue_estimate_m"]["writes"]["revenue_estimate_m"], 5.2)
-chk("derived growth 4.0m -> 5.2m = +30% is a fill (nothing stored)",
+chk("derived growth uses store + new year: 4.0m -> 5.2m = +30% (fill, nothing stored)",
     fills["revenue_growth_pct"]["writes"]["revenue_growth_pct"], 30.0)
 
-# Same year, different number -> conflict; same number -> nothing.
+# Same year, same number -> nothing; different number -> conflict cell.
 same = plan_updates(company, {"financial_years": [{"period_end": "2024-03-31", "basis": "actual", "revenue": 4_010_000}]})
-chk("shared year within 1% is NOT a change", same["fills"] + same["conflicts"] == [] or
-    all(i["key"] != "financials" for i in same["fills"] + same["conflicts"]), True)
+chk("a held cell within 1% is NOT a change", same, {"fills": [], "conflicts": []})
 diff = plan_updates(company, {"financial_years": [{"period_end": "2024-03-31", "basis": "actual", "revenue": 4_800_000}]})
-chk("shared year that DISAGREES is a conflict", "financials" in {i["key"] for i in diff["conflicts"]}, True)
-chk("...and figures DERIVED from an unconfirmed table wait too (growth is not auto-written)",
-    diff["fills"], [])
-# 4th year would push a stored year out of the window -> confirmation.
-full = dict(company, revenue_y3=2_000_000, revenue_y3_date="2022-03-31")
-drop = plan_updates(full, {"financial_years": [{"period_end": "2025-03-31", "basis": "actual", "revenue": 5_200_000}]})
-chk("a year falling off the 3-year window needs confirmation", "financials" in {i["key"] for i in drop["conflicts"]}, True)
-chk("...and the label says which year", "2022-03-31" in next(i for i in drop["conflicts"] if i["key"] == "financials")["label"], True)
-# Stored values without dates cannot be aligned -> confirmation.
-undated = plan_updates({"name": "X", "revenue_y1": 1_000_000},
-                       {"financial_years": [{"period_end": "2025-03-31", "basis": "actual", "revenue": 2_000_000}]})
-chk("undated stored figures -> conflict (never silently replaced)",
-    "financials" in {i["key"] for i in undated["conflicts"]} and not undated["fills"], True)
+chk("a held cell that DISAGREES is a conflict for that year", [i["key"] for i in diff["conflicts"]][0], "financials:2024-03-31:changed")
+chk("...figures derived from an unconfirmed year wait too", diff["fills"], [])
+chk("conflict shows stored vs document with the stored source",
+    "£4.00m" in diff["conflicts"][0]["old"] and "£4.80m" in diff["conflicts"][0]["new"], True)
+# A year we hold gains a metric we lacked: fill, no conflict.
+gain = plan_updates(company, {"financial_years": [{"period_end": "2024-03-31", "basis": "actual",
+                                                    "revenue": 4_000_000, "gross_margin_pct": 78.5}]})
+chk("new metric on a held year is a fill; the matching revenue is silent",
+    ([i["key"] for i in gain["fills"] if i["key"].startswith("financials")],
+     [c["metric"] for c in gain["fills"][0]["writes"]["financials"]]),
+    (["financials:2024-03-31:new"], ["gross_margin_pct"]))
+# Segments ride as revenue cells with a segment name.
+seg = plan_updates({"name": "X"}, {"financial_years": [{"period_end": "2025-12-31", "basis": "actual", "revenue": 3_200_000,
+                                                          "segments": [{"name": "Instruments", "revenue": 2_000_000},
+                                                                       {"name": "Software", "revenue": 1_200_000}]}]})
+sc = seg["fills"][0]["writes"]["financials"]
+chk("segment split stored as revenue cells with segment", sorted(c["segment"] for c in sc), ["", "Instruments", "Software"])
+# When the store is loaded (company['_financials']) it is the truth, not the columns.
+stored = dict(company, _financials=[{"period_end": "2024-03-31", "metric": "revenue", "segment": "", "value": 4_000_000,
+                                     "unit": "GBP", "basis": "actual", "source": "Companies House"}])
+chk("store rows take precedence over legacy columns",
+    plan_updates(stored, {"financial_years": [{"period_end": "2023-03-31", "basis": "actual", "revenue": 3_000_000}]})["fills"][0]["key"],
+    "financials:2023-03-31:new")
+
+print()
+print("── Legacy columns <-> store: seed and projection ──")
+seeded = cells_from_columns({"revenue_y1": 4_000_000, "revenue_y1_date": "2024-03-31", "cash_y1": 500_000,
+                             "revenue_y2": 3_000_000, "revenue_y2_date": "2023-03-31", "employees_ch": 28}, "Companies House")
+chk("seed from columns yields dated cells", sorted((c["period_end"], c["metric"]) for c in seeded),
+    [("2023-03-31", "revenue"), ("2024-03-31", "cash"), ("2024-03-31", "employees"), ("2024-03-31", "revenue")])
+chk("undated slots are not seeded", cells_from_columns({"revenue_y1": 1}, "x"), [])
+proj = project_to_columns([
+    {"period_end": "2025-12-31", "metric": "revenue", "segment": "", "value": 3_200_000, "basis": "actual"},
+    {"period_end": "2025-12-31", "metric": "ebitda", "segment": "", "value": -320_000, "basis": "actual"},
+    {"period_end": "2024-12-31", "metric": "revenue", "segment": "", "value": 1_700_000, "basis": "actual"},
+    {"period_end": "2023-12-31", "metric": "revenue", "segment": "", "value": 900_000, "basis": "actual"},
+    {"period_end": "2022-12-31", "metric": "revenue", "segment": "", "value": 500_000, "basis": "actual"},
+    {"period_end": "2026-12-31", "metric": "revenue", "segment": "", "value": 6_000_000, "basis": "forecast"},
+    {"period_end": "2025-12-31", "metric": "revenue", "segment": "Software", "value": 1_000_000, "basis": "actual"},
+])
+chk("projection = latest three ACTUAL whole-company years",
+    (proj["revenue_y1"], proj["revenue_y1_date"], proj["revenue_y2"], proj["revenue_y3"], proj["revenue_y3_date"]),
+    (3_200_000.0, "2025-12-31", 1_700_000.0, 900_000.0, "2023-12-31"))
+chk("forecast and segment rows never reach the legacy columns", 6_000_000.0 not in proj.values() and 1_000_000.0 not in proj.values(), True)
+chk("EBITDA margin derived for the latest year", proj["ebitda_margin_pct"], -10.0)
+chk("empty store clears the slots (None), never leaves stale values", project_to_columns([])["revenue_y1"], None)
 
 # Refinements from the first live review (Plastometrex, 8 Sep 2026)
 sub = plan_updates({"name": "X", "active_investors": "EMV Capital, Innovate UK, Vanneck",
@@ -185,8 +219,8 @@ chk("zero/negative headcount and garbage numbers are refused",
 chk("a no-change proposal is dropped", plan_updates(company, {"company": {"employees": 20}}), {"fills": [], "conflicts": []})
 chk("empty extraction is safe", plan_updates(company, {}), {"fills": [], "conflicts": []})
 chk("None extraction is safe", plan_updates(company, None), {"fills": [], "conflicts": []})
-chk("every write column has a declared BigQuery type",
-    all(c in COLUMN_TYPES for i in plan["fills"] + plan["conflicts"] for c in i["writes"]), True)
+chk("every write column has a declared BigQuery type (or is the virtual financials list)",
+    all(c in COLUMN_TYPES or c == "financials" for i in plan["fills"] + plan["conflicts"] for c in i["writes"]), True)
 chk("merge_writes flattens items", merge_writes([{"writes": {"a": 1}}, {"writes": {"b": 2}}]), {"a": 1, "b": 2})
 
 print()

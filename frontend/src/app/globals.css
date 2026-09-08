@@ -1013,3 +1013,17 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-review-table tr.filled td { cursor: default; color: #334155; }
 .cp-review-table tr.filled td:first-child { color: #15803d; font-weight: 800; }
 .cp-review-table tr.filled td.new { color: #15803d; }
+
+/* ── Financials by year grid (CompanyProfile) ───────────────────────────── */
+.cp-fin-wrap { overflow-x: auto; }
+.cp-fin { width: 100%; border-collapse: collapse; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.cp-fin th { text-align: right; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: #64748b; padding: 0.35rem 0.6rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+.cp-fin th:first-child { text-align: left; }
+.cp-fin th .fc-tag { display: inline-block; margin-left: 0.35rem; font-size: 0.6rem; padding: 0 0.3rem; border-radius: 4px; background: #f1f5f9; color: #64748b; text-transform: lowercase; letter-spacing: 0; }
+.cp-fin td { padding: 0.38rem 0.6rem; border-bottom: 1px solid #f1f5f9; }
+.cp-fin td.lbl { color: #0f172a; font-weight: 600; white-space: nowrap; }
+.cp-fin tr.sub td.lbl { color: #64748b; font-weight: 500; padding-left: 1.2rem; }
+.cp-fin td.num { text-align: right; color: #0f172a; cursor: help; }
+.cp-fin td.num.neg { color: #dc2626; }
+.cp-fin td.num.fc { color: #94a3b8; font-style: italic; }
+.cp-fin-foot { margin-top: 0.5rem; font-size: 0.72rem; color: #94a3b8; }

@@ -87,7 +87,36 @@ def _norm_url(v) -> str:
     v = re.sub(r"^www\d?\.", "", v)
     return v.rstrip("/")
 
-# Financial year table: metric -> the column for slot 1/2/3 (None = no column).
+# ── Multi-year financials (per Ishu, 8 Sep 2026) ────────────────────────────
+# The record used to have THREE positional revenue slots and a few single-year
+# columns, so a deck's FY2021-2025 chart, gross margin by year or a product
+# split had nowhere to go. The store is now `company_financials`: one row per
+# (company, period_end, metric, segment) with unit, basis, source and evidence,
+# unbounded in years and metrics. The legacy revenue_y1..y3 / gross_profit /
+# profit / cash / net_assets / total_assets columns are a PROJECTION of the
+# latest three ACTUAL years, kept so scoring, the IC deck and old views work.
+#
+# metric -> (unit, label). Units: GBP (absolute), pct, count.
+METRICS: Dict[str, Tuple[str, str]] = {
+    "revenue":           ("GBP",   "Revenue"),
+    "arr":               ("GBP",   "ARR"),
+    "gross_profit":      ("GBP",   "Gross profit"),
+    "gross_margin_pct":  ("pct",   "Gross margin"),
+    "ebitda":            ("GBP",   "EBITDA"),
+    "ebitda_margin_pct": ("pct",   "EBITDA margin"),
+    "profit_before_tax": ("GBP",   "Profit before tax"),
+    "net_income":        ("GBP",   "Net income"),
+    "cash":              ("GBP",   "Cash"),
+    "net_assets":        ("GBP",   "Net assets"),
+    "total_assets":      ("GBP",   "Total assets"),
+    "employees":         ("count", "Employees"),
+    "customers":         ("count", "Customers"),
+}
+_METRIC_SIGNED = {"gross_profit", "gross_margin_pct", "ebitda", "ebitda_margin_pct",
+                  "profit_before_tax", "net_income", "net_assets"}
+BASES = ("actual", "budget", "forecast")
+
+# Legacy projection: metric -> the column for slot 1/2/3 (None = no column).
 YEAR_METRICS: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {
     "revenue":           ("revenue_y1", "revenue_y2", "revenue_y3"),
     "gross_profit":      ("gross_profit_y1", "gross_profit_y2", None),
@@ -97,7 +126,61 @@ YEAR_METRICS: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {
     "total_assets":      ("total_assets_y1", None, None),
 }
 YEAR_DATE_COLS = ("revenue_y1_date", "revenue_y2_date", "revenue_y3_date")
-_YEAR_SIGNED = {"profit_before_tax", "net_assets"}
+_YEAR_SIGNED = _METRIC_SIGNED
+
+
+def cells_from_columns(row: Dict, source: str) -> List[Dict]:
+    """Seed cells from the legacy y1..y3 columns (Companies House / imports),
+    so a company's existing figures appear in the store before a document
+    adds to them. Only slots with a period date can be placed."""
+    cells: List[Dict] = []
+    for slot in range(3):
+        d = _period(row.get(YEAR_DATE_COLS[slot])) or (
+            _period(row.get("profit_y1_date")) if slot == 0 else None)
+        if not d:
+            continue
+        for m, cols in YEAR_METRICS.items():
+            col = cols[slot]
+            if col and row.get(col) is not None:
+                v = _num(row.get(col), signed=True)
+                if v is not None and (v != 0 or m in ("profit_before_tax", "net_assets")):
+                    cells.append({"period_end": d, "metric": m, "segment": "", "value": v,
+                                  "unit": "GBP", "basis": "actual", "source": source, "evidence": ""})
+        if slot == 0 and row.get("employees_ch") is not None:
+            v = _num(row.get("employees_ch"))
+            if v:
+                cells.append({"period_end": d, "metric": "employees", "segment": "", "value": v,
+                              "unit": "count", "basis": "actual", "source": source, "evidence": ""})
+    return cells
+
+
+def project_to_columns(cells: List[Dict]) -> Dict:
+    """The legacy columns from the store: latest three ACTUAL, whole-company
+    periods that carry a revenue or balance-sheet figure. Returns the column
+    map to UPDATE on targets (None clears a slot that no longer exists)."""
+    by_period: Dict[str, Dict[str, float]] = {}
+    for c in cells:
+        if c.get("basis", "actual") != "actual" or c.get("segment"):
+            continue
+        if c["metric"] in YEAR_METRICS or c["metric"] == "ebitda" or c["metric"] == "revenue":
+            by_period.setdefault(c["period_end"], {})[c["metric"]] = float(c["value"])
+    periods = sorted((d for d, m in by_period.items() if any(k in YEAR_METRICS for k in m)), reverse=True)[:3]
+    writes: Dict = {}
+    for slot in range(3):
+        d = periods[slot] if slot < len(periods) else None
+        metrics = by_period.get(d, {}) if d else {}
+        writes[YEAR_DATE_COLS[slot]] = d
+        for m, cols in YEAR_METRICS.items():
+            col = cols[slot]
+            if col:
+                writes[col] = metrics.get(m)
+    writes["profit_y1_date"] = periods[0] if periods else None
+    if periods:
+        m0 = by_period[periods[0]]
+        if m0.get("revenue") and m0.get("ebitda") is not None:
+            writes["ebitda_margin_pct"] = round(m0["ebitda"] / m0["revenue"] * 100, 1)
+    return writes
+
 
 # Every column this module may write, with its BigQuery type (the apply step
 # binds parameters by type; an unknown column is refused, never guessed).
@@ -105,6 +188,8 @@ COLUMN_TYPES: Dict[str, str] = {k: v[0] for k, v in SCALAR_FIELDS.items()}
 COLUMN_TYPES.update({c: "FLOAT64" for cols in YEAR_METRICS.values() for c in cols if c})
 COLUMN_TYPES.update({c: "STRING" for c in YEAR_DATE_COLS})
 COLUMN_TYPES.update({"revenue_source": "STRING", "profit_y1_date": "STRING"})
+# "financials" is a virtual write: a list of cells for company_financials, applied
+# by the I/O layer (upsert + projection), never a targets column itself.
 
 
 # ── Office files -> text (so the AI can read a raw deck or model) ────────────
@@ -252,15 +337,15 @@ def pdf_pages_to_images(data: bytes, max_pages: int = MAX_VISION_PAGES,
 
 def extraction_prompt(company: Dict, filename: str) -> str:
     current = {f: company.get(f) for f in SCALAR_FIELDS}
-    years = []
-    for i, dcol in enumerate(YEAR_DATE_COLS, 1):
-        rev = company.get(f"revenue_y{i}")
-        if rev is not None or company.get(dcol):
-            years.append({"period_end": company.get(dcol), "revenue": rev})
+    held = {}
+    for c in (company.get("_financials") or cells_from_columns(company, "record")):
+        if c.get("basis", "actual") == "actual" and not c.get("segment"):
+            held.setdefault(c["period_end"], {})[c["metric"]] = c["value"]
+    years = [{"period_end": d, **m} for d, m in sorted(held.items(), reverse=True)][:8]
     return f"""A company we are evaluating, "{company.get('name')}", shared the attached document
 ("{filename}"). Our current record holds:
 {json.dumps(current, default=str)}
-Financial years on file (GBP, period end): {json.dumps(years, default=str)}
+Financial figures on file (GBP, by period end): {json.dumps(years, default=str)}
 
 Extract EVERYTHING the document clearly states about the company. Do not invent
 or infer values that are not in the document. Every number needs the exact
@@ -291,9 +376,12 @@ EVERY company field is an object {{"value": ..., "evidence": "quote + where (pag
   }},
   "financial_years": [
     {{"period_end": "YYYY-MM-DD", "basis": "actual | budget | forecast",
-      "revenue": 5200000, "gross_profit": 4160000, "ebitda": -250000,
-      "profit_before_tax": -300000, "cash": 812345, "net_assets": 1900000,
-      "total_assets": 2500000, "employees": 34, "evidence": "slide 9, P&L table"}}
+      "revenue": 5200000, "arr": 4800000, "gross_profit": 4160000, "gross_margin_pct": 80.0,
+      "ebitda": -250000, "ebitda_margin_pct": -4.8, "profit_before_tax": -300000, "net_income": -310000,
+      "cash": 812345, "net_assets": 1900000, "total_assets": 2500000,
+      "employees": 34, "customers": 120,
+      "segments": [{{"name": "Instruments", "revenue": 3100000}}, {{"name": "Software", "revenue": 2100000}}],
+      "evidence": "slide 9, P&L table; revenue chart p6"}}
   ]
 }}
 Rules: all money in GBP as absolute numbers (not thousands) except the *_m
@@ -308,7 +396,10 @@ bar/point, use the data labels where printed, otherwise your best reading of
 the axis, and say "read from chart, approx." in that year's evidence. A deck
 that says "92% growth 2021-2025" has revenue for 2021, 2022, 2023, 2024 and
 2025 somewhere in it; find them. Prior years of a table (e.g. FY24 column
-beside FY25) are separate entries with their own period_end."""
+beside FY25) are separate entries with their own period_end. Include every
+metric the year shows (margins as percentages, counts as integers); include a
+revenue split by product/segment/geography under "segments" when the document
+gives one. Omit metrics a year does not state - never fill a gap by guessing."""
 
 
 # ── Normalisation helpers ────────────────────────────────────────────────────
@@ -455,141 +546,125 @@ def _scalar_items(company: Dict, extracted: Dict, evidence: Dict) -> List[Dict]:
     return items
 
 
-def _stored_years(company: Dict) -> Tuple[List[Tuple[str, Dict]], bool]:
-    """[(period_end, {metric: value})] for the slots that hold anything, and a
-    flag: True when some slot holds a value but no date (cannot be aligned)."""
-    years, undated = [], False
-    for slot in range(3):
-        metrics = {}
-        for m, cols in YEAR_METRICS.items():
-            col = cols[slot]
-            if col and company.get(col) is not None:
-                v = _num(company.get(col), signed=True)
-                if v is not None:
-                    metrics[m] = v
-        d = _period(company.get(YEAR_DATE_COLS[slot]))
-        if not d and slot == 0 and metrics.get("profit_before_tax") is not None:
-            d = _period(company.get("profit_y1_date"))
-        if metrics:
-            if not d:
-                undated = True
-            else:
-                years.append((d, metrics))
-    return years, undated
-
-
-def _doc_years(extracted: Dict) -> Tuple[Dict[str, Dict], str]:
-    """{period_end: {metric: value}} for ACTUAL years only, plus joined evidence."""
-    out: Dict[str, Dict] = {}
-    evs = []
+def _doc_cells(extracted: Dict) -> List[Dict]:
+    """Cells the document states: [{period_end, metric, segment, value, unit,
+    basis, evidence}]. Forecast/budget years are kept (flagged), segment
+    revenue rides as metric 'revenue' with a segment name."""
+    cells: List[Dict] = []
+    seen = set()
     for y in extracted.get("financial_years") or []:
         if not isinstance(y, dict):
             continue
-        if _clean_str(y.get("basis") or "actual").lower() != "actual":
-            continue
+        basis = _clean_str(y.get("basis") or "actual").lower()
+        if basis not in BASES:
+            basis = "actual"
         d = _period(y.get("period_end"))
         if not d:
             continue
-        metrics = {}
-        for m in YEAR_METRICS:
-            v = _num(y.get(m), signed=m in _YEAR_SIGNED)
-            if v is not None and (m in _YEAR_SIGNED or v > 0):
-                metrics[m] = v
-        if metrics:
-            out.setdefault(d, {}).update(metrics)
-            if y.get("evidence"):
-                evs.append(f"{d}: {_clean_str(y['evidence'])}")
-    return out, "; ".join(evs)[:300]
+        ev = _clean_str(y.get("evidence") or "")[:300]
+        for m, (unit, _label) in METRICS.items():
+            v = _num(y.get(m), signed=m in _METRIC_SIGNED)
+            if v is None or (unit == "count" and v <= 0) or (m not in _METRIC_SIGNED and v <= 0):
+                continue
+            key = (d, m, "")
+            if key in seen:
+                continue
+            seen.add(key)
+            cells.append({"period_end": d, "metric": m, "segment": "", "value": v,
+                          "unit": unit, "basis": basis, "evidence": ev})
+        for seg in y.get("segments") or []:
+            if not isinstance(seg, dict):
+                continue
+            name = _clean_str(seg.get("name") or "")[:80]
+            v = _num(seg.get("revenue"))
+            if not name or not v:
+                continue
+            key = (d, "revenue", name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            cells.append({"period_end": d, "metric": "revenue", "segment": name, "value": v,
+                          "unit": "GBP", "basis": basis, "evidence": ev})
+    return cells
 
 
-def _table_writes(years: List[Tuple[str, Dict]]) -> Dict:
-    """Column writes for an ordered (newest first) list of up to 3 years."""
-    writes: Dict = {}
-    for slot in range(3):
-        d, metrics = (years[slot] if slot < len(years) else (None, {}))
-        writes[YEAR_DATE_COLS[slot]] = d
-        for m, cols in YEAR_METRICS.items():
-            col = cols[slot]
-            if col:
-                writes[col] = metrics.get(m)
-    if years:
-        writes["profit_y1_date"] = years[0][0]
-    return writes
-
-
-def _table_text(years: List[Tuple[str, Dict]]) -> str:
-    if not years:
-        return "(empty)"
-    rows = []
-    for d, m in years:
-        parts = [f"FY to {d}"]
-        for k, lab in (("revenue", "rev"), ("gross_profit", "GP"), ("profit_before_tax", "PBT"),
-                       ("cash", "cash"), ("net_assets", "net assets"), ("total_assets", "assets")):
-            if m.get(k) is not None:
-                parts.append(f"{lab} {_fmt_money(m[k])}")
-        rows.append(" · ".join(parts))
-    return "\n".join(rows)
+def _fmt_cell(c: Dict) -> str:
+    v = c["value"]
+    if c.get("unit") == "pct":
+        s = f"{v:+.1f}%"
+    elif c.get("unit") == "count":
+        s = f"{int(round(v)):,}"
+    else:
+        s = _fmt_money(v)
+    label = METRICS.get(c["metric"], ("", c["metric"]))[1]
+    if c.get("segment"):
+        label += f" · {c['segment']}"
+    return f"{label} {s}"
 
 
 def _financial_items(company: Dict, extracted: Dict) -> List[Dict]:
-    doc, evidence = _doc_years(extracted)
+    """Per CELL fill-or-confirm, grouped per period for the review.
+
+    existing cells come from company['_financials'] (the store) or, before a
+    company is seeded, from its legacy columns. A cell we do not hold is a
+    fill; one we hold with a different value is a conflict. Each period yields
+    at most one fill item and one conflict item, so the review reads as a
+    year-by-year table rather than fifty rows."""
+    doc = _doc_cells(extracted)
     if not doc:
         return []
-    stored, undated = _stored_years(company)
-    stored_map = dict(stored)
+    existing = {(c["period_end"], c["metric"], (c.get("segment") or "").lower()): c
+                for c in (company.get("_financials") or cells_from_columns(company, "record"))}
+    fills: Dict[str, List[Dict]] = {}
+    conflicts: Dict[str, List[Tuple[Dict, Dict]]] = {}
+    for c in doc:
+        key = (c["period_end"], c["metric"], c["segment"].lower())
+        old = existing.get(key)
+        if old is None:
+            fills.setdefault(c["period_end"], []).append(c)
+        elif not _same(float(old["value"]), c["value"]):
+            conflicts.setdefault(c["period_end"], []).append((old, c))
+    items: List[Dict] = []
+    for d in sorted(fills, reverse=True):
+        cs = fills[d]
+        basis = cs[0].get("basis", "actual")
+        items.append({"key": f"financials:{d}:new", "kind": "fill",
+                      "label": f"FY to {d}" + (f" ({basis})" if basis != "actual" else "") + f": {len(cs)} new figure(s)",
+                      "old": "(not held)", "new": "\n".join(_fmt_cell(c) for c in cs),
+                      "evidence": "; ".join(sorted({c["evidence"] for c in cs if c["evidence"]}))[:300],
+                      "writes": {"financials": cs}})
+    for d in sorted(conflicts, reverse=True):
+        pairs = conflicts[d]
+        items.append({"key": f"financials:{d}:changed", "kind": "conflict",
+                      "label": f"FY to {d}: {len(pairs)} figure(s) differ",
+                      "old": "\n".join(_fmt_cell(o) + (f"  [{o.get('source')}]" if o.get("source") else "") for o, _ in pairs),
+                      "new": "\n".join(_fmt_cell(n) for _, n in pairs),
+                      "evidence": "; ".join(sorted({n["evidence"] for _, n in pairs if n["evidence"]}))[:300],
+                      "writes": {"financials": [n for _, n in pairs]}})
+    return items
 
-    if undated:
-        # Values we cannot align to a period: replacing them is a decision.
-        new = sorted(doc.items(), key=lambda kv: kv[0], reverse=True)[:3]
-        return [{"key": "financials", "label": "Financials by year", "kind": "conflict",
-                 "old": "Stored figures have no period dates:\n" + "; ".join(
-                     f"{c}={_fmt_money(_num(company.get(c), signed=True))}"
-                     for cols in YEAR_METRICS.values() for c in cols
-                     if c and company.get(c) is not None),
-                 "new": _table_text(new), "evidence": evidence, "writes": _table_writes(new)}]
 
-    merged: Dict[str, Dict] = {d: dict(m) for d, m in stored}
-    disagreement = False
-    changed = False
-    for d, m in doc.items():
-        cur = merged.setdefault(d, {})
-        for k, v in m.items():
-            if k in cur and cur[k] is not None:
-                if not _same(cur[k], v):
-                    disagreement = True
-                    cur[k] = v            # document value shown as the proposal
-                    changed = True
-            else:
-                cur[k] = v
-                changed = True
-    if not changed:
+def _derived_items(company: Dict, fin_items: List[Dict], existing_keys: set) -> List[Dict]:
+    """From the whole-company ACTUAL revenue series AS IT WOULD STAND after the
+    document (store + fills; conflicts only if none pending): latest revenue ->
+    revenue_estimate_m, the two latest years -> revenue_growth_pct. Only when
+    the document did not state those directly."""
+    if not fin_items:
         return []
-    ordered = sorted(merged.items(), key=lambda kv: kv[0], reverse=True)
-    kept = ordered[:3]
-    dropped = [d for d, _ in ordered[3:] if d in stored_map]
-    kind = "conflict" if (disagreement or dropped) else "fill"
-    label = "Financials by year"
-    if dropped and not disagreement:
-        label += f" (adds a newer year; FY {', '.join(dropped)} would leave the 3-year window)"
-    return [{"key": "financials", "label": label, "kind": kind,
-             "old": _table_text(stored), "new": _table_text(kept),
-             "evidence": evidence, "writes": _table_writes(kept)}]
-
-
-def _derived_items(company: Dict, fin_item: Optional[Dict], existing_keys: set) -> List[Dict]:
-    """From the financial table AS IT WOULD STAND after the document (document
-    years merged with stored years): latest revenue -> revenue_estimate_m, the
-    two latest years -> revenue_growth_pct. Only when the document did not
-    state those directly, and only when the document contributed a year."""
-    if not fin_item:
+    dependent = any(i["kind"] == "conflict" for i in fin_items)
+    series: Dict[str, float] = {}
+    for c in (company.get("_financials") or cells_from_columns(company, "record")):
+        if c["metric"] == "revenue" and not c.get("segment") and c.get("basis", "actual") == "actual":
+            series[c["period_end"]] = float(c["value"])
+    for it in fin_items:
+        for c in it["writes"]["financials"]:
+            if c["metric"] == "revenue" and not c["segment"] and c["basis"] == "actual":
+                series[c["period_end"]] = c["value"]
+    if not series:
         return []
-    w = fin_item["writes"]
-    # A figure derived from a table that still awaits confirmation cannot be
-    # written before the table is: it inherits the table's status.
-    dependent = fin_item["kind"] == "conflict"
+    ordered = sorted(series.items(), reverse=True)
+    (d1, r1) = ordered[0]
     items = []
-    r1, d1 = w.get("revenue_y1"), w.get("revenue_y1_date")
-    r2, d2 = w.get("revenue_y2"), w.get("revenue_y2_date")
     if "revenue_estimate_m" not in existing_keys and r1:
         new = round(r1 / 1e6, 3)
         old = _num(company.get("revenue_estimate_m"))
@@ -599,15 +674,17 @@ def _derived_items(company: Dict, fin_item: Optional[Dict], existing_keys: set) 
                           "old": _fmt(old, "revenue_estimate_m"), "new": _fmt(new, "revenue_estimate_m"),
                           "evidence": f"FY to {d1}: revenue {_fmt_money(r1)}",
                           "writes": {"revenue_estimate_m": new, "revenue_source": "Company document"}})
-    if "revenue_growth_pct" not in existing_keys and r1 and r2:
-        new = round((r1 / r2 - 1) * 100, 1)
-        old = _num(company.get("revenue_growth_pct"), signed=True)
-        if old is None or not _same(old, new):
-            items.append({"key": "revenue_growth_pct", "label": "Revenue growth (%)",
-                          "kind": "fill" if (old is None and not dependent) else "conflict",
-                          "old": _fmt(old, "revenue_growth_pct"), "new": _fmt(new, "revenue_growth_pct"),
-                          "evidence": f"{_fmt_money(r2)} (FY {d2}) -> {_fmt_money(r1)} (FY {d1})",
-                          "writes": {"revenue_growth_pct": new}})
+    if "revenue_growth_pct" not in existing_keys and len(ordered) >= 2:
+        (d2, r2) = ordered[1]
+        if r1 and r2:
+            new = round((r1 / r2 - 1) * 100, 1)
+            old = _num(company.get("revenue_growth_pct"), signed=True)
+            if old is None or not _same(old, new):
+                items.append({"key": "revenue_growth_pct", "label": "Revenue growth, last year (%)",
+                              "kind": "fill" if (old is None and not dependent) else "conflict",
+                              "old": _fmt(old, "revenue_growth_pct"), "new": _fmt(new, "revenue_growth_pct"),
+                              "evidence": f"{_fmt_money(r2)} (FY {d2}) -> {_fmt_money(r1)} (FY {d1})",
+                              "writes": {"revenue_growth_pct": new}})
     return items
 
 
@@ -626,17 +703,22 @@ def plan_updates(company: Dict, extracted: Dict) -> Dict[str, List[Dict]]:
     items = _scalar_items(company, extracted, evidence)
     fin = _financial_items(company, extracted)
     items += fin
-    items += _derived_items(company, fin[0] if fin else None, {i["key"] for i in items})
+    items += _derived_items(company, fin, {i["key"] for i in items})
     for it in items:
-        it["writes"] = {c: v for c, v in it["writes"].items() if c in COLUMN_TYPES}
+        it["writes"] = {c: v for c, v in it["writes"].items() if c in COLUMN_TYPES or c == "financials"}
     items = [i for i in items if i["writes"]]
     return {"fills": [i for i in items if i["kind"] == "fill"],
             "conflicts": [i for i in items if i["kind"] == "conflict"]}
 
 
 def merge_writes(items: List[Dict]) -> Dict:
-    """One column map from several items (later items win on overlap)."""
+    """One write map from several items (later items win on overlap). The
+    virtual 'financials' key concatenates its cell lists."""
     out: Dict = {}
     for it in items:
-        out.update(it.get("writes") or {})
+        for k, v in (it.get("writes") or {}).items():
+            if k == "financials":
+                out.setdefault("financials", []).extend(v)
+            else:
+                out[k] = v
     return out

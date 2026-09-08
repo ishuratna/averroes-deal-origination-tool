@@ -1701,6 +1701,124 @@ class BigQueryHandler:
             logger.error(f"resolve_email_doc_pending failed for {gcs_path}: {e}")
             return False
 
+    # ── company_financials: multi-year, multi-metric store ─────────────────────
+    # One row per (company, period_end, metric, segment). Sources: Companies
+    # House filings, founder documents (Document SmartFill), imports. The
+    # legacy revenue_y1..y3 etc. columns on targets are a PROJECTION of the
+    # latest three actual years (services/doc_smartfill.project_to_columns),
+    # rewritten after every change here, never edited independently.
+
+    def _ensure_financials_table(self) -> str:
+        table_id = f"{self.project_id}.{self.dataset_id}.company_financials"
+        if getattr(self, "_fin_table_ok", False):
+            return table_id
+        try:
+            self.client.get_table(table_id)
+        except Exception:
+            schema = [bigquery.SchemaField(n, t) for n, t in [
+                ("company_name", "STRING"), ("period_end", "STRING"),
+                ("metric", "STRING"), ("segment", "STRING"),
+                ("value", "FLOAT64"), ("unit", "STRING"), ("basis", "STRING"),
+                ("source", "STRING"), ("evidence", "STRING"),
+                ("recorded_at", "TIMESTAMP"), ("recorded_by", "STRING"),
+            ]]
+            self.client.create_table(bigquery.Table(table_id, schema=schema))
+            logger.info("Created company_financials table")
+        self._fin_table_ok = True
+        return table_id
+
+    def get_financials(self, company_name: str) -> List[Dict]:
+        if not self.client:
+            return []
+        t = self._ensure_financials_table()
+        try:
+            return self._run_query(f"""
+                SELECT period_end, metric, IFNULL(segment, '') AS segment, value, unit, basis,
+                       source, evidence, CAST(recorded_at AS STRING) AS recorded_at
+                FROM `{t}` WHERE company_name = @c
+                ORDER BY period_end DESC, metric, segment
+            """, params=[bigquery.ScalarQueryParameter("c", "STRING", company_name)])
+        except Exception as e:
+            logger.error(f"get_financials failed for {company_name}: {e}")
+            return []
+
+    def upsert_financials(self, company_name: str, cells: List[Dict], source: str,
+                          recorded_by: str = "system") -> int:
+        """MERGE cells into the store on (company, period_end, metric, segment).
+        A cell's own 'source' wins over the call-level one. Returns cells written."""
+        if not self.client or not cells:
+            return 0
+        t = self._ensure_financials_table()
+        rows, params = [], []
+        for i, c in enumerate(cells):
+            rows.append(f"(@c, @p{i}, @m{i}, @s{i}, @v{i}, @u{i}, @b{i}, @src{i}, @e{i})")
+            params += [
+                bigquery.ScalarQueryParameter(f"p{i}", "STRING", c["period_end"]),
+                bigquery.ScalarQueryParameter(f"m{i}", "STRING", c["metric"]),
+                bigquery.ScalarQueryParameter(f"s{i}", "STRING", c.get("segment") or ""),
+                bigquery.ScalarQueryParameter(f"v{i}", "FLOAT64", float(c["value"])),
+                bigquery.ScalarQueryParameter(f"u{i}", "STRING", c.get("unit") or "GBP"),
+                bigquery.ScalarQueryParameter(f"b{i}", "STRING", c.get("basis") or "actual"),
+                bigquery.ScalarQueryParameter(f"src{i}", "STRING", c.get("source") or source),
+                bigquery.ScalarQueryParameter(f"e{i}", "STRING", (c.get("evidence") or "")[:500]),
+            ]
+        params += [bigquery.ScalarQueryParameter("c", "STRING", company_name),
+                   bigquery.ScalarQueryParameter("by", "STRING", recorded_by)]
+        query = f"""
+            MERGE `{t}` T
+            USING (SELECT * FROM UNNEST([STRUCT<company_name STRING, period_end STRING, metric STRING,
+                   segment STRING, value FLOAT64, unit STRING, basis STRING, source STRING, evidence STRING>
+                   {', '.join(rows)}])) S
+            ON T.company_name = S.company_name AND T.period_end = S.period_end
+               AND T.metric = S.metric AND IFNULL(T.segment, '') = S.segment
+            WHEN MATCHED THEN UPDATE SET value = S.value, unit = S.unit, basis = S.basis,
+                 source = S.source, evidence = S.evidence, recorded_at = CURRENT_TIMESTAMP(), recorded_by = @by
+            WHEN NOT MATCHED THEN INSERT (company_name, period_end, metric, segment, value, unit, basis,
+                 source, evidence, recorded_at, recorded_by)
+                 VALUES (S.company_name, S.period_end, S.metric, S.segment, S.value, S.unit, S.basis,
+                 S.source, S.evidence, CURRENT_TIMESTAMP(), @by)
+        """
+        self.client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+        return len(cells)
+
+    def ensure_financials_seeded(self, company_row: Dict) -> List[Dict]:
+        """First touch of a company: copy its legacy y1..y3 figures into the
+        store (source = Companies House when a CH number is on the row), so a
+        document adds to what we hold instead of appearing to replace it.
+        Returns the store's rows for the company afterwards."""
+        from services.doc_smartfill import cells_from_columns
+        name = company_row.get("name")
+        rows = self.get_financials(name)
+        if rows:
+            return rows
+        src = "Companies House" if company_row.get("ch_company_number") else "Record (import)"
+        cells = cells_from_columns(company_row, src)
+        if cells:
+            try:
+                self.upsert_financials(name, cells, src, recorded_by="seed")
+            except Exception as e:
+                logger.warning(f"financials seed failed for {name}: {e}")
+            rows = self.get_financials(name)
+        return rows
+
+    def project_financials(self, company_name: str) -> Dict:
+        """Rewrite the legacy columns from the store. Returns the column map."""
+        from services.doc_smartfill import project_to_columns, COLUMN_TYPES
+        cells = self.get_financials(company_name)
+        writes = project_to_columns(cells)
+        if not self.client:
+            return writes
+        sets, params = [], []
+        for i, (col, val) in enumerate(writes.items()):
+            t = COLUMN_TYPES.get(col, "FLOAT64")
+            sets.append(f"{col} = @v{i}")
+            params.append(bigquery.ScalarQueryParameter(
+                f"v{i}", t, None if val is None else (str(val) if t == "STRING" else float(val))))
+        params.append(bigquery.ScalarQueryParameter("name", "STRING", company_name))
+        self.client.query(f"UPDATE `{self.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                          job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+        return writes
+
     def get_message_id_entity_map(self) -> Dict[str, Dict]:
         """Every real logged Message-ID -> its entity, for thread matching in
         the sync. Synthetic dedup ids (no '<' prefix) are excluded: they never

@@ -175,6 +175,13 @@ export const dealApi = {
     return data;
   },
 
+  // Every figure held for the company (company_financials), by period and metric.
+  async getFinancials(name: string): Promise<{ cells: import('../types').FinCell[] }> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/financials`);
+    if (!response.ok) return { cells: [] };
+    return await response.json();
+  },
+
   // Close a document's review: the ticked keys are written through the same
   // path as the automatic fills; the rest are recorded as declined.
   async reviewEmailDoc(name: string, gcsPath: string, accept: string[]): Promise<any> {

@@ -290,23 +290,33 @@ def apply_document_writes(bq_handler, company_row: Dict, items: List[Dict],
     Returns the updated row (in memory) plus the rescore result."""
     from google.cloud import bigquery as bq_lib
     company = company_row.get("name")
-    writes = merge_writes(items)
-    writes = {c: v for c, v in writes.items() if c in COLUMN_TYPES}
-    if not writes:
+    merged = merge_writes(items)
+    cells = merged.pop("financials", [])
+    writes = {c: v for c, v in merged.items() if c in COLUMN_TYPES}
+    if not writes and not cells:
         return {"row": company_row, "rescore": None, "written": 0}
     if writes.get("revenue_source"):
         writes["revenue_source"] = f"Company document: {filename}"
-    sets, params = [], []
-    for i, (col, val) in enumerate(writes.items()):
-        sets.append(f"{col} = @v{i}")
-        t = COLUMN_TYPES[col]
-        if val is not None:
-            val = float(val) if t == "FLOAT64" else int(val) if t == "INT64" else str(val)
-        params.append(bq_lib.ScalarQueryParameter(f"v{i}", t, val))
-    params.append(bq_lib.ScalarQueryParameter("name", "STRING", company))
-    bq_handler.client.query(
-        f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
-        job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+    projected: Dict = {}
+    if cells:
+        # Multi-year figures go to company_financials; the legacy y1..y3
+        # columns are then re-projected from the store (one writer for them).
+        bq_handler.upsert_financials(company, cells, source=f"Document: {filename}",
+                                     recorded_by=created_by)
+        projected = bq_handler.project_financials(company)
+    if writes:
+        sets, params = [], []
+        for i, (col, val) in enumerate(writes.items()):
+            sets.append(f"{col} = @v{i}")
+            t = COLUMN_TYPES[col]
+            if val is not None:
+                val = float(val) if t == "FLOAT64" else int(val) if t == "INT64" else str(val)
+            params.append(bq_lib.ScalarQueryParameter(f"v{i}", t, val))
+        params.append(bq_lib.ScalarQueryParameter("name", "STRING", company))
+        bq_handler.client.query(
+            f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+            job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+    writes.update(projected)
     for it in items:
         bq_handler.add_activity_note(
             company,
@@ -317,8 +327,10 @@ def apply_document_writes(bq_handler, company_row: Dict, items: List[Dict],
 
     row = dict(company_row)
     row.update(writes)
+    if cells:
+        row["_financials"] = bq_handler.get_financials(company)
     rescore = rescore_after_document(bq_handler, row, filename, created_by)
-    return {"row": row, "rescore": rescore, "written": len(writes)}
+    return {"row": row, "rescore": rescore, "written": len(writes) + len(cells)}
 
 
 def rescore_after_document(bq_handler, row: Dict, filename: str,
@@ -426,6 +438,11 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                     ai_budget[0] -= 1
                 extracted = analyse_document(company_row or {"name": company},
                                              att["filename"], att["content_type"], att["data"])
+            if company_row is not None and "_financials" not in company_row:
+                try:
+                    company_row["_financials"] = bq_handler.ensure_financials_seeded(company_row)
+                except Exception as e:
+                    logger.warning(f"[EmailDocs] financials seed/load failed for {company}: {e}")
             plan = plan_updates(company_row or {"name": company}, extracted)
             summary = (extracted.get("summary") or "") if extracted else ""
             read_error = (extracted or {}).get("_error") or ""
