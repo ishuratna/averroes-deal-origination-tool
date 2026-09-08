@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
 import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, parseTags, isGcc } from "../../types";
 import { dealApi } from "../../services/api";
@@ -270,6 +270,30 @@ function InvestorsInner() {
   // Computed AFTER filtered (a use-before-declaration here crashed the page at runtime, 8 Sep 2026)
   const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
 
+  // 11.5k rows rendered at once made the page unresponsive (Ishu, 9 Sep 2026).
+  // The table shows ONE page of 100, most important first: priority score,
+  // then LP fit, then the oldest-added order the table used before. Filters,
+  // export and counts still work on the whole filtered set.
+  const PAGE_SIZE = 100;
+  const [page, setPage] = useState(0);
+  const ordered = useMemo(() => [...filtered].sort((a, b) =>
+    (b.priority_score ?? -1) - (a.priority_score ?? -1)
+    || (b.lp_fit_score ?? -1) - (a.lp_fit_score ?? -1)
+    || (a.ingested_at || '').localeCompare(b.ingested_at || '')), [filtered]);
+  const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = ordered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, tierFilter, tagFilter, gccOnly]);
+  const pager = ordered.length > PAGE_SIZE ? (
+    <div className="pager">
+      <button disabled={safePage === 0} onClick={() => setPage(0)}>«</button>
+      <button disabled={safePage === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>‹</button>
+      <span>{safePage * PAGE_SIZE + 1}–{Math.min(ordered.length, (safePage + 1) * PAGE_SIZE)} of {ordered.length.toLocaleString()} · page {safePage + 1} / {pageCount}</span>
+      <button disabled={safePage >= pageCount - 1} onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}>›</button>
+      <button disabled={safePage >= pageCount - 1} onClick={() => setPage(pageCount - 1)}>»</button>
+    </div>
+  ) : null;
+
   const stats = {
     total: investors.length,
     researched: investors.filter(i => i.lp_fit_score != null).length,
@@ -351,6 +375,7 @@ function InvestorsInner() {
         {/* Table */}
         <section className="table-section">
           <div className="table-scroll">
+            {pager}
             <table className="inv-table">
               <thead>
                 <tr>
@@ -370,7 +395,7 @@ function InvestorsInner() {
                   <th>Email</th>
                   <th><InfoTip label="Portfolio Overlap" tip={INVESTOR_DEFS.portfolio} /></th>
                   <th>Source</th>
-                  <th><InfoTip label="Added" tip="When this investor was FIRST added to the database. Preserved across re-uploads, merges and enrichment. Table is sorted by this, oldest first." /></th>
+                  <th><InfoTip label="Added" tip="When this investor was FIRST added to the database. Preserved across re-uploads, merges and enrichment." /></th>
                   <th><InfoTip label="Stage" tip={INVESTOR_DEFS.stage} /></th>
                   <th><InfoTip label="Actions" tip={INVESTOR_DEFS.actions} /></th>
                 </tr>
@@ -379,7 +404,7 @@ function InvestorsInner() {
                 {loading ? (
                   <tr><td colSpan={19} className="empty-row">Loading…</td></tr>
                 ) : filtered.length > 0 ? (
-                  filtered.map((inv, idx) => (
+                  pageRows.map((inv, idx) => (
                     <tr key={idx}>
                       <td className="name-cell" title={inv.description || ''}>
                         <button className="inv-name-btn" onClick={() => setProfileName(inv.name)}
@@ -448,6 +473,7 @@ function InvestorsInner() {
                 )}
               </tbody>
             </table>
+            {pager}
           </div>
         </section>
       </main>
@@ -882,6 +908,9 @@ function InvestorsInner() {
         .outreach-btn.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
         .outreach-btn.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
         .park-reason { font-size: 0.68rem; color: #9a3412; margin-top: 0.2rem; white-space: nowrap; }
+        .pager { display: flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.2rem; font-size: 0.78rem; color: #64748b; }
+        .pager button { border: 1px solid #e2e8f0; background: #fff; color: #334155; border-radius: 6px; padding: 0.25rem 0.6rem; font-weight: 700; cursor: pointer; }
+        .pager button:disabled { opacity: 0.35; cursor: default; }
         .quick-chip { border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.76rem; font-weight: 800; cursor: pointer; }
         .quick-chip.on { background: #0f172a; color: #fff; border-color: #0f172a; }
         .tier-summary { font-size: 0.74rem; color: #64748b; margin-left: auto; white-space: nowrap; }
