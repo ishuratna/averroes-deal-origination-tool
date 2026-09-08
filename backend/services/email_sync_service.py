@@ -240,7 +240,11 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     # detected per message against the mailbox being read, so a reply to the
     # LP mailbox is matched and logged exactly like one to the founder mailbox.
     from services.outreach_service import sender_profile
-    mailboxes = [p for p in (sender_profile("founder"), sender_profile("investor")) if p["configured"]]
+    mailboxes, _seen_boxes = [], set()
+    for prof in (sender_profile("founder"), sender_profile("investor")):
+        if prof["configured"] and prof["email"].lower() not in _seen_boxes:
+            _seen_boxes.add(prof["email"].lower())
+            mailboxes.append(prof)      # the investor fallback shares Bea's box: read once
     if not mailboxes:
         raise RuntimeError("OUTREACH_SMTP_PASSWORD not configured (same App Password as sending)")
 

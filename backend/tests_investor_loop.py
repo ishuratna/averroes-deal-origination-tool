@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 The investor (LP) loop mirrors the founder loop. What must hold without
-BigQuery or Gmail: sender profiles fail closed, the LP email structure has no
+BigQuery or Gmail: the investor sender profile borrows the founder mailbox visibly until
+configured, the LP email structure has no
 em dashes and keeps its [confirm] markers, the follow-up template threads under
 the original subject, stages/parked/stamps are consistent, and the shared
 follow-up endpoint accepts the investor entity.
@@ -35,16 +36,15 @@ def chk(label, got, want=True):
 
 print("── Sender profiles ──")
 inv = osvc.sender_profile("investor")
-chk("investor profile unconfigured without env", inv["configured"], False)
-chk("unconfigured send FAILS CLOSED (never falls back to Bea's mailbox)",
-    osvc.send_email("x@y.z", "s", "b", sender="investor")["status"], "error")
-chk("...and the error names the env vars",
-    "INVESTOR_OUTREACH_EMAIL" in osvc.send_email("x@y.z", "s", "b", sender="investor")["detail"])
+chk("without INVESTOR_* env the investor profile borrows the founder mailbox, VISIBLY",
+    (inv["email"], inv["fallback"]), (osvc.SENDER_EMAIL, True))
+chk("...and the label says so", "founder mailbox" in osvc.sender_label("investor")
+    if osvc.sender_profile("founder")["configured"] else "not configured" in osvc.sender_label("investor"))
 os.environ["INVESTOR_OUTREACH_EMAIL"] = "lp@averroescapital.com"
 os.environ["INVESTOR_SMTP_PASSWORD"] = "app-pass"
 os.environ["INVESTOR_OUTREACH_NAME"] = "Ishu Ratna"
 inv = osvc.sender_profile("investor")
-chk("configured once both env vars exist", inv["configured"], True)
+chk("configured once both env vars exist, no fallback", (inv["configured"], inv["fallback"]), (True, False))
 chk("label reads Name <address>", osvc.sender_label("investor"), "Ishu Ratna <lp@averroescapital.com>")
 chk("founder profile untouched", osvc.sender_profile("founder")["email"], osvc.SENDER_EMAIL)
 sig = osvc.build_signature("Ishu Ratna", "Associate", "lp@averroescapital.com")
@@ -95,6 +95,10 @@ print()
 print("── The shared follow-up endpoint knows the investor entity ──")
 import inspect  # noqa: E402
 import main  # noqa: E402
+chk("test investor's emails are forced to Ishu", main.INVESTOR_TEST_RECIPIENT, "iratna@averroescapital.com")
+send_src = inspect.getsource(main.send_investor_outreach)
+chk("send path forces the test recipient by source = Internal Test",
+    "source\") == \"Internal Test\"" in send_src and "INVESTOR_TEST_RECIPIENT" in send_src)
 src = inspect.getsource(main.get_followups)
 chk("entity parameter present", "entity: str = Query(\"company\"" in src)
 chk("investor branch uses the investors table", "investor_handler.table_id" in src)

@@ -596,35 +596,44 @@ SIGNATURE_HTML = _founder_sig["html"]
 # goes from a SEPARATE mailbox (per Ishu, 8 Sep 2026), configured on Cloud Run
 # with INVESTOR_OUTREACH_EMAIL / INVESTOR_OUTREACH_NAME / INVESTOR_SMTP_PASSWORD
 # (+ optional INVESTOR_SIGNATURE_NAME / _TITLE / _PHONE). Each profile has its
-# own signature and its own mailbox for the reply sync to read. An
-# unconfigured profile FAILS CLOSED: an LP email must never quietly go out
-# from the founder mailbox.
+# own signature and its own mailbox for the reply sync to read.
+# UNTIL the investor mailbox is configured (TBU, per Ishu 8 Sep 2026) the
+# investor profile FALLS BACK to the founder mailbox, VISIBLY: the profile
+# carries fallback=True and every draft/modal From line says so. Once
+# INVESTOR_OUTREACH_EMAIL + INVESTOR_SMTP_PASSWORD are set the fallback
+# disappears without a code change.
 def sender_profile(kind: str = "founder") -> Dict[str, str]:
-    if kind == "investor":
-        email = os.getenv("INVESTOR_OUTREACH_EMAIL", "")
-        name = os.getenv("INVESTOR_OUTREACH_NAME", "")
+    founder = {
+        "kind": "founder", "email": SENDER_EMAIL, "name": SENDER_NAME, "password": SMTP_PASSWORD,
+        "sig_name": SIG_NAME, "sig_title": SIG_TITLE, "sig_phone": SIG_PHONE,
+        "configured": bool(SENDER_EMAIL and SMTP_PASSWORD), "fallback": False,
+    }
+    if kind != "investor":
+        return founder
+    email = os.getenv("INVESTOR_OUTREACH_EMAIL", "")
+    name = os.getenv("INVESTOR_OUTREACH_NAME", "")
+    pw = os.getenv("INVESTOR_SMTP_PASSWORD", "")
+    if email and pw:
         return {
-            "kind": "investor", "email": email, "name": name,
-            "password": os.getenv("INVESTOR_SMTP_PASSWORD", ""),
+            "kind": "investor", "email": email, "name": name, "password": pw,
             "sig_name": os.getenv("INVESTOR_SIGNATURE_NAME", name),
             "sig_title": os.getenv("INVESTOR_SIGNATURE_TITLE", ""),
             "sig_phone": os.getenv("INVESTOR_SIGNATURE_PHONE", ""),
-            "configured": bool(email and os.getenv("INVESTOR_SMTP_PASSWORD", "")),
+            "configured": True, "fallback": False,
         }
-    return {
-        "kind": "founder", "email": SENDER_EMAIL, "name": SENDER_NAME, "password": SMTP_PASSWORD,
-        "sig_name": SIG_NAME, "sig_title": SIG_TITLE, "sig_phone": SIG_PHONE,
-        "configured": bool(SENDER_EMAIL and SMTP_PASSWORD),
-    }
+    return {**founder, "kind": "investor", "fallback": True}
 
 
 def sender_label(kind: str = "founder") -> str:
-    """'Name <address>' for the UI, or a plain statement that it is not set up."""
+    """'Name <address>' for the UI; says so when the investor side is borrowing
+    the founder mailbox, or when nothing is configured at all."""
     p = sender_profile(kind)
     if not p["configured"]:
-        return "not configured (INVESTOR_OUTREACH_EMAIL / INVESTOR_SMTP_PASSWORD)" if kind == "investor" \
-            else "not configured (OUTREACH_EMAIL / OUTREACH_SMTP_PASSWORD)"
-    return f"{p['name'] or p['email']} <{p['email']}>"
+        return "not configured (OUTREACH_EMAIL / OUTREACH_SMTP_PASSWORD)"
+    label = f"{p['name'] or p['email']} <{p['email']}>"
+    if p.get("fallback"):
+        label += " (founder mailbox; investor mailbox not configured yet)"
+    return label
 
 
 def _logo_part():
@@ -663,7 +672,7 @@ def send_email(to: str, subject: str, body: str,
     if not to:
         return {"status": "error", "detail": "No recipient email address provided."}
 
-    sig = _founder_sig if sender == "founder" else build_signature(
+    sig = _founder_sig if prof["kind"] == "founder" or prof.get("fallback") else build_signature(
         prof["sig_name"] or prof["name"], prof["sig_title"], prof["email"], prof["sig_phone"])
     try:
         # multipart/related wraps the alternative (text + html) AND the inline

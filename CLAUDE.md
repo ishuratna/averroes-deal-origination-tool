@@ -159,9 +159,16 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - SENDER PROFILES (`outreach_service.sender_profile`): founder = Bea's outreach
   mailbox; investor = a SEPARATE mailbox from `INVESTOR_OUTREACH_EMAIL` /
   `INVESTOR_OUTREACH_NAME` / `INVESTOR_SMTP_PASSWORD` (+ `INVESTOR_SIGNATURE_*`),
-  with its own signature. An unconfigured profile FAILS CLOSED: an LP email
-  must never quietly go out from the founder mailbox. `sync_mailbox` reads
-  every configured mailbox; direction is detected per mailbox.
+  with its own signature. Until those are set (TBU #166) the investor profile
+  FALLS BACK to the founder mailbox VISIBLY (`fallback=True`, every From line
+  says "founder mailbox; investor mailbox not configured yet") - per Ishu,
+  8 Sep 2026, so the loop can be exercised now. `sync_mailbox` reads every
+  configured mailbox once (deduped by address); direction is detected per
+  mailbox.
+- The Internal Test INVESTOR (`INVESTOR_TEST_NAME`, source = 'Internal Test',
+  created/reset via POST /admin/investors/test-seed) has its recipient forced
+  to `INVESTOR_TEST_RECIPIENT` (Ishu) on draft, follow-up, compose and send,
+  keyed off `source` exactly like the test company.
 - The reply rule is the same one: a received `email_log` row for the investor
   whose classification is not in `NON_REPLY_CLASSES` moves Contacted →
   Responded (in the sync and its self-heal pass); autoresponders and bounces

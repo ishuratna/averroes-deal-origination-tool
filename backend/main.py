@@ -2116,6 +2116,11 @@ DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))      # SmartF
 
 # All outreach for the Internal Test company goes to this inbox — always.
 TEST_RECIPIENT = "admin@averroescapital.com"
+# The Internal Test INVESTOR (per Ishu, 8 Sep 2026): every LP email for it goes
+# to Ishu himself, so the whole investor loop (draft -> send -> reply -> sync ->
+# Responded -> follow-up) can be exercised end to end without emailing a real LP.
+INVESTOR_TEST_RECIPIENT = "iratna@averroescapital.com"
+INVESTOR_TEST_NAME = "Averroes Test LP"
 DAILY_GROUNDING_BUDGET = int(os.getenv("DAILY_GROUNDING_BUDGET", "1400"))  # grounded calls, 100 safety buffer
 
 
@@ -6854,6 +6859,8 @@ async def draft_investor_outreach(investor_name: str):
         raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
     from services.outreach_service import draft_lp_outreach_email
     result = draft_lp_outreach_email(investor)
+    if investor.get("source") == "Internal Test":
+        result["to"] = INVESTOR_TEST_RECIPIENT
     if not result.get("is_fallback"):
         investor_handler.save_outreach_draft(investor_name, result.get("to", ""),
                                              result.get("subject", ""), result.get("body", ""))
@@ -6871,7 +6878,10 @@ async def investor_followup_draft(investor_name: str):
     if not investor:
         raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
     from services.outreach_service import draft_lp_followup_email
-    return draft_lp_followup_email(investor)
+    d = draft_lp_followup_email(investor)
+    if investor.get("source") == "Internal Test":
+        d["to"] = INVESTOR_TEST_RECIPIENT
+    return d
 
 
 @app.get("/investors/outreach/compose-draft/{investor_name}")
@@ -6901,7 +6911,46 @@ async def investor_compose_draft(investor_name: str):
     if not subject:
         base = investor.get("outreach_draft_subject") or f"Averroes Capital, {investor_name}"
         subject = base if base.lower().startswith("re:") else f"Re: {base}"
+    if investor.get("source") == "Internal Test":
+        to = INVESTOR_TEST_RECIPIENT
     return {"to": to, "subject": subject, "body": "", "investor": investor_name, "from": sender_label("investor")}
+
+
+@app.post("/admin/investors/test-seed")
+async def investors_test_seed(request: Request, reset: int = Query(0)):
+    """Create (or, with reset=1, return to a fresh Researched state) the Internal
+    Test investor. Its contact is Ishu, so every LP email lands in his inbox
+    and the loop can be walked end to end. Token-gated."""
+    _require_token(request)
+    row = {
+        "name": INVESTOR_TEST_NAME, "investor_type": "Family Office", "source": "Internal Test",
+        "description": "Internal test investor: a fictional single-family office used to exercise the LP outreach loop end to end. Not a real LP.",
+        "hq_city": "London", "hq_country": "United Kingdom", "region": "UK", "global_region": "Europe",
+        "contact_name": "Ishu Ratna", "contact_title": "Principal", "contact_email": INVESTOR_TEST_RECIPIENT,
+        "strategy_preferences": "Growth/Expansion, Co-Investment", "geo_preferences": "UK, Europe",
+        "open_to_first_time": "Yes", "aum_m": 250.0, "ticket_min_m": 1.0, "ticket_max_m": 5.0,
+        "status": "Researched", "lp_fit_score": 0.9,
+    }
+    existing = investor_handler.get_by_name(INVESTOR_TEST_NAME)
+    if not existing:
+        investor_handler.save_investors([row])
+        investor_handler.add_note(INVESTOR_TEST_NAME, "Internal test investor created [test-seed]")
+        return {"status": "Success", "created": INVESTOR_TEST_NAME, "recipient": INVESTOR_TEST_RECIPIENT}
+    if reset:
+        from google.cloud import bigquery as bq_lib
+        investor_handler.client.query(f"""UPDATE `{investor_handler.table_id}` SET
+                status = 'Researched', stage_entered_at = CURRENT_TIMESTAMP(),
+                outreach_draft_subject = NULL, outreach_draft_body = NULL, outreach_draft_to = NULL,
+                outreach_drafted_at = NULL, outreach_sent_at = NULL, contacted_at = NULL, responded_at = NULL,
+                last_reply_at = NULL, reply_classification = NULL, park_reason = NULL, park_reason_detail = NULL,
+                bounced_email = NULL, contact_email = @em, updated_at = CURRENT_TIMESTAMP()
+            WHERE name = @n""", job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("em", "STRING", INVESTOR_TEST_RECIPIENT),
+                bq_lib.ScalarQueryParameter("n", "STRING", INVESTOR_TEST_NAME)])).result()
+        investor_handler.add_note(INVESTOR_TEST_NAME, "Reset to a fresh Researched state [test-seed]")
+        return {"status": "Success", "reset": INVESTOR_TEST_NAME, "recipient": INVESTOR_TEST_RECIPIENT}
+    return {"status": "Exists", "investor": INVESTOR_TEST_NAME, "current_status": existing.get("status"),
+            "recipient": INVESTOR_TEST_RECIPIENT, "hint": "add ?reset=1 to return it to Researched"}
 
 
 @app.post("/investors/outreach/send")
@@ -6911,7 +6960,12 @@ async def send_investor_outreach(req: InvestorOutreachSendRequest):
     conversation, stamps outreach_sent_at / contacted_at, and moves the stage
     FORWARD only (Identified/Researched -> Contacted; Responded and later are
     never changed by a send). Every send is written to the notes audit trail."""
-    logger.info(f"Sending LP outreach to: {req.to} (investor: {req.investor_name})")
+    to = req.to
+    if req.investor_name:
+        _inv = investor_handler.get_by_name(req.investor_name) or {}
+        if _inv.get("source") == "Internal Test":
+            to = INVESTOR_TEST_RECIPIENT          # the test investor never emails anyone else
+    logger.info(f"Sending LP outreach to: {to} (investor: {req.investor_name})")
     in_reply_to = references = ""
     if req.investor_name and req.subject.lower().startswith("re:"):
         try:
@@ -6919,15 +6973,15 @@ async def send_investor_outreach(req: InvestorOutreachSendRequest):
             in_reply_to, references = t.get("in_reply_to", ""), t.get("references", "")
         except Exception as e:
             logger.warning(f"thread lookup failed for investor {req.investor_name}: {e}")
-    result = send_email(req.to, req.subject, req.body, in_reply_to=in_reply_to,
+    result = send_email(to, req.subject, req.body, in_reply_to=in_reply_to,
                         references=references, sender="investor")
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result["detail"])
     if req.investor_name:
         before = (investor_handler.get_by_name(req.investor_name) or {}).get("status") or ""
-        investor_handler.record_send(req.investor_name, req.to)
+        investor_handler.record_send(req.investor_name, to)
         after = (investor_handler.get_by_name(req.investor_name) or {}).get("status") or ""
-        note = f"Outreach email sent to {req.to}, subject: {req.subject}"
+        note = f"Outreach email sent to {to}, subject: {req.subject}"
         if before != after:
             note += f" | Stage {before or 'Unknown'} -> {after}"
         investor_handler.add_note(req.investor_name, note)
