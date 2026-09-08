@@ -160,6 +160,19 @@ undated = plan_updates({"name": "X", "revenue_y1": 1_000_000},
 chk("undated stored figures -> conflict (never silently replaced)",
     "financials" in {i["key"] for i in undated["conflicts"]} and not undated["fills"], True)
 
+# Refinements from the first live review (Plastometrex, 8 Sep 2026)
+sub = plan_updates({"name": "X", "active_investors": "EMV Capital, Innovate UK, Vanneck",
+                    "website": "https://plastometrex.com"},
+                   {"company": {"active_investors": {"value": "Innovate UK", "evidence": "p2"},
+                                "website": {"value": "www.Plastometrex.com", "evidence": "footer"}}})
+chk("a SUBSET of stored investors is nothing (no conflict, no fill)", sub, {"fills": [], "conflicts": []})
+add = plan_updates({"name": "X", "active_investors": "EMV Capital, Innovate UK"},
+                   {"company": {"active_investors": {"value": "Innovate UK, Martlet Capital", "evidence": "p2"}}})
+chk("NEW investors are merged in as a fill, nothing removed",
+    (add["conflicts"], add["fills"][0]["writes"]), ([], {"active_investors": "EMV Capital, Innovate UK, Martlet Capital"}))
+chk("...and the label names what was added", "added: Martlet Capital" in add["fills"][0]["label"], True)
+chk("{value, evidence} shape carries the evidence through",
+    plan_updates({"name": "X", "employees": 20}, {"company": {"employees": {"value": 34, "evidence": "slide 3"}}})["conflicts"][0]["evidence"], "slide 3")
 chk("fields off the schema are ignored entirely",
     plan_updates(company, {"company": {"status": "Won", "averroes_fit_score": 1.0, "contact_email": "x@y.z"}}),
     {"fills": [], "conflicts": []})

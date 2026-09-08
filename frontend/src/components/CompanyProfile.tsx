@@ -210,7 +210,14 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
 }
 
 export default function CompanyProfile({ companies, index, onClose, onNavigate, onChanged, initialTab }: Props) {
-  const baseCompany = companies[index];
+  // The profile follows a COMPANY, not a list position. `index` is where the
+  // user clicked (and moves when they use the arrows); but after onChanged()
+  // the parent list can re-sort (a rescore moved Plastometrex, and slot 114
+  // suddenly showed Pplus Skin Care under a Plastometrex review, 8 Sep 2026).
+  // So the name is pinned when index changes and the row is looked up by name.
+  const [pinnedName, setPinnedName] = useState<string | undefined>(companies[index]?.name);
+  useEffect(() => { setPinnedName(companies[index]?.name); }, [index]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const baseCompany = (pinnedName && companies.find(c => c.name === pinnedName)) || companies[index];
   // The universe list is SLIM (heavy fields like cap tables, filing history,
   // IC memos are excluded server-side so 13k rows stay lightweight). The
   // profile fetches the FULL record on open; until it arrives the slim row
@@ -224,20 +231,20 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
   // Document SmartFill review: the document disagreed with stored values and
   // Ishu decides, per field, which to keep. Opens right after an upload or
   // from the "Review" button on a filed document.
-  const [docReview, setDocReview] = useState<{ gcsPath: string; filename: string; fills: number; items: DocReviewItem[] } | null>(null);
+  const [docReview, setDocReview] = useState<{ company: string; gcsPath: string; filename: string; fills: number; items: DocReviewItem[] } | null>(null);
   const [reviewAccept, setReviewAccept] = useState<Set<string>>(new Set());
   const [reviewBusy, setReviewBusy] = useState(false);
   const openReview = (gcsPath: string, filename: string, items: DocReviewItem[], fills = 0) => {
-    setDocReview({ gcsPath, filename, fills, items });
+    setDocReview({ company: baseCompany.name, gcsPath, filename, fills, items });
     setReviewAccept(new Set(items.map(i => i.key)));
   };
   const submitReview = async (accept: string[]) => {
     if (!docReview) return;
     setReviewBusy(true);
     try {
-      const r = await dealApi.reviewEmailDoc(baseCompany.name, docReview.gcsPath, accept);
+      const r = await dealApi.reviewEmailDoc(docReview.company, docReview.gcsPath, accept);
       setDocReview(null);
-      const docs = await dealApi.getEmailDocs(baseCompany.name);
+      const docs = await dealApi.getEmailDocs(docReview.company);
       setEmailDocs(docs.documents || []);
       await onChanged();
       if (r?.rescore && r.rescore.old !== r.rescore.new)

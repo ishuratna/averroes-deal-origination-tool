@@ -69,6 +69,23 @@ SCALAR_FIELDS: Dict[str, Tuple[str, str, str]] = {
 # Figures that may legitimately be negative.
 _SIGNED = {"revenue_growth_pct", "ebitda_margin_pct"}
 
+# Comma-separated SET fields. A document naming investors/verticals/keywords we
+# already hold adds nothing; naming NEW ones is new information and is merged
+# in as a fill (nothing stored is removed, so no confirmation is needed - the
+# first live review asked to replace six investors with 'Innovate UK', 8 Sep 2026).
+LIST_FIELDS = {"verticals", "keywords", "active_investors", "competitors"}
+
+
+def _split_list(v) -> List[str]:
+    return [x.strip() for x in re.split(r"[,;\n]+", str(v or "")) if x.strip()]
+
+
+def _norm_url(v) -> str:
+    v = (v or "").strip().lower()
+    v = re.sub(r"^[a-z]+://", "", v)
+    v = re.sub(r"^www\d?\.", "", v)
+    return v.rstrip("/")
+
 # Financial year table: metric -> the column for slot 1/2/3 (None = no column).
 YEAR_METRICS: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {
     "revenue":           ("revenue_y1", "revenue_y2", "revenue_y3"),
@@ -248,21 +265,28 @@ Extract EVERYTHING the document clearly states about the company. Do not invent
 or infer values that are not in the document. Every number needs the exact
 quote or figure and where it appears (slide/page/sheet) as evidence.
 
-Return ONLY valid JSON with this shape (omit keys the document does not support):
+Return ONLY valid JSON with this shape (omit fields the document does not support).
+EVERY company field is an object {{"value": ..., "evidence": "quote + where (page/slide/sheet)"}}:
 {{
   "summary": "one or two sentences: what the document is and its key facts",
   "company": {{
-    "description": "what the company does, in full (products, customers, model)",
-    "sector": "...", "verticals": "comma-separated", "keywords": "comma-separated",
-    "hq_city": "...", "hq_country": "...", "website": "...", "company_linkedin": "...",
-    "year_founded": 2018, "employees": 34,
-    "directors": "Name - Title; Name - Title (founders and senior management)",
-    "total_raised_m": 4.5, "last_financing_date": "YYYY-MM", "last_financing_size_m": 2.0,
-    "last_financing_type": "Seed | Series A | ...", "active_investors": "comma-separated",
-    "competitors": "comma-separated",
-    "revenue_growth_pct": 30.0, "ebitda_margin_pct": -12.0
+    "description": {{"value": "what the company does, in full (products, customers, model)", "evidence": "..."}},
+    "sector": {{"value": "...", "evidence": "..."}},
+    "verticals": {{"value": "comma-separated", "evidence": "..."}},
+    "keywords": {{"value": "comma-separated", "evidence": "..."}},
+    "hq_city": {{"value": "...", "evidence": "..."}}, "hq_country": {{"value": "...", "evidence": "..."}},
+    "website": {{"value": "...", "evidence": "..."}}, "company_linkedin": {{"value": "...", "evidence": "..."}},
+    "year_founded": {{"value": 2018, "evidence": "..."}}, "employees": {{"value": 34, "evidence": "..."}},
+    "directors": {{"value": "Name - Title; Name - Title (founders and senior management)", "evidence": "..."}},
+    "total_raised_m": {{"value": 4.5, "evidence": "..."}},
+    "last_financing_date": {{"value": "YYYY-MM", "evidence": "..."}},
+    "last_financing_size_m": {{"value": 2.0, "evidence": "..."}},
+    "last_financing_type": {{"value": "Seed | Series A | ...", "evidence": "..."}},
+    "active_investors": {{"value": "comma-separated", "evidence": "..."}},
+    "competitors": {{"value": "comma-separated", "evidence": "..."}},
+    "revenue_growth_pct": {{"value": 30.0, "evidence": "..."}},
+    "ebitda_margin_pct": {{"value": -12.0, "evidence": "..."}}
   }},
-  "evidence": {{"field_name": "quote + location", "...": "..."}},
   "financial_years": [
     {{"period_end": "YYYY-MM-DD", "basis": "actual | budget | forecast",
       "revenue": 5200000, "gross_profit": 4160000, "ebitda": -250000,
@@ -358,8 +382,14 @@ def _scalar_items(company: Dict, extracted: Dict, evidence: Dict) -> List[Dict]:
     src = extracted.get("company") or {}
     for col, (btype, label, rule) in SCALAR_FIELDS.items():
         raw = src.get(col)
+        ev_inline = ""
+        if isinstance(raw, dict):          # {"value": ..., "evidence": ...} shape
+            ev_inline = _clean_str(raw.get("evidence") or "")
+            raw = raw.get("value")
         if raw in (None, "", [], {}):
             continue
+        if isinstance(raw, list):
+            raw = ", ".join(_clean_str(x) for x in raw if _clean_str(x))
         if btype == "STRING":
             new = _clean_str(raw)
             if not new:
@@ -385,7 +415,9 @@ def _scalar_items(company: Dict, extracted: Dict, evidence: Dict) -> List[Dict]:
                 old = None
         if old is not None and _same(old, new):
             continue
-        ev = _clean_str(evidence.get(col) or "")[:300]
+        if col in ("website", "company_linkedin") and old is not None and _norm_url(old) == _norm_url(new):
+            continue                                   # same address, different spelling
+        ev = (ev_inline or _clean_str(evidence.get(col) or ""))[:300]
         writes = {col: new}
         if col == "revenue_estimate_m":
             writes["revenue_source"] = "Company document"
@@ -393,6 +425,18 @@ def _scalar_items(company: Dict, extracted: Dict, evidence: Dict) -> List[Dict]:
             if old is not None and len(str(new)) <= len(str(old)):
                 continue
             kind = "fill"
+        elif col in LIST_FIELDS and old is not None:
+            have = _split_list(old)
+            seen = {h.lower() for h in have}
+            added = [x for x in _split_list(new) if x.lower() not in seen]
+            if not added:
+                continue                               # nothing we did not already hold
+            merged = ", ".join(have + added)
+            writes = {col: merged}
+            items.append({"key": col, "label": f"{label} (added: {', '.join(added)})", "kind": "fill",
+                          "old": _fmt(old, col), "new": _fmt(merged, col),
+                          "evidence": ev, "writes": writes})
+            continue
         else:
             kind = "fill" if old is None else "conflict"
         items.append({"key": col, "label": label, "kind": kind,
