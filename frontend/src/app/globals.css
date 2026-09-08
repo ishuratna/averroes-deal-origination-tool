@@ -1009,3 +1009,7 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-review-table td.ev { color: #64748b; font-size: 0.76rem; }
 .cp-review-foot { display: flex; justify-content: flex-end; gap: 0.6rem; padding: 0.9rem 1.4rem; border-top: 1px solid #e8edf3; background: #fbfcfe; }
 .cp-review-btn { background: #fff7ed; border-color: #fdba74; color: #9a3412; font-weight: 700; margin-left: 0.5rem; }
+.cp-review-table tr.cp-review-group td { background: #f1f5f9; color: #475569; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; cursor: default; padding: 0.45rem 0.8rem; }
+.cp-review-table tr.filled td { cursor: default; color: #334155; }
+.cp-review-table tr.filled td:first-child { color: #15803d; font-weight: 800; }
+.cp-review-table tr.filled td.new { color: #15803d; }

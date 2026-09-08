@@ -468,7 +468,9 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                     created_by="email-docs")
             if pending_out is not None:
                 pending_out.append({"gcs_path": path, "filename": att["filename"],
-                                    "fills": len(applied_fills), "pending": plan["conflicts"],
+                                    "fills": len(applied_fills),
+                                    "filled": [{k: v for k, v in i.items() if k != "writes"} for i in applied_fills],
+                                    "pending": plan["conflicts"],
                                     "summary": summary, "read_error": read_error})
             how = ("downloaded from a link in their email" if att.get("origin") == "link"
                    else "received by email")

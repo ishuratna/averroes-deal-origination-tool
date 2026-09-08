@@ -231,11 +231,11 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
   // Document SmartFill review: the document disagreed with stored values and
   // Ishu decides, per field, which to keep. Opens right after an upload or
   // from the "Review" button on a filed document.
-  const [docReview, setDocReview] = useState<{ company: string; gcsPath: string; filename: string; fills: number; items: DocReviewItem[] } | null>(null);
+  const [docReview, setDocReview] = useState<{ company: string; gcsPath: string; filename: string; fills: number; filled: DocReviewItem[]; items: DocReviewItem[] } | null>(null);
   const [reviewAccept, setReviewAccept] = useState<Set<string>>(new Set());
   const [reviewBusy, setReviewBusy] = useState(false);
-  const openReview = (gcsPath: string, filename: string, items: DocReviewItem[], fills = 0) => {
-    setDocReview({ company: baseCompany.name, gcsPath, filename, fills, items });
+  const openReview = (gcsPath: string, filename: string, items: DocReviewItem[], fills = 0, filled: DocReviewItem[] = []) => {
+    setDocReview({ company: baseCompany.name, gcsPath, filename, fills, filled, items });
     setReviewAccept(new Set(items.map(i => i.key)));
   };
   const submitReview = async (accept: string[]) => {
@@ -534,13 +534,11 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       // was recovered from the document list after a dropped
                       // connection (a 60MB read runs ~40s; Cloud Run's proxy can
                       // drop the socket while the backend finishes regardless).
-                      const settle = async (r: { gcs_path: string; pending: DocReviewItem[]; fills_applied: number; summary?: string; read_error?: string }) => {
+                      const settle = async (r: { gcs_path: string; pending: DocReviewItem[]; fills_applied: number; filled?: DocReviewItem[]; summary?: string; read_error?: string }) => {
                         await onChanged();
-                        if (r.pending?.length) openReview(r.gcs_path, f.name, r.pending, r.fills_applied || 0);
+                        if (r.pending?.length || r.filled?.length) openReview(r.gcs_path, f.name, r.pending || [], r.fills_applied || 0, r.filled || []);
                         else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
-                        else alert(r.fills_applied
-                          ? `Filed. ${r.fills_applied} field(s) filled from the document; nothing disagreed with the record.`
-                          : `Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
+                        else alert(`Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
                       };
                       try {
                         const r = await dealApi.uploadEmailDoc(baseCompany.name, f);
@@ -561,9 +559,9 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                             const d = docs.documents[0];
                             let pending: DocReviewItem[] = [];
                             try { pending = parsePendingReview(d); } catch { /* none */ }
-                            let fills = 0;
-                            try { fills = d.ai_updates ? (JSON.parse(d.ai_updates) as unknown[]).length : 0; } catch { /* none */ }
-                            await settle({ gcs_path: d.gcs_path, pending, fills_applied: fills, summary: d.ai_summary, read_error: d.read_error });
+                            let filled: DocReviewItem[] = [];
+                            try { filled = d.ai_updates ? (JSON.parse(d.ai_updates) as DocReviewItem[]) : []; } catch { /* none */ }
+                            await settle({ gcs_path: d.gcs_path, pending, fills_applied: filled.length, filled, summary: d.ai_summary, read_error: d.read_error });
                             return;
                           }
                         }
@@ -592,7 +590,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                         {parsePendingReview(d).length > 0 && (
                           <button className="cp-chip-btn cp-review-btn"
                             title="The document disagrees with stored values. Decide which to keep."
-                            onClick={() => openReview(d.gcs_path, d.filename, parsePendingReview(d))}>
+                            onClick={() => { let filled: DocReviewItem[] = []; try { filled = d.ai_updates ? JSON.parse(d.ai_updates) : []; } catch { /* none */ } openReview(d.gcs_path, d.filename, parsePendingReview(d), filled.length, filled); }}>
                             Review {parsePendingReview(d).length} change{parsePendingReview(d).length === 1 ? '' : 's'}
                           </button>
                         )}
@@ -1127,10 +1125,13 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
             <div className="cp-review" onClick={e => e.stopPropagation()}>
               <div className="cp-review-head">
                 <div>
-                  <div className="cp-review-title">“{docReview.filename}” disagrees with the record</div>
+                  <div className="cp-review-title">
+                    “{docReview.filename}”{docReview.items.length ? ' — what it adds, and where it disagrees' : ' — what it added'}
+                  </div>
                   <div className="cp-review-sub">
-                    {docReview.fills > 0 ? `${docReview.fills} blank field(s) were filled automatically. ` : ''}
-                    Tick the values to REPLACE with the document’s; unticked rows keep what is stored. Every change is logged with its evidence.
+                    {docReview.filled.length > 0 ? 'Blank fields below were filled automatically (already saved). ' : ''}
+                    {docReview.items.length > 0 ? 'Where the record already held a value, tick the rows to REPLACE with the document’s; unticked rows keep what is stored. ' : ''}
+                    Every change is logged with its evidence.
                   </div>
                 </div>
                 <button className="cp-chip-btn" onClick={() => setDocReview(null)} disabled={reviewBusy}>✕</button>
@@ -1140,6 +1141,21 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   <tr><th></th><th>Field</th><th>Currently stored</th><th>In the document</th><th>Evidence</th></tr>
                 </thead>
                 <tbody>
+                  {docReview.filled.length > 0 && (
+                    <tr className="cp-review-group"><td colSpan={5}>Added from the document (saved)</td></tr>
+                  )}
+                  {docReview.filled.map(it => (
+                    <tr key={`f-${it.key}`} className="filled">
+                      <td>✓</td>
+                      <td className="lbl">{it.label}</td>
+                      <td className="val old">{it.old}</td>
+                      <td className="val new">{it.new}</td>
+                      <td className="ev">{it.evidence || '—'}</td>
+                    </tr>
+                  ))}
+                  {docReview.items.length > 0 && (
+                    <tr className="cp-review-group"><td colSpan={5}>Disagrees with the record — your call</td></tr>
+                  )}
                   {docReview.items.map(it => (
                     <tr key={it.key} className={reviewAccept.has(it.key) ? 'on' : ''}
                         onClick={() => setReviewAccept(prev => { const n = new Set(prev); n.has(it.key) ? n.delete(it.key) : n.add(it.key); return n; })}>
@@ -1153,11 +1169,17 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                 </tbody>
               </table>
               <div className="cp-review-foot">
-                <button className="cp-chip-btn" disabled={reviewBusy} onClick={() => submitReview([])}>Keep all stored values</button>
-                <button className="cp-chip-btn primary" disabled={reviewBusy || reviewAccept.size === 0}
-                  onClick={() => submitReview(Array.from(reviewAccept))}>
-                  {reviewBusy ? 'Applying…' : `Replace ${reviewAccept.size} selected`}
-                </button>
+                {docReview.items.length === 0 ? (
+                  <button className="cp-chip-btn primary" onClick={() => setDocReview(null)}>Done</button>
+                ) : (
+                  <>
+                    <button className="cp-chip-btn" disabled={reviewBusy} onClick={() => submitReview([])}>Keep all stored values</button>
+                    <button className="cp-chip-btn primary" disabled={reviewBusy || reviewAccept.size === 0}
+                      onClick={() => submitReview(Array.from(reviewAccept))}>
+                      {reviewBusy ? 'Applying…' : `Replace ${reviewAccept.size} selected`}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

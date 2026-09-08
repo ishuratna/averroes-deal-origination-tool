@@ -4068,6 +4068,7 @@ def _ingest_manual_document(company_name: str, filename: str, content_type: str,
     first = pending[0] if pending else {}
     return {"status": "Success", "filed": filed,
             "fills_applied": first.get("fills", 0),
+            "filled": first.get("filled", []),
             "gcs_path": first.get("gcs_path", ""),
             "pending": first.get("pending", []),
             "summary": first.get("summary", ""),
