@@ -26,7 +26,8 @@ import re
 from typing import Dict, List, Optional
 
 from services.doc_smartfill import (
-    COLUMN_TYPES, extraction_prompt, merge_writes, office_kind, office_to_text, plan_updates,
+    COLUMN_TYPES, MIN_PDF_TEXT_CHARS, extraction_prompt, merge_writes, office_kind,
+    office_to_text, pdf_to_text, plan_updates,
 )
 
 logger = logging.getLogger(__name__)
@@ -225,12 +226,17 @@ def analyse_document(company: Dict, filename: str, content_type: str,
     if kind:
         text_doc = office_to_text(kind, data)
         if not text_doc:
-            return {}
+            return {"_error": f"could not extract text from the {kind} file"}
+    elif content_type == "application/pdf":
+        # Text layer first (cheap, no size limit); vision only for scans.
+        t = pdf_to_text(data)
+        if len(t) >= MIN_PDF_TEXT_CHARS:
+            kind, text_doc = "pdf text", t
     elif content_type not in _AI_READABLE:
         return {}
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return {}
+        return {"_error": "GEMINI_API_KEY not configured"}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, Part
@@ -241,11 +247,21 @@ def analyse_document(company: Dict, filename: str, content_type: str,
         if text_doc:
             contents = [f"DOCUMENT TEXT ({kind}):\n{text_doc}", prompt]
         elif len(data) > GEMINI_INLINE_LIMIT:
-            # Files API: the only route for a large PDF. Deleted after the read.
+            # Files API: the only route for a large scanned PDF. The file must
+            # reach ACTIVE before it can be read (a 400 INVALID_ARGUMENT on a
+            # 60MB deck, 8 Sep 2026, was this). Deleted after the read.
             import io as _io
+            import time as _time
             uploaded = client.files.upload(file=_io.BytesIO(data),
                                            config={"mime_type": content_type,
                                                    "display_name": filename[:100]})
+            deadline = _time.time() + 120
+            while getattr(getattr(uploaded, "state", None), "name", str(uploaded.state)) == "PROCESSING" \
+                    and _time.time() < deadline:
+                _time.sleep(3)
+                uploaded = client.files.get(name=uploaded.name)
+            if getattr(getattr(uploaded, "state", None), "name", "") != "ACTIVE":
+                raise RuntimeError(f"uploaded file never became readable (state {uploaded.state})")
             contents = [uploaded, prompt]
         else:
             contents = [Part.from_bytes(data=data, mime_type=content_type), prompt]
@@ -269,7 +285,7 @@ def analyse_document(company: Dict, filename: str, content_type: str,
         return got
     except Exception as e:
         logger.warning(f"[EmailDocs] AI read failed for {filename}: {e}")
-        return {}
+        return {"_error": str(e)[:300]}
 
 
 def apply_document_writes(bq_handler, company_row: Dict, items: List[Dict],
@@ -420,6 +436,11 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                                              att["filename"], att["content_type"], att["data"])
             plan = plan_updates(company_row or {"name": company}, extracted)
             summary = (extracted.get("summary") or "") if extracted else ""
+            read_error = (extracted or {}).get("_error") or ""
+            if read_error:
+                bq_handler.add_activity_note(
+                    company, f"Document \"{att['filename']}\" was filed but the AI read FAILED: {read_error}",
+                    created_by="email-docs")
 
             # Fills (the record held nothing) are written now; conflicts (the
             # record holds a different value) wait on the review. Same apply
@@ -454,7 +475,8 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                     created_by="email-docs")
             if pending_out is not None:
                 pending_out.append({"gcs_path": path, "filename": att["filename"],
-                                    "fills": len(applied_fills), "pending": plan["conflicts"]})
+                                    "fills": len(applied_fills), "pending": plan["conflicts"],
+                                    "summary": summary, "read_error": read_error})
             how = ("downloaded from a link in their email" if att.get("origin") == "link"
                    else "received by email")
             bq_handler.add_activity_note(

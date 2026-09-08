@@ -160,6 +160,37 @@ def office_to_text(kind: str, data: bytes) -> str:
     return text[:MAX_TEXT_CHARS]
 
 
+MIN_PDF_TEXT_CHARS = 1500     # below this the PDF is a scan/picture deck: use vision
+
+
+def pdf_to_text(data: bytes) -> str:
+    """The PDF's own text layer, page-labelled ('=== Page 7 ===') so evidence
+    can cite pages. Empty for scans. This is the first route for every PDF:
+    a 60MB shareholder update is mostly images by weight but its facts are in
+    the text layer, which is a few hundred KB - no upload to the model, no
+    size limit, a fraction of the cost. Vision is the fallback, not the default."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        out: List[str] = []
+        total = 0
+        for i, page in enumerate(reader.pages, 1):
+            try:
+                t = (page.extract_text() or "").strip()
+            except Exception:
+                t = ""
+            if t:
+                out.append(f"\n=== Page {i} ===\n{t}")
+                total += len(t)
+            if total >= MAX_TEXT_CHARS:
+                out.append("[...]")
+                break
+        return "\n".join(out).strip()[:MAX_TEXT_CHARS]
+    except Exception as e:
+        logger.warning(f"[DocSmartFill] pdf text extraction failed: {e}")
+        return ""
+
+
 # ── The extraction prompt ────────────────────────────────────────────────────
 
 def extraction_prompt(company: Dict, filename: str) -> str:

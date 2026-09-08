@@ -529,9 +529,10 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                         if (r.status === 'Success') {
                           await onChanged();   // fills were written; refresh the card
                           if (r.pending?.length) openReview(r.gcs_path, f.name, r.pending, r.fills_applied || 0);
+                          else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
                           else alert(r.fills_applied
                             ? `Filed. ${r.fills_applied} field(s) filled from the document; nothing disagreed with the record.`
-                            : 'Filed. The document added nothing the record did not already hold.');
+                            : `Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
                         }
                       } catch (err: any) { alert(err?.message || 'Upload failed'); }
                       finally { setDocUploading(false); }

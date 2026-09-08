@@ -4069,7 +4069,9 @@ def _ingest_manual_document(company_name: str, filename: str, content_type: str,
     return {"status": "Success", "filed": filed,
             "fills_applied": first.get("fills", 0),
             "gcs_path": first.get("gcs_path", ""),
-            "pending": first.get("pending", [])}
+            "pending": first.get("pending", []),
+            "summary": first.get("summary", ""),
+            "read_error": first.get("read_error", "")}
 
 
 @app.post("/company/{company_name}/email-docs/upload")
