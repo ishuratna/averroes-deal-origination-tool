@@ -37,8 +37,8 @@ MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024   # one file arriving by email
 # Ishu has already judged worth reading, so it may be much larger (a 35MB
 # image-heavy deck was the first real case, 7 Sep 2026). Large files travel
 # browser -> Cloud Storage directly, never through Cloud Run's 32MB request
-# ceiling. PDFs are read from their text layer; picture decks are rendered
-# page by page to images (never the Files API - see analyse_document).
+# ceiling. PDFs go to the model as text layer + rendered page images (charts
+# live only in the images; never the Files API - see analyse_document).
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 GEMINI_INLINE_LIMIT = 18 * 1024 * 1024    # inline request parts stop at 20MB
 MAX_ATTACHMENTS_PER_EMAIL = 10
@@ -228,11 +228,17 @@ def analyse_document(company: Dict, filename: str, content_type: str,
         text_doc = office_to_text(kind, data)
         if not text_doc:
             return {"_error": f"could not extract text from the {kind} file"}
-    elif content_type == "application/pdf":
-        # Text layer first (cheap, no size limit); vision only for scans.
+    pdf_pages: List[bytes] = []
+    if content_type == "application/pdf":
+        # BOTH the text layer and the rendered pages. Text gives exact printed
+        # figures cheaply; the page images are the only way the model sees a
+        # revenue-by-year CHART or a product-split donut - a text-only read of
+        # Plastometrex's deck cited "2025 Revenue Breakdown, page 6" yet
+        # returned neither prior years nor the split (8 Sep 2026).
         t = pdf_to_text(data)
         if len(t) >= MIN_PDF_TEXT_CHARS:
             kind, text_doc = "pdf text", t
+        pdf_pages = pdf_pages_to_images(data)
     elif content_type not in _AI_READABLE:
         return {}
     api_key = os.getenv("GEMINI_API_KEY")
@@ -244,23 +250,24 @@ def analyse_document(company: Dict, filename: str, content_type: str,
 
         client = genai.Client(api_key=api_key)
         prompt = extraction_prompt(company, filename)
+        contents: list = []
+        path_bits = []
         if text_doc:
-            path = f"text ({kind}, {len(text_doc)} chars)"
-            contents = [f"DOCUMENT TEXT ({kind}):\n{text_doc}", prompt]
-        elif content_type == "application/pdf" and len(data) > GEMINI_INLINE_LIMIT:
-            # A big PDF with no text layer is a picture deck. Render the pages
-            # and send them as images: every page seen, nothing uploaded to a
-            # file store (the Files API route returned 400 INVALID_ARGUMENT on
-            # a 60MB deck twice, 8 Sep 2026).
-            pages = pdf_pages_to_images(data)
-            if not pages:
-                return {"_error": "large scanned PDF: could not render pages for the vision read"}
-            path = f"vision ({len(pages)} page images, {sum(map(len, pages)) // 1024}KB)"
-            contents = [f"The document's {len(pages)} pages follow as images, in page order (image 1 = page 1). Cite page numbers in evidence."] \
-                + [Part.from_bytes(data=p, mime_type="image/jpeg") for p in pages] + [prompt]
-        else:
-            path = f"inline bytes ({len(data) // 1024}KB)"
-            contents = [Part.from_bytes(data=data, mime_type=content_type), prompt]
+            path_bits.append(f"text ({kind}, {len(text_doc)} chars)")
+            contents.append(f"DOCUMENT TEXT ({kind}):\n{text_doc}")
+        if pdf_pages:
+            path_bits.append(f"{len(pdf_pages)} page images ({sum(map(len, pdf_pages)) // 1024}KB)")
+            contents.append(f"The document's {len(pdf_pages)} pages follow as images, in page order "
+                            f"(image 1 = page 1). Charts and tables must be read from these images; "
+                            f"cite page numbers in evidence.")
+            contents += [Part.from_bytes(data=p, mime_type="image/jpeg") for p in pdf_pages]
+        if not contents:
+            if content_type == "application/pdf" and len(data) > GEMINI_INLINE_LIMIT:
+                return {"_error": "large PDF: no text layer and pages could not be rendered"}
+            path_bits.append(f"inline bytes ({len(data) // 1024}KB)")
+            contents.append(Part.from_bytes(data=data, mime_type=content_type))
+        contents.append(prompt)
+        path = " + ".join(path_bits)
         logger.info(f"[EmailDocs] reading {filename} via {path}")
         response = client.models.generate_content(
             model="gemini-2.5-flash",
