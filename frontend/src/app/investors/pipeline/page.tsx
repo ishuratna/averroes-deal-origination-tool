@@ -20,6 +20,7 @@ import MultiSelect from '../../../components/MultiSelect';
 import OutreachModal from '../../../components/OutreachModal';
 import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
+import InvestorProfile from '../../../components/InvestorProfile';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
@@ -42,6 +43,8 @@ function InvestorPipelineInner() {
   const [followups, setFollowups] = useState<any[]>([]);
   const [showFollowups, setShowFollowups] = useState(false);
   const [showParked, setShowParked] = useState(false);
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const profileInv = profileName ? investors.find(x => x.name === profileName) || null : null;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,7 +81,8 @@ function InvestorPipelineInner() {
     const stale = waitingDays != null && waitingDays >= STALE_DAYS;
     return (
       <div className={`ikb-card${owes ? ' owes' : ''}${stale ? ' stale' : ''}`} key={inv.name}>
-        <button className="ikb-name" title={inv.source_companies ? `Portfolio overlap: ${inv.source_companies}` : ''}>{inv.name}</button>
+        <button className="ikb-name" title={inv.source_companies ? `Portfolio overlap: ${inv.source_companies}` : 'Open the investor card'}
+                onClick={() => setProfileName(inv.name)}>{inv.name}</button>
         <div className="ikb-meta">
           {inv.investor_type && inv.investor_type !== 'Unknown' && <span className="ikb-chip">{inv.investor_type}</span>}
           {inv.lp_fit_score != null && (
@@ -222,6 +226,9 @@ function InvestorPipelineInner() {
 
         {outreachFor && (
           <OutreachModal entity="investor" company={outreachFor} onClose={() => setOutreachFor(null)} onSent={load} />
+        )}
+        {profileInv && (
+          <InvestorProfile investor={profileInv} onClose={() => setProfileName(null)} onChanged={load} />
         )}
       </main>
     </div>

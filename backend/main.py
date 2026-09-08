@@ -4721,6 +4721,7 @@ async def weekly_review(request: Request):
       * updates    -> tool_updates.py, the curated plain-English changelog
     """
     _require_token(request)
+    from google.cloud import bigquery
     from services.analytics_service import refresh_and_stats
     stats = refresh_and_stats(bq_handler)
 
@@ -4748,10 +4749,39 @@ async def weekly_review(request: Request):
             "days_since_reply": c.get("days_since_reply"),
         })
 
+    # THE INVESTOR LOOP: stage counts from the investors table plus last-7-day
+    # sends and genuine replies from email_log (NON_REPLY_CLASSES, the one
+    # reply definition). Never re-derived elsewhere for this view.
+    investors_block = {"stages": {}, "last7": {"emails_sent": 0, "replies": 0}, "attention": []}
+    try:
+        from storage.investor_handler import INVESTOR_STAGES as _IST
+        inv_rows = investor_handler.get_all()
+        counts = {st: 0 for st in _IST}
+        for i in inv_rows:
+            counts[i.get("status") or "Identified"] = counts.get(i.get("status") or "Identified", 0) + 1
+        investors_block["stages"] = counts
+        log_t = bq_handler._ensure_email_log_table()
+        r7 = bq_handler._run_query(f"""
+            SELECT
+              COUNTIF(direction = 'sent') AS emails_sent,
+              COUNTIF(direction = 'received' AND IFNULL(classification, '') NOT IN UNNEST(@non_reply)) AS replies
+            FROM `{log_t}`
+            WHERE entity_type = 'investor' AND sent_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)""",
+            params=[bigquery.ArrayQueryParameter("non_reply", "STRING", list(bq_handler.NON_REPLY_CLASSES))])
+        if r7:
+            investors_block["last7"] = {"emails_sent": int(r7[0].get("emails_sent") or 0),
+                                        "replies": int(r7[0].get("replies") or 0)}
+        fu = await get_followups(days=14, reply_days=7, entity="investor")
+        investors_block["attention"] = [{"name": f["name"], "type": f["type"], "days": f["days_waiting"],
+                                         "status": f["status"]} for f in fu.get("followups", [])][:15]
+    except Exception as e:
+        logger.warning(f"[WeeklyReview] investor block failed: {e}")
+
     from datetime import timezone as _tz
     from tool_updates import updates_since
     return {
         "generated_at": datetime.now(_tz.utc).isoformat(),
+        "investors": investors_block,
         "analytics": {
             "universe_total": stats.get("stored_current"),
             "funnel": stats.get("funnel", []),
@@ -5490,6 +5520,45 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
         if bq_handler.pull_back_undelivered(p["name"], p["reason"], p["address"], p["kind"]):
             applied.append(f"{p['name']} ({p['kind']})")
 
+    # THE INVESTOR LOOP, same rule: a bounce that is the investor's newest inbound
+    # and not superseded by a later send pulls a Contacted investor back to
+    # Researched and retires the dead address. Never touches later stages.
+    inv_pulled: List[str] = []
+    try:
+        from services.outreach_service import sender_profile
+        inv_rows = bq_handler.get_received_log(limit=limit, entity_type="investor")
+        inv_addr = sender_profile("investor").get("email") or our_address
+        inv_newest: Dict[str, dict] = {}
+        for r in inv_rows:
+            n = r.get("entity_name") or ""
+            if n and (n not in inv_newest or str(r.get("sent_at") or "") > str(inv_newest[n].get("sent_at") or "")):
+                inv_newest[n] = r
+        inv_marks = []
+        for r in inv_rows:
+            got = classify_delivery(r.get("subject", ""), r.get("snippet", ""),
+                                    from_addr=r.get("counterparty_email", ""), our_address=inv_addr)
+            if not got["is_bounce"]:
+                continue
+            if r.get("classification") != "bounce":
+                inv_marks.append(r["message_id"])
+            name = r.get("entity_name") or ""
+            if inv_newest.get(name, {}).get("message_id") != r.get("message_id"):
+                continue
+            inv = investor_handler.get_by_name(name) or {}
+            if inv.get("status") != "Contacted":
+                continue
+            from services.delivery_check import bounce_superseded as _sup
+            if _sup(r.get("sent_at"), inv.get("outreach_sent_at")):
+                continue
+            if not dry_run and investor_handler.pull_back_undelivered(name, got["reason"], got["address"] or ""):
+                inv_pulled.append(name)
+            elif dry_run:
+                inv_pulled.append(name)
+        if inv_marks and not dry_run:
+            bq_handler.mark_emails_classification(inv_marks, "bounce")
+    except Exception as e:
+        logger.warning(f"[Delivery] investor bounce pass failed: {e}")
+
     # Positive evidence for everyone else, so the check is cheap next time.
     verified = [c["name"] for c in live.values()
                 if c.get("status") in ("Contacted", "Responded", "Meeting", "DD", "Offer")
@@ -5506,6 +5575,7 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
         "messages_marked": marked,
         "sends_missing_from_mailbox": len(missing),
         "pulled_back": applied,
+        "investors_pulled_back": inv_pulled,
         "message": (f"Scanned {len(rows)} inbound messages, found {len(bounces)} bounces, "
                     f"{len(missing)} sends with no trace in the mailbox. "
                     f"Pulled {len(applied)} back to Qualified."),
@@ -6880,6 +6950,27 @@ async def update_investor_status(investor_name: str, req: InvestorStatusRequest)
                                           reason=req.reason or "", reason_detail=req.reason_detail or ""):
         raise HTTPException(status_code=500, detail="Status update failed")
     return {"status": "Success", "investor": investor_name, "new_status": req.status}
+
+
+@app.get("/investors/{investor_name}/emails")
+async def get_investor_emails(investor_name: str, limit: int = Query(30)):
+    """Email thread for one investor from email_log (newest first). Same shape
+    as the company endpoint."""
+    from google.cloud import bigquery as bq_lib
+    try:
+        table_id = bq_handler._ensure_email_log_table()
+        rows = bq_handler.client.query(
+            f"""SELECT direction, counterparty_email, subject, snippet, classification, summary,
+                       CAST(sent_at AS STRING) AS sent_at
+                FROM `{table_id}` WHERE entity_type = 'investor' AND entity_name = @name
+                ORDER BY sent_at DESC LIMIT {max(1, min(limit, 100))}""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("name", "STRING", investor_name)])).result()
+        emails = [dict(r) for r in rows]
+        return {"investor": investor_name, "emails": emails, "count": len(emails)}
+    except Exception as e:
+        logger.warning(f"Investor email thread fetch failed for {investor_name}: {e}")
+        return {"investor": investor_name, "emails": [], "count": 0}
 
 
 @app.post("/investors/{investor_name}/notes")

@@ -1358,7 +1358,7 @@ class BigQueryHandler:
             logger.error(f"get_responded failed: {e}")
             return []
 
-    def get_received_log(self, limit: int = 5000) -> List[Dict]:
+    def get_received_log(self, limit: int = 5000, entity_type: str = "company") -> List[Dict]:
         """Every inbound company message already in email_log.
 
         subject and snippet are stored, so an out-of-office that was logged
@@ -1375,10 +1375,10 @@ class BigQueryHandler:
                        IFNULL(classification, '') AS classification,
                        CAST(sent_at AS STRING) AS sent_at
                 FROM `{log}`
-                WHERE entity_type = 'company' AND direction = 'received'
+                WHERE entity_type = @etype AND direction = 'received'
                 ORDER BY sent_at DESC
                 LIMIT {max(1, int(limit))}
-            """)
+            """, params=[bigquery.ScalarQueryParameter("etype", "STRING", entity_type)])
         except Exception as e:
             logger.error(f"get_received_log failed: {e}")
             return []

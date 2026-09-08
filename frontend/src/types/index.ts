@@ -517,6 +517,7 @@ export interface Investor {
   reply_classification?: string;
   park_reason?: string;
   park_reason_detail?: string;
+  bounced_email?: string;
   // PitchBook LP export fields (USD figures)
   pb_id?: string;
   aka?: string;

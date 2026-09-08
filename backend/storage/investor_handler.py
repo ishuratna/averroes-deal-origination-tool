@@ -107,6 +107,7 @@ class InvestorBQHandler:
         ("stage_entered_at", "TIMESTAMP"),
         ("last_reply_at", "TIMESTAMP"), ("reply_classification", "STRING"),
         ("park_reason", "STRING"), ("park_reason_detail", "STRING"),
+        ("bounced_email", "STRING"),         # dead address preserved after a bounce
         # Smart Upload: unmapped source columns preserved as JSON
         ("extra_data", "STRING"),
         ("ingested_at", "TIMESTAMP"),
@@ -483,6 +484,30 @@ class InvestorBQHandler:
             return True
         except Exception as e:
             logger.error(f"Failed to update investor status: {e}")
+            return False
+
+    def pull_back_undelivered(self, name: str, reason: str, dead_address: str = "") -> bool:
+        """Mirror of the company rule: a bounced LP email never reached anyone,
+        so the investor returns to Researched (the pre-outreach stage), the
+        send stamps are cleared so the Outreach button resets, and on a bounce
+        the dead address moves to bounced_email so it is never re-suggested."""
+        if not self.client:
+            return False
+        sets = ["status = 'Researched'", "stage_entered_at = CURRENT_TIMESTAMP()",
+                "outreach_sent_at = NULL", "contacted_at = NULL", "updated_at = CURRENT_TIMESTAMP()"]
+        if dead_address:
+            sets += ["bounced_email = @dead", "contact_email = IF(LOWER(contact_email) = LOWER(@dead), NULL, contact_email)",
+                     "outreach_draft_to = IF(LOWER(outreach_draft_to) = LOWER(@dead), NULL, outreach_draft_to)"]
+        try:
+            self.client.query(f"UPDATE `{self.table_id}` SET {', '.join(sets)} WHERE LOWER(name) = LOWER(@name)",
+                              job_config=bigquery.QueryJobConfig(query_parameters=[
+                                  bigquery.ScalarQueryParameter("dead", "STRING", dead_address or ""),
+                                  bigquery.ScalarQueryParameter("name", "STRING", name)])).result()
+            self.add_note(name, f"Stage Contacted -> Researched: email bounced ({reason})"
+                                + (f", dead address {dead_address} kept aside" if dead_address else "") + " [delivery-check]")
+            return True
+        except Exception as e:
+            logger.error(f"pull_back_undelivered failed for investor '{name}': {e}")
             return False
 
     def stamp_reply(self, name: str, reply_at: str, classification: str) -> bool:

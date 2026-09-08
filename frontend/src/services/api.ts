@@ -405,6 +405,12 @@ export const dealApi = {
     return await response.json();
   },
 
+  async getInvestorEmails(name: string, limit = 30): Promise<{ emails: any[]; count: number }> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/emails?limit=${limit}`);
+    if (!response.ok) return { emails: [], count: 0 };
+    return await response.json();
+  },
+
   async getInvestorFollowupDraft(name: string): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/investors/outreach/followup-draft/${encodeURIComponent(name)}`);
     if (!response.ok) throw new Error('Follow-up template failed');

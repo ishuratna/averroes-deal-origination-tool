@@ -201,6 +201,11 @@ async function load() {
     <p class="note">Same sections and rules as the Responded page. Open founder conversations: ${Object.entries(d.open_calls).map(([o, n]) => `${esc(o)} ${n}`).join(' · ')}.</p>
   </section>
   <section class="slide">
+    <div class="shead"><span class="n">2b</span><h2>Investor loop</h2><span class="d">${today}</span></div>
+    <p class="note">Investor Universe by stage; last 7 days from the investor mailbox log: ${d.investors ? d.investors.last7.emails_sent : 0} emails sent, ${d.investors ? d.investors.last7.replies : 0} genuine replies.</p>
+    <div class="kpis">${Object.entries((d.investors || {}).stages || {}).map(([k, v]) => `<div class="kpi${['Responded','Meeting','Committed'].includes(k) ? ' hi' : ''}"><div class="v">${v}</div><div class="l">${esc(k)}</div></div>`).join('')}</div>
+    ${(d.investors && d.investors.attention.length) ? `<p class="note">Needs attention: ${d.investors.attention.map(a => `${esc(a.name)} (${a.type === 'we_owe_reply' ? 'we owe a reply' : 'silent'} ${a.days}d)`).join(' · ')}</p>` : ''}
+
     <div class="shead"><span class="n">3</span><h2>Tool updates this week</h2><span class="d">${today}</span></div>
     <ul class="updates">${upd}</ul>
   </section>`;

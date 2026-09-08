@@ -1044,3 +1044,30 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .ikb-outreach.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
 .ikb-col.parked { background: #f8fafc; border: 1px dashed #e2e8f0; }
 .ikb-empty { font-size: 0.75rem; color: #94a3b8; padding: 0.4rem; }
+
+/* ── Investor card (InvestorProfile) ─────────────────────────────────────── */
+.ip-shell { max-width: 1100px; }
+.ip-head { padding: 0.2rem 0 0.8rem; }
+.ip-head h2 { margin: 0; font-size: 1.35rem; font-weight: 800; color: #0f172a; }
+.ip-sub { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.82rem; color: #64748b; margin-top: 0.25rem; }
+.ip-fit { background: #ecfdf5; color: #166534; border-radius: 999px; padding: 0.1rem 0.55rem; font-weight: 800; font-size: 0.72rem; }
+.ip-park { background: #fff7ed; color: #9a3412; border-radius: 999px; padding: 0.1rem 0.55rem; font-weight: 700; font-size: 0.72rem; }
+.ip-desc { font-size: 0.86rem; color: #334155; line-height: 1.55; margin: 0.6rem 0 0; max-width: 900px; }
+.ip-kv { display: flex; justify-content: space-between; gap: 1rem; padding: 0.32rem 0; border-bottom: 1px solid #f1f5f9; font-size: 0.82rem; }
+.ip-kv:last-child { border-bottom: none; }
+.ip-kv .k { color: #64748b; white-space: nowrap; }
+.ip-kv .v { color: #0f172a; text-align: right; word-break: break-word; }
+.ip-stage { border: 1px solid #e2e8f0; border-radius: 999px; padding: 0.3rem 0.7rem; font-size: 0.76rem; font-weight: 700; background: #fff; }
+.ip-coinv { font-size: 0.76rem; color: #64748b; margin: 0.5rem 0 0; }
+.ip-mail { padding: 0.55rem 0; border-bottom: 1px solid #f1f5f9; }
+.ip-mail:last-child { border-bottom: none; }
+.ip-mail-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.72rem; color: #64748b; }
+.ip-mail-head .dir { font-weight: 800; color: #2563eb; }
+.ip-mail.received .ip-mail-head .dir { color: #15803d; }
+.ip-mail-head .cls { background: #f1f5f9; border-radius: 4px; padding: 0 0.35rem; }
+.ip-mail-subj { font-size: 0.84rem; font-weight: 700; color: #0f172a; margin-top: 0.15rem; }
+.ip-mail-snip { font-size: 0.78rem; color: #475569; margin-top: 0.15rem; }
+.ip-feed-at { font-size: 0.7rem; color: #94a3b8; margin-right: 0.6rem; white-space: nowrap; }
+.ip-feed-text { font-size: 0.8rem; color: #334155; }
+.cp-chip-btn.followup { border-color: #d97706; color: #b45309; background: #fffbeb; }
+.cp-chip-btn.sent { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
