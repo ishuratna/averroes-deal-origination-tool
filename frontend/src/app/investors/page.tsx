@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, parseTags } from "../../types";
+import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, parseTags, isGcc } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
@@ -46,6 +46,7 @@ function InvestorsInner() {
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [gccOnly, setGccOnly] = useState(false);
   const [uploadTags, setUploadTags] = useState('');   // stamped on every row of the next upload (e.g. GCC)
   const [mining, setMining] = useState(false);
   const [filling, setFilling] = useState<string | null>(null);
@@ -264,7 +265,8 @@ function InvestorsInner() {
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
     const matchesTag = tagFilter.length === 0 || parseTags(i.network_tags).some(t => tagFilter.includes(t));
-    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesTier && matchesTag;
+    const matchesGcc = !gccOnly || isGcc(i);
+    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesTier && matchesTag && matchesGcc;
   });
 
   const stats = {
@@ -339,8 +341,9 @@ function InvestorsInner() {
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
           <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
           <MultiSelect label="All tags" options={allTags} selected={tagFilter} onChange={setTagFilter} />
-          <button className={`quick-chip ${tagFilter.length === 1 && tagFilter[0] === 'GCC' ? 'on' : ''}`}
-                  title="KSA + GCC network: rows tagged GCC" onClick={() => setTagFilter(tagFilter.length === 1 && tagFilter[0] === 'GCC' ? [] : ['GCC'])}>GCC</button>
+          <button className={`quick-chip ${gccOnly ? 'on' : ''}`}
+                  title="KSA + GCC base: HQ in Saudi Arabia, UAE, Qatar, Kuwait, Bahrain or Oman, or tagged GCC"
+                  onClick={() => setGccOnly(v => !v)}>GCC {gccOnly ? `(${filtered.length})` : ''}</button>
           <span className="tier-summary">{tierCounts.map(([t, n]) => `${t} ${n}`).join(' · ')}</span>
         </section>
 

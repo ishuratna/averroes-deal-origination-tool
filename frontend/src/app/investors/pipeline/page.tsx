@@ -22,7 +22,7 @@ import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
 import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
-import { PRIORITY_TIERS, parseTags } from '../../../types';
+import { PRIORITY_TIERS, isGcc } from '../../../types';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
@@ -72,7 +72,7 @@ function InvestorPipelineInner() {
       || (i.contact_name || '').toLowerCase().includes(q);
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
-    const matchesGcc = !gccOnly || parseTags(i.network_tags).some(t => t.toLowerCase() === 'gcc');
+    const matchesGcc = !gccOnly || isGcc(i);
     return matchesSearch && matchesRegion && matchesTier && matchesGcc;
   });
 

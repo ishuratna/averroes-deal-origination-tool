@@ -583,3 +583,12 @@ export const NETWORK_TAG_SUGGESTIONS = ['GCC', 'Bea', 'Partner', 'Co-investor', 
 export function parseTags(s?: string): string[] {
   return (s || '').split(/[,;|]/).map(t => t.trim()).filter(Boolean);
 }
+// "GCC" on the investor pages means the KSA/GCC base: home geography in the
+// six GCC states OR an explicit GCC network tag. The 3 Aug 2026 PitchBook
+// export already holds ~870 such rows, so geography must count, not only tags.
+const GCC_COUNTRIES = ['saudi arabia', 'united arab emirates', 'uae', 'qatar', 'kuwait', 'bahrain', 'oman'];
+export function isGcc(i: { hq_country?: string; region?: string; global_region?: string; network_tags?: string }): boolean {
+  const geo = `${i.hq_country || ''} ${i.region || ''}`.toLowerCase();
+  if (GCC_COUNTRIES.some(c => geo.includes(c))) return true;
+  return parseTags(i.network_tags).some(t => t.toLowerCase() === 'gcc');
+}
