@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 
 from services.doc_smartfill import (
     COLUMN_TYPES, MIN_PDF_TEXT_CHARS, extraction_prompt, merge_writes, office_kind,
-    office_to_text, pdf_to_text, plan_updates,
+    office_to_text, pdf_pages_to_images, pdf_to_text, plan_updates,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,8 @@ MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024   # one file arriving by email
 # Ishu has already judged worth reading, so it may be much larger (a 35MB
 # image-heavy deck was the first real case, 7 Sep 2026). Large files travel
 # browser -> Cloud Storage directly, never through Cloud Run's 32MB request
-# ceiling, and go to Gemini through its Files API rather than inline bytes.
+# ceiling. PDFs are read from their text layer; picture decks are rendered
+# page by page to images (never the Files API - see analyse_document).
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 GEMINI_INLINE_LIMIT = 18 * 1024 * 1024    # inline request parts stop at 20MB
 MAX_ATTACHMENTS_PER_EMAIL = 10
@@ -243,39 +244,30 @@ def analyse_document(company: Dict, filename: str, content_type: str,
 
         client = genai.Client(api_key=api_key)
         prompt = extraction_prompt(company, filename)
-        uploaded = None
         if text_doc:
+            path = f"text ({kind}, {len(text_doc)} chars)"
             contents = [f"DOCUMENT TEXT ({kind}):\n{text_doc}", prompt]
-        elif len(data) > GEMINI_INLINE_LIMIT:
-            # Files API: the only route for a large scanned PDF. The file must
-            # reach ACTIVE before it can be read (a 400 INVALID_ARGUMENT on a
-            # 60MB deck, 8 Sep 2026, was this). Deleted after the read.
-            import io as _io
-            import time as _time
-            uploaded = client.files.upload(file=_io.BytesIO(data),
-                                           config={"mime_type": content_type,
-                                                   "display_name": filename[:100]})
-            deadline = _time.time() + 120
-            while getattr(getattr(uploaded, "state", None), "name", str(uploaded.state)) == "PROCESSING" \
-                    and _time.time() < deadline:
-                _time.sleep(3)
-                uploaded = client.files.get(name=uploaded.name)
-            if getattr(getattr(uploaded, "state", None), "name", "") != "ACTIVE":
-                raise RuntimeError(f"uploaded file never became readable (state {uploaded.state})")
-            contents = [uploaded, prompt]
+        elif content_type == "application/pdf" and len(data) > GEMINI_INLINE_LIMIT:
+            # A big PDF with no text layer is a picture deck. Render the pages
+            # and send them as images: every page seen, nothing uploaded to a
+            # file store (the Files API route returned 400 INVALID_ARGUMENT on
+            # a 60MB deck twice, 8 Sep 2026).
+            pages = pdf_pages_to_images(data)
+            if not pages:
+                return {"_error": "large scanned PDF: could not render pages for the vision read"}
+            path = f"vision ({len(pages)} page images, {sum(map(len, pages)) // 1024}KB)"
+            contents = [f"The document's {len(pages)} pages follow as images, in page order (image 1 = page 1). Cite page numbers in evidence."] \
+                + [Part.from_bytes(data=p, mime_type="image/jpeg") for p in pages] + [prompt]
         else:
+            path = f"inline bytes ({len(data) // 1024}KB)"
             contents = [Part.from_bytes(data=data, mime_type=content_type), prompt]
+        logger.info(f"[EmailDocs] reading {filename} via {path}")
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=contents,
             config=GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
         )
         text = (response.text or "").strip()
-        if uploaded is not None:
-            try:
-                client.files.delete(name=uploaded.name)
-            except Exception:
-                pass
         if text.startswith("```"):
             text = text.strip("`").replace("json", "", 1).strip()
         got = json.loads(text)
@@ -465,6 +457,7 @@ def process_email_documents(bq_handler, gcs_handler, entry: Dict,
                 "ai_updates": json.dumps([{k: v for k, v in i.items() if k != "writes"}
                                           for i in applied_fills]) if applied_fills else "",
                 "pending_updates": json.dumps(plan["conflicts"]) if plan["conflicts"] else "",
+                "read_error": read_error,
             })
             if plan["conflicts"]:
                 bq_handler.add_activity_note(

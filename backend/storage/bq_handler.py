@@ -1575,6 +1575,7 @@ class BigQueryHandler:
                 ("received_at", "TIMESTAMP"), ("saved_at", "TIMESTAMP"),
                 ("ai_summary", "STRING"), ("ai_updates", "STRING"),
                 ("pending_updates", "STRING"), ("pending_resolved_at", "TIMESTAMP"),
+                ("read_error", "STRING"),
             ]]
             self.client.create_table(bigquery.Table(table_id, schema=schema))
             logger.info("Created email_documents table")
@@ -1585,7 +1586,8 @@ class BigQueryHandler:
             try:
                 self.client.query(f"""ALTER TABLE `{table_id}`
                     ADD COLUMN IF NOT EXISTS pending_updates STRING,
-                    ADD COLUMN IF NOT EXISTS pending_resolved_at TIMESTAMP""").result()
+                    ADD COLUMN IF NOT EXISTS pending_resolved_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS read_error STRING""").result()
             except Exception as e:
                 logger.warning(f"email_documents column check: {e}")
             self._email_docs_cols_ok = True
@@ -1632,10 +1634,11 @@ class BigQueryHandler:
             self.client.query(f"""
                 INSERT INTO `{t}` (company_name, filename, gcs_path, content_type, content_sha256,
                                    size_bytes, message_id, email_subject, sender_email,
-                                   received_at, saved_at, ai_summary, ai_updates, pending_updates)
-                VALUES (@c, @f, @g, @ct, @sha, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd, @pend)
+                                   received_at, saved_at, ai_summary, ai_updates, pending_updates, read_error)
+                VALUES (@c, @f, @g, @ct, @sha, @sz, @m, @subj, @from, @recv, CURRENT_TIMESTAMP(), @sum, @upd, @pend, @rerr)
             """, job_config=bigquery.QueryJobConfig(query_parameters=[
                 bigquery.ScalarQueryParameter("pend", "STRING", meta.get("pending_updates") or ""),
+                bigquery.ScalarQueryParameter("rerr", "STRING", meta.get("read_error") or ""),
                 bigquery.ScalarQueryParameter("c", "STRING", meta.get("company_name") or ""),
                 bigquery.ScalarQueryParameter("f", "STRING", meta.get("filename") or ""),
                 bigquery.ScalarQueryParameter("g", "STRING", meta.get("gcs_path") or ""),
@@ -1665,7 +1668,8 @@ class BigQueryHandler:
                        CAST(received_at AS STRING) AS received_at,
                        ai_summary, ai_updates,
                        IFNULL(pending_updates, '') AS pending_updates,
-                       CAST(pending_resolved_at AS STRING) AS pending_resolved_at
+                       CAST(pending_resolved_at AS STRING) AS pending_resolved_at,
+                       IFNULL(read_error, '') AS read_error
                 FROM `{t}` WHERE company_name = @c
                 ORDER BY received_at DESC
             """, params=[bigquery.ScalarQueryParameter("c", "STRING", company_name)])

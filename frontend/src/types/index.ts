@@ -380,6 +380,7 @@ export interface EmailDoc {
   // holds {accepted, declined} and pending_resolved_at is set.
   pending_updates: string;
   pending_resolved_at?: string | null;
+  read_error?: string;   // why the AI read failed, '' when it succeeded
 }
 
 export interface DocReviewItem {

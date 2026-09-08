@@ -191,6 +191,45 @@ def pdf_to_text(data: bytes) -> str:
         return ""
 
 
+MAX_VISION_PAGES = 80
+VISION_BUDGET_BYTES = 16 * 1024 * 1024   # all page images together, inline
+
+
+def pdf_pages_to_images(data: bytes, max_pages: int = MAX_VISION_PAGES,
+                        budget: int = VISION_BUDGET_BYTES) -> List[bytes]:
+    """Render a scanned/picture PDF's pages to JPEGs small enough to send
+    inline. A 60MB exported deck becomes ~40 images of ~150KB: the model sees
+    every page, nothing is uploaded to a file store, no size-limit 400s.
+    Renders at 110 dpi and steps down if the budget is exceeded."""
+    try:
+        import pymupdf
+    except ImportError:
+        return []
+    try:
+        doc = pymupdf.open(stream=data, filetype="pdf")
+    except Exception as e:
+        logger.warning(f"[DocSmartFill] pdf render open failed: {e}")
+        return []
+    for dpi, quality in ((110, 70), (85, 60), (65, 50)):
+        out: List[bytes] = []
+        total = 0
+        try:
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    break
+                jpg = page.get_pixmap(dpi=dpi).tobytes("jpeg", jpg_quality=quality)
+                out.append(jpg)
+                total += len(jpg)
+                if total > budget:
+                    break
+        except Exception as e:
+            logger.warning(f"[DocSmartFill] pdf render failed: {e}")
+            return []
+        if total <= budget:
+            return out
+    return out[: max(1, len(out) // 2)]
+
+
 # ── The extraction prompt ────────────────────────────────────────────────────
 
 def extraction_prompt(company: Dict, filename: str) -> str:

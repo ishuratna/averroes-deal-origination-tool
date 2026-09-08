@@ -521,20 +521,47 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       e.target.value = '';
                       if (!f) return;
                       setDocUploading(true);
+                      const before = emailDocs.length;
+                      // One place decides what to show once a document has been
+                      // filed and read, whether the answer came back directly or
+                      // was recovered from the document list after a dropped
+                      // connection (a 60MB read runs ~40s; Cloud Run's proxy can
+                      // drop the socket while the backend finishes regardless).
+                      const settle = async (r: { gcs_path: string; pending: DocReviewItem[]; fills_applied: number; summary?: string; read_error?: string }) => {
+                        await onChanged();
+                        if (r.pending?.length) openReview(r.gcs_path, f.name, r.pending, r.fills_applied || 0);
+                        else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
+                        else alert(r.fills_applied
+                          ? `Filed. ${r.fills_applied} field(s) filled from the document; nothing disagreed with the record.`
+                          : `Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
+                      };
                       try {
                         const r = await dealApi.uploadEmailDoc(baseCompany.name, f);
                         if (r.status === 'Skipped') alert(r.message);
                         const docs = await dealApi.getEmailDocs(baseCompany.name);
                         setEmailDocs(docs.documents || []);
-                        if (r.status === 'Success') {
-                          await onChanged();   // fills were written; refresh the card
-                          if (r.pending?.length) openReview(r.gcs_path, f.name, r.pending, r.fills_applied || 0);
-                          else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
-                          else alert(r.fills_applied
-                            ? `Filed. ${r.fills_applied} field(s) filled from the document; nothing disagreed with the record.`
-                            : `Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
+                        if (r.status === 'Success') await settle(r);
+                      } catch (err: any) {
+                        const msg = String(err?.message || '');
+                        if (!/failed to fetch|networkerror|load failed/i.test(msg)) { alert(msg || 'Upload failed'); return; }
+                        // Connection dropped: the backend is very likely still
+                        // working. Poll the document list for up to 4 minutes.
+                        for (let i = 0; i < 48; i++) {
+                          await new Promise(res => setTimeout(res, 5000));
+                          const docs = await dealApi.getEmailDocs(baseCompany.name).catch(() => ({ documents: [] as EmailDoc[] }));
+                          if ((docs.documents || []).length > before) {
+                            setEmailDocs(docs.documents);
+                            const d = docs.documents[0];
+                            let pending: DocReviewItem[] = [];
+                            try { pending = parsePendingReview(d); } catch { /* none */ }
+                            let fills = 0;
+                            try { fills = d.ai_updates ? (JSON.parse(d.ai_updates) as unknown[]).length : 0; } catch { /* none */ }
+                            await settle({ gcs_path: d.gcs_path, pending, fills_applied: fills, summary: d.ai_summary, read_error: d.read_error });
+                            return;
+                          }
                         }
-                      } catch (err: any) { alert(err?.message || 'Upload failed'); }
+                        alert('The connection dropped and the document has not appeared yet. Refresh the card in a minute; if it is still missing, upload again.');
+                      }
                       finally { setDocUploading(false); }
                     }} />
                 </label>

@@ -20,3 +20,4 @@ reportlab==4.2.5
 python-pptx
 python-docx
 pypdf
+pymupdf
