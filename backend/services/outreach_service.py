@@ -388,55 +388,73 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
         return _fallback_template(company_data)
 
 
-# ── Investor (LP) outreach: structure v1 ─────────────────────────────────────
-# Per Ishu (8 Sep 2026): mirror the founder loop for LPs, tailored content.
-# Drafted from what the tool holds; fund facts the tool cannot verify are
-# marked [confirm: ...] so they are edited in the review modal, never sent
-# blind. When the positioning is locked, replace the markers here (and ONLY
-# here: this is the one place LP email structure lives).
-#
-# Structure (5-7 sentences, understated, ZERO em dashes anywhere):
-#   1. Greeting by first name.
-#   2. Who writes: sender name + role at Averroes Capital, a London-based
-#      growth equity investor backing founder-led UK B2B software companies
-#      (GBP 2.5-10M revenue), with proprietary AI-driven origination.
-#   3. Why them, SPECIFIC: their PE strategy preferences, geographic mandate,
-#      first-time-fund stance, or portfolio overlap with our pipeline.
-#   4. What we are raising: fund / co-investment programme [confirm].
-#   5. Portfolio proof, plain (Glowday, Journey).
-#   6. Soft ask: a short introductory call or our strategy note.
-#   7. "Best," then the signature (added on send).
-INVESTOR_EMAIL_FUND_LINE = os.getenv(
-    "INVESTOR_EMAIL_FUND_LINE",
-    "We are raising [confirm: fund name and target size] and also offer co-investment "
-    "alongside the fund on a deal by deal basis [confirm].")
+# ── Investor (LP) outreach: structure v2 ─────────────────────────────────────
+# Per Ishu (9 Sep 2026): an INVITATION to talk, human, no placeholders.
+#   1. "Hi {first},"
+#   2. Who writes and who we are: investor relations at Averroes Capital (or a
+#      Partner when Bea's mailbox sends); a London-based technology investor
+#      taking growth equity or significant and majority positions in software
+#      and tech companies, primarily UK and Ireland.
+#   3. WHY THEM: one specific, personal line from what we hold (co-investment
+#      appetite, tech exposure, a company we both know). Never generic praise.
+#   4. How we invest: deal by deal alongside a pool of investors, many of whom
+#      have backed us across more than one round, now widening that circle;
+#      collaborative, alongside management teams; Glowday and Journey have
+#      delivered strong returns for the investors who came in with us.
+#   5. The invitation: share our philosophy, no expectation beyond a
+#      conversation; a short call in the coming weeks, or a short note first.
+#   6. "Best," and the signature (added on send).
+# ZERO em dashes or en dashes anywhere. Structure changes happen HERE only.
+AVERROES_LP_POSITIONING = (
+    "We are a technology investor based in London, taking growth equity or significant and "
+    "majority positions in software and tech companies, primarily in the UK and Ireland.")
+AVERROES_LP_MODEL = (
+    "We invest deal by deal alongside a pool of investors, many of whom have backed us across more "
+    "than one round, and we are now widening that circle. Our approach is collaborative: we work "
+    "alongside the management teams we back rather than around them, and the companies we have "
+    "invested in, Glowday and Journey among them, have delivered strong returns for the investors "
+    "who came in with us.")
+AVERROES_LP_INVITATION = (
+    "I would enjoy sharing our philosophy and how we work with our investors, with no expectation "
+    "beyond a conversation. Would you be open to a short call in the coming weeks? If it is easier, "
+    "I can send a short note on Averroes first.")
+
+
+def _lp_role_line(prof: Dict) -> str:
+    """Who is writing, kept true to the mailbox that sends: Ishu's investor
+    relations line when the investor mailbox is configured, a Partner line
+    while Bea's mailbox is the fallback."""
+    if prof.get("fallback") or (prof.get("sig_title") or "").lower().startswith("partner"):
+        return "I am a Partner at Averroes Capital."
+    return "I look after investor relations at Averroes Capital."
 
 
 def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
-    """Draft a personalised LP introduction email from stored investor data
-    (PitchBook fields + InvestorFill research). No Google Search. Signed by
-    the INVESTOR sender profile; falls back to a fixed template without AI."""
+    """Draft the LP invitation (structure v2). The only AI-written part is the
+    personal WHY THEM line; the positioning, model and invitation are fixed
+    house copy. No Google Search. Falls back to a fully fixed template."""
     api_key = os.getenv("GEMINI_API_KEY")
     prof = sender_profile("investor")
-    signer = prof["sig_name"] or prof["name"] or "[confirm: sender name]"
-    signer_title = prof["sig_title"] or "[confirm: title]"
+    role_line = _lp_role_line(prof)
 
     name = investor.get("name", "")
     contact_name = investor.get("contact_name", "")
     contact_email = investor.get("contact_email", "")
     first = contact_name.split()[0] if contact_name.strip() else ""
+    greeting = f"Hi {first}," if first else "Hello,"
 
     context_parts = []
     for label, key in [
         ("Type", "investor_type"), ("Description", "description"),
-        ("HQ", "hq_country"), ("AUM (GBP m)", "aum_m"),
+        ("HQ", "hq_country"), ("AUM (USD m)", "aum_m"),
         ("PE strategy preferences", "strategy_preferences"),
         ("Geographic mandate", "geo_preferences"),
         ("Open to first-time funds", "open_to_first_time"),
         ("PE fund commitments", "num_pe_commitments"),
-        ("Portfolio overlap with our pipeline", "source_companies"),
+        ("Companies in our universe they have backed", "source_companies"),
         ("Contact title", "contact_title"),
         ("Policy", "policy_description"),
+        ("Network tags", "network_tags"),
     ]:
         val = investor.get(key)
         if val not in (None, ""):
@@ -444,49 +462,41 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     lp_context = "\n".join(context_parts) if context_parts else f"Investor: {name}"
 
     subject = f"Averroes Capital, {name}"
-    fallback_body = (
-        f"Hi {first or 'there'},\n\n"
-        f"I am {signer}, {signer_title} at Averroes Capital, a London-based growth equity investor "
-        f"backing founder-led UK B2B software companies with GBP 2.5-10M of revenue, a segment we "
-        f"believe is underserved by institutional capital.\n\n"
-        f"Given {name}'s activity in private markets, I thought a short introduction could be of interest. "
-        f"{INVESTOR_EMAIL_FUND_LINE}\n\n"
-        f"{PORTFOLIO_PROOF}\n\n"
-        f"Would you be open to a short introductory call in the coming weeks? Happy to share our strategy "
-        f"note beforehand if that is easier.\n\n"
-        f"Best,")
-    fallback = {"subject": subject, "body": fallback_body, "to": contact_email or "",
+
+    def _assemble(why_them: str) -> str:
+        parts = [greeting, "", f"{role_line} {AVERROES_LP_POSITIONING}", ""]
+        if why_them:
+            parts += [why_them, ""]
+        parts += [AVERROES_LP_MODEL, "", AVERROES_LP_INVITATION, "", "Best,"]
+        return "\n".join(parts)
+
+    generic_why = (f"Given {name}'s activity in private markets, I thought an introduction might be of interest."
+                   if name else "")
+    fallback = {"subject": subject, "body": _assemble(generic_why), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
                 "from": sender_label("investor"), "is_fallback": True}
     if not api_key:
         return fallback
 
-    prompt = f"""You are {signer}, {signer_title} at Averroes Capital, a London-based growth equity
-investor backing founder-led UK B2B software companies with GBP 2.5-10M revenue, using
-proprietary AI-driven origination that covers the whole UK and Ireland universe.
+    prompt = f"""You write ONE sentence, at most two, for an email from Averroes Capital (a London-based
+technology investor, growth equity and majority positions in UK and Irish software companies,
+investing deal by deal with a pool of co-investors) to {contact_name or 'the principal'} at {name},
+a potential co-investor.
 
-Write a SHORT introduction email to {contact_name or 'the principal'} at {name}, a potential
-LIMITED PARTNER (investor in our fund or co-investor in our deals).
+Write the WHY THEM sentence only: something specific and true from the intelligence below that
+explains why we are writing to them in particular. Prefer, in this order: a company we both know
+(they have backed a company in our universe); a stated co-investment or direct investing appetite;
+technology or growth exposure; their geographic mandate. It must read as one person writing to
+another, warm and plain, not flattery and not a sales line.
 
-INVESTOR INTELLIGENCE (from our database, use it to personalise):
+INTELLIGENCE:
 {lp_context}
 
-STRUCTURE, in this order, 5 to 7 sentences total:
-1. "Hi {first or '[first name]'}," then one line of who you are (name, title, Averroes in one clause).
-2. WHY THEM, one specific sentence drawn from the intelligence above: their PE strategy
-   preferences, geographic mandate, stance on first-time funds, or the portfolio overlap
-   with our pipeline. Never generic praise.
-3. WHAT WE ARE RAISING, exactly this sentence, verbatim: "{INVESTOR_EMAIL_FUND_LINE}"
-4. PORTFOLIO PROOF, exactly this, verbatim: "{PORTFOLIO_PROOF}"
-5. SOFT ASK: a short introductory call in the coming weeks, or to share our strategy note.
-6. End with "Best," on its own line. NO name after it (the signature is added on send).
+RULES: British spelling. No em dashes or en dashes, use commas or full stops. Do not mention
+Averroes, returns, or a call (the rest of the email does that). Do not invent facts: if the
+intelligence gives you nothing specific, return an empty string.
 
-RULES: investor relations tone, understated and credible, no hyperbole, no "exciting".
-Senior investors skim, so short sentences. British spelling. Do not use em dashes or en
-dashes anywhere, use commas or full stops. Keep every [confirm: ...] marker exactly as
-written. Subject line: exactly "{subject}".
-
-Return ONLY valid JSON: {{"subject": "{subject}", "body": "..."}} with \\n for line breaks."""
+Return ONLY valid JSON: {{"why_them": "..."}}"""
 
     try:
         from google import genai
@@ -494,15 +504,13 @@ Return ONLY valid JSON: {{"subject": "{subject}", "body": "..."}} with \\n for l
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         text = (response.text or "").strip()
-        if not text:
-            return fallback
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        result = json.loads(text)
-        body = (result.get("body") or "").replace("—", ",").replace("–", ",")
-        if not body.strip():
-            return fallback
-        return {"subject": subject, "body": body, "to": contact_email or "",
+        why = (json.loads(text).get("why_them") or "").strip() if text else ""
+        why = why.replace("—", ",").replace("–", ",")
+        if len(why) > 400:
+            why = why[:400].rsplit(".", 1)[0] + "."
+        return {"subject": subject, "body": _assemble(why or generic_why), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
                 "from": sender_label("investor")}
     except Exception as e:
@@ -512,15 +520,15 @@ Return ONLY valid JSON: {{"subject": "{subject}", "body": "..."}} with \\n for l
 
 def draft_lp_followup_email(investor: Dict) -> Dict[str, str]:
     """The 14-day LP follow-up: fixed template, same thread (Re: subject),
-    zero AI. Short, one nudge, no new ask."""
+    zero AI. One nudge, human, no new ask."""
     contact_name = investor.get("contact_name", "")
-    first = contact_name.split()[0] if contact_name.strip() else "there"
+    first = contact_name.split()[0] if contact_name.strip() else ""
     subj = investor.get("outreach_draft_subject") or f"Averroes Capital, {investor.get('name', '')}"
-    body = (f"Hi {first},\n\n"
-            f"Following up on my note below in case it slipped through. We are speaking with a small "
-            f"number of investors about Averroes Capital's strategy in UK B2B software and would value "
-            f"a short conversation if the timing works on your side.\n\n"
-            f"If it is easier, I can send our strategy note first.\n\n"
+    body = (f"{'Hi ' + first + ',' if first else 'Hello,'}\n\n"
+            f"Following up on my note below in case it got buried. We are having a small number of "
+            f"conversations with investors about how Averroes works alongside its co-investors in UK "
+            f"and Irish software, and I would still value a short conversation if the timing suits.\n\n"
+            f"If it is easier, I am happy to send a short note on Averroes first.\n\n"
             f"Best,")
     return {"to": investor.get("outreach_draft_to") or investor.get("contact_email") or "",
             "subject": subj if subj.lower().startswith("re:") else f"Re: {subj}",

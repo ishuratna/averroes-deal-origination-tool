@@ -53,24 +53,39 @@ chk("signature carries name, title, address and the disclaimer",
 chk("html signature embeds the logo by CID", f"cid:{osvc.SIG_LOGO_CID}" in sig["html"])
 
 print()
-print("── LP email structure v1 ──")
+print("── LP email structure v2 (the invitation) ──")
 d = osvc.draft_lp_outreach_email({"name": "Acme Family Office", "contact_name": "Jane Roe",
                                   "contact_email": "jane@acme.com", "strategy_preferences": "Growth"})
 chk("fallback (no API key) is marked so it is never persisted", d.get("is_fallback"), True)
 chk("subject is the quiet house format", d["subject"], "Averroes Capital, Acme Family Office")
 chk("greets by first name", d["body"].startswith("Hi Jane,"))
-chk("signed by the configured investor sender", "Ishu Ratna" in d["body"])
+chk("investor-relations line when the investor mailbox is configured (not Bea)",
+    "I look after investor relations at Averroes Capital." in d["body"])
+chk("positioning: London tech investor, growth equity or majority, UK and Ireland",
+    "growth equity or significant and majority positions" in d["body"] and "UK and Ireland" in d["body"])
+chk("model: deal by deal, repeat investors, widening the circle, collaborative",
+    "deal by deal" in d["body"] and "more than one round" in d["body"] and "collaborative" in d["body"])
+chk("proof names Glowday and Journey", "Glowday and Journey" in d["body"])
+chk("the ask is an invitation to talk, with a softer alternative",
+    "no expectation beyond a conversation" in d["body"] and "short note on Averroes first" in d["body"])
+chk("NO placeholders left for the reader", "[confirm" not in d["body"])
 chk("ZERO em/en dashes anywhere", "—" not in d["body"] and "–" not in d["body"])
-chk("fund facts flagged for confirmation, not invented", "[confirm" in d["body"])
-chk("portfolio proof present verbatim", osvc.PORTFOLIO_PROOF in d["body"])
 chk("ends with Best, (signature added on send)", d["body"].rstrip().endswith("Best,"))
 chk("from line reports the investor mailbox", d["from"], "Ishu Ratna <lp@averroescapital.com>")
+for k in ("INVESTOR_OUTREACH_EMAIL", "INVESTOR_SMTP_PASSWORD", "INVESTOR_OUTREACH_NAME"):
+    os.environ.pop(k, None)
+d2 = osvc.draft_lp_outreach_email({"name": "Acme", "contact_name": "Jane Roe"})
+chk("when Bea's mailbox sends, the 'I' is a Partner", "I am a Partner at Averroes Capital." in d2["body"])
+os.environ["INVESTOR_OUTREACH_EMAIL"] = "lp@averroescapital.com"
+os.environ["INVESTOR_SMTP_PASSWORD"] = "app-pass"
+os.environ["INVESTOR_OUTREACH_NAME"] = "Ishu Ratna"
+chk("no first name -> 'Hello,'", osvc.draft_lp_outreach_email({"name": "X Capital"})["body"].startswith("Hello,"))
 f = osvc.draft_lp_followup_email({"name": "Acme", "contact_name": "Jane Roe",
                                   "outreach_draft_subject": "Averroes Capital, Acme",
                                   "outreach_draft_to": "jane@acme.com"})
 chk("follow-up threads as Re: the original subject", f["subject"], "Re: Averroes Capital, Acme")
 chk("follow-up goes to the address actually used", f["to"], "jane@acme.com")
-chk("follow-up has no em dashes", "—" not in f["body"])
+chk("follow-up has no em dashes", "—" not in f["body"] and "–" not in f["body"])
 f2 = osvc.draft_lp_followup_email({"name": "Acme", "outreach_draft_subject": "Re: Averroes Capital, Acme"})
 chk("Re: is never doubled", f2["subject"], "Re: Averroes Capital, Acme")
 

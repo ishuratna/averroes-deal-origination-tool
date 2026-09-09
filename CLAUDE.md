@@ -185,10 +185,17 @@ mistake is both visible and correctable. This one logged nothing, which is why
   and stays informational. Warm-path sources: PitchBook GCC export and network
   lists uploaded WITH a tag; public registers (DIFC/ADGM/CMA) are bot-protected
   and off limits (TBU #168).
-- LP email STRUCTURE v1 lives only in `draft_lp_outreach_email` (zero em
-  dashes; fund facts the tool cannot verify carry `[confirm: ...]` markers
-  until Ishu locks the positioning, editable via `INVESTOR_EMAIL_FUND_LINE`).
-  `tests_investor_loop.py` enforces all of the above without BigQuery.
+- LP email STRUCTURE v2 (Ishu, 9 Sep 2026) lives only in
+  `draft_lp_outreach_email`: an INVITATION to talk, human, no placeholders.
+  Fixed house copy (`AVERROES_LP_POSITIONING` / `_MODEL` / `_INVITATION`:
+  London tech investor, growth equity or majority positions in UK/IE software;
+  deal by deal with repeat co-investors, widening the circle; collaborative,
+  alongside management; Glowday and Journey; a short call or a short note
+  first) plus ONE AI-written "why them" sentence from the row (a shared
+  company, co-invest appetite, tech exposure, mandate; empty if nothing
+  specific). The "I" follows the sending mailbox: investor relations when the
+  investor mailbox is configured, a Partner while Bea's is the fallback. Zero
+  em or en dashes. `tests_investor_loop.py` enforces all of the above.
 
 ## 3. Event truth
 
