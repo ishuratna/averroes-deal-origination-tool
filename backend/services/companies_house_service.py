@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 CH_API_BASE = "https://api.company-information.service.gov.uk"
 CH_DOC_API = "https://document-api.company-information.service.gov.uk"
 
+# ── How far back we read accounts (Ishu, 10 Sep 2026: latest + four prior) ────
+#
+# Each filing carries its own year AND the prior year's comparatives, and
+# consecutive filings overlap by one year, so N filings yield N+1 distinct
+# financial years. Five years therefore needs four filings; we read five for
+# margin, because a company that changed its year end or filed late can leave a
+# gap. The cap used to be three filings, set when each one cost a Gemini call.
+# Under iXBRL a filing costs one free HTTP fetch, so depth is nearly free now.
+ACCOUNTS_FILINGS_FETCHED = 8    # asked of the filing-history endpoint
+ACCOUNTS_FILINGS_PARSED = 5     # actually opened and read
+YEARS_KEPT = 8                  # periods stored in ch_history
+
+# The Gemini PDF fallback is capped at the LATEST filing only. Deepening the
+# history must not quietly multiply AI spend: an old paper scan is worth reading
+# when it is the only account a company has, and not worth it as the fifth year
+# of a company whose recent filings are already machine-tagged.
+PDF_FALLBACK_MAX_FILINGS = 1
+
 
 def _ch_auth() -> Tuple[str, str]:
     """Return HTTP Basic auth tuple for CH API (key as username, blank password)."""
@@ -1013,7 +1031,7 @@ def extract_ch_financials(
 
     # ── Step 3: Get filing history (accounts only) ──
     logger.info(f"[CH] Step 3: Fetching accounts filing history for #{company_number}...")
-    filings = _get_accounts_filings(company_number, max_items=5)
+    filings = _get_accounts_filings(company_number, max_items=ACCOUNTS_FILINGS_FETCHED)
 
     if not filings:
         logger.warning(f"[CH] No accounts filings found for #{company_number}")
@@ -1030,15 +1048,15 @@ def extract_ch_financials(
             **registry_intel,
         }
 
-    # Try to download PDFs for up to the latest 3 filings
-    logger.info(f"[CH] Found {len(filings)} accounts filings. Attempting PDF downloads...")
+    logger.info(f"[CH] Found {len(filings)} accounts filings. Reading up to "
+                f"{ACCOUNTS_FILINGS_PARSED} of them...")
 
     all_financials = []
     filing_type = None
 
     saved_pdf_path = None
 
-    for i, filing in enumerate(filings[:3]):
+    for i, filing in enumerate(filings[:ACCOUNTS_FILINGS_PARSED]):
         filing_date = filing.get("date", "")
         filing_desc = filing.get("description", "")
         logger.info(f"[CH] Step 4: Downloading PDF for filing {i+1}: {filing_desc} ({filing_date})...")
@@ -1084,7 +1102,9 @@ def extract_ch_financials(
         # The PDF is still fetched for the FIRST filing so the profile's
         # "View filing" keeps working - a free download, no AI involved.
         pdf_bytes = None
-        if parsed is None or (gcs_handler and not saved_pdf_path):
+        need_pdf_for_ai = parsed is None and i < PDF_FALLBACK_MAX_FILINGS
+        need_pdf_to_store = gcs_handler and not saved_pdf_path and i == 0
+        if need_pdf_for_ai or need_pdf_to_store:
             pdf_bytes = _download_accounts_pdf(filing)
 
         if gcs_handler and pdf_bytes and not saved_pdf_path:
@@ -1101,6 +1121,12 @@ def extract_ch_financials(
                 logger.warning(f"[CH] Could not save PDF to GCS: {e}")
 
         if parsed is None:
+            if i >= PDF_FALLBACK_MAX_FILINGS:
+                # An older paper scan. Reading it would cost a Gemini call, and
+                # deepening the history must never quietly multiply AI spend.
+                logger.info(f"[CH] Filing {i+1} has no iXBRL; skipping the PDF read "
+                            f"(AI fallback is reserved for the latest filing).")
+                continue
             if not pdf_bytes:
                 logger.warning(f"[CH] Could not download PDF for filing {i+1}")
                 continue
@@ -1176,7 +1202,7 @@ def extract_ch_financials(
     sorted_years = sorted(seen_dates.items(), key=lambda x: x[0], reverse=True)
 
     # Map to y1 (most recent), y2, y3
-    for i, (date, data) in enumerate(sorted_years[:3]):
+    for i, (date, data) in enumerate(sorted_years[:3]):   # legacy y1..y3 projection
         suffix = f"y{i+1}"
         result[f"revenue_{suffix}"] = data.get("revenue")
         result[f"revenue_{suffix}_date"] = date
@@ -1196,7 +1222,7 @@ def extract_ch_financials(
     # Feeds the profile's revenue chart, employee-development chart and the
     # multi-year P&L table. Stored as JSON on the row (ch_history).
     history = []
-    for date, data in sorted_years[:6]:
+    for date, data in sorted_years[:YEARS_KEPT]:
         entry = {"period_end": date}
         for k in ("revenue", "gross_profit", "profit", "total_assets", "net_assets", "cash", "employees"):
             if data.get(k) is not None:

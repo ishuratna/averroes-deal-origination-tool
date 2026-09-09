@@ -274,6 +274,35 @@ mistake is both visible and correctable. This one logged nothing, which is why
   comparison is meaningless. Check directors first, then the PSC register: a
   founder off the board often still holds significant control.
 
+## 4ab. Reading accounts: how deep, and trusting a tag too far
+
+- DEPTH (Ishu, 10 Sep 2026: latest + four prior). N accounts filings yield N+1
+  distinct years, because each filing carries its own year AND the prior year's
+  comparatives and consecutive filings overlap by one. `ACCOUNTS_FILINGS_PARSED
+  = 5` therefore gives six years; `ACCOUNTS_FILINGS_FETCHED = 8` leaves slack
+  for a changed year end or a skipped filing; `YEARS_KEPT = 8` in `ch_history`.
+  `revenue_y1..y3` remain a legacy projection of the newest three.
+- The old cap of three was set when every filing cost a Gemini call. It does
+  not any more, so `PDF_FALLBACK_MAX_FILINGS = 1`: only the LATEST filing may
+  fall back to the AI PDF read. An older filing with no iXBRL is SKIPPED, and
+  the PDF is downloaded only for the AI fallback or to store filing 1 in GCS.
+  Deepening history must never quietly multiply AI spend.
+- `scale` IS NOT UNIVERSALLY SAFE. It exists so money can be reported in
+  thousands or millions. FOUNDIT! GROUP (09690801, FY2025) tags
+  `AverageNumberEmployeesDuringPeriod` as `unitRef="Pure" decimals="2"
+  scale="-2"` around a printed `10`: the filing software mirrored `decimals`
+  onto a Pure-unit fact, where it means nothing. We computed 0.1 and `int()`
+  took it to ZERO, so a company with GBP 9.5M revenue showed no staff and its
+  employee-growth score collapsed.
+- `_headcount()` is the rule: if scaling turns a whole number of people into a
+  fraction below one, the SCALE is the error, not the number, so use the figure
+  as printed. Narrow on purpose - a positive scale is honoured (2,000 staff is
+  real), a genuine tagged 0 survives (dormant holding companies exist), and a
+  missing fact stays None rather than becoming 0. Money is untouched.
+- The general lesson: a machine-readable tag is only as good as the filer.
+  Sanity-check any derived figure against what a human reading the document
+  would see. `tests_ixbrl_headcount.py` pins this against the real filing.
+
 ## 4a. Identity guard (same-named companies must never mix)
 
 - Every grounded enrichment call receives the row's SEED ANCHORS as identity

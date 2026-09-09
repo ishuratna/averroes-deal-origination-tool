@@ -85,6 +85,21 @@ def fetch_ixbrl(filing: dict) -> Optional[str]:
         return None
 
 
+def _num_raw(tag) -> Optional[float]:
+    """The number as PRINTED in the document, sign applied, scale ignored."""
+    raw = tag.get_text(" ", strip=True)
+    raw = re.sub(r"[£$€,\s]", "", raw)
+    if raw in ("", "-", "–"):
+        return None
+    try:
+        v = float(raw)
+    except ValueError:
+        return None
+    if (tag.get("sign") or "") == "-":
+        v = -v
+    return v
+
+
 def _num(tag) -> Optional[float]:
     """The numeric value of an ix:nonFraction, honouring sign and scale."""
     raw = tag.get_text(" ", strip=True)
@@ -102,6 +117,36 @@ def _num(tag) -> Optional[float]:
     if (tag.get("sign") or "") == "-":
         v = -v
     return v
+
+
+def _headcount(v: Optional[float], tag) -> Optional[int]:
+    """An average employee count, defended against a mis-tagged `scale`.
+
+    REAL CASE (FOUNDIT! GROUP LIMITED 09690801, accounts to 31 Aug 2025):
+
+        <ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod"
+                        contextRef="C" unitRef="Pure"
+                        decimals="2" scale="-2">10</ix:nonFraction>
+
+    The document a human reads says 10 employees. `scale="-2"` says multiply by
+    0.01, so we computed 0.1 and int() took it to ZERO. The card then showed a
+    company with GBP 9.5M of revenue and no staff, and the fit score's employee
+    growth collapsed with it.
+
+    `scale` exists so money can be reported in thousands or millions. Some filing
+    software emits it on Pure-unit facts by mirroring `decimals`, which is
+    meaningless for a headcount. So: if scaling turns a whole number of people
+    into a fraction below one, the scale is the error, not the number.
+    """
+    if v is None:
+        return None
+    if 0 < v < 1:
+        raw = _num_raw(tag)
+        if raw is not None and raw >= 1:
+            logger.info("[iXBRL] Ignoring scale=%s on an employee count: %s people, not %s.",
+                        tag.get("scale"), int(round(raw)), v)
+            v = raw
+    return int(round(v))
 
 
 def _local(name: str) -> str:
@@ -144,7 +189,10 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
                 break
 
     # field -> {period_end: value}; first fact wins per (field, period).
+    # The employee TAG is kept alongside its value: a headcount needs the raw
+    # printed number when the filer's `scale` is nonsense (see _headcount).
     facts: Dict[str, Dict[str, float]] = {k: {} for k in _CONCEPTS}
+    emp_tags: Dict[str, object] = {}
     for tag in soup.find_all(lambda t: t.name and t.name.endswith("nonfraction")):
         concept = _local(tag.get("name") or "")
         ref = tag.get("contextref") or ""
@@ -156,6 +204,8 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
                 v = _num(tag)
                 if v is not None:
                     facts[field][when] = v
+                    if field == "employees":
+                        emp_tags[when] = tag
                 break
 
     # Which period is current vs prior: the two newest end dates seen.
@@ -176,8 +226,8 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
         "total_assets_current": pick("total_assets", cur), "total_assets_prior": pick("total_assets", prior),
         "net_assets_current": pick("net_assets", cur), "net_assets_prior": pick("net_assets", prior),
         "cash_current": pick("cash", cur), "cash_prior": pick("cash", prior),
-        "employees": int(facts["employees"][cur]) if facts["employees"].get(cur) is not None else None,
-        "employees_prior": int(facts["employees"][prior]) if prior and facts["employees"].get(prior) is not None else None,
+        "employees": _headcount(facts["employees"].get(cur), emp_tags.get(cur)),
+        "employees_prior": _headcount(facts["employees"].get(prior), emp_tags.get(prior)) if prior else None,
         "period_end_current": cur, "period_end_prior": prior or None,
         "filing_type": None,   # the orchestrator derives it from the filing description
         "currency": "GBP",
