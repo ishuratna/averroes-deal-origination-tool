@@ -590,6 +590,14 @@ export const dealApi = {
   // The agreed reminder thresholds. days = they have not answered our email
   // (Contacted, 14 days, overridden by a stated out-of-office return date).
   // replyDays = they wrote and we have not answered (Responded, 7 days).
+  // The most recent sync run (started, finished, outcome). Used to recover the
+  // result when the browser's connection dropped during a long sync.
+  async getLastSync(): Promise<{ run: { started_at: string; finished_at: string; ok: boolean; message: string } | null }> {
+    const response = await apiFetch(`${API_BASE_URL}/email/sync/last`);
+    if (!response.ok) return { run: null };
+    return await response.json();
+  },
+
   async getFollowups(days: number = 14, replyDays: number = 7, entity: 'company' | 'investor' = 'company'): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/followups?days=${days}&reply_days=${replyDays}&entity=${entity}`);
     if (!response.ok) return { count: 0, followups: [] };

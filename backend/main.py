@@ -6125,6 +6125,32 @@ async def email_sync_run(request: Request,
 @app.post("/email/sync")
 async def sync_emails(days: int = Query(30, description="How many days back to scan"),
                       deep: bool = Query(False, description="Search per known contact — captures full history from the start")):
+    """Runs the sync and RECORDS the run (sync_runs). A sync can take several
+    minutes; browsers behind a proxy lose the connection at ~5 min while the
+    backend finishes regardless (375s run, 9 Sep 2026). The button therefore
+    polls GET /email/sync/last after a network error and reports the real
+    outcome instead of 'Failed to fetch'."""
+    from datetime import timezone as _tz
+    started = datetime.now(_tz.utc)
+    try:
+        result = await _sync_emails_impl(days, deep)
+    except HTTPException as e:
+        bq_handler.record_sync_run(started, False, f"Sync failed: {e.detail}", None, days, deep)
+        raise
+    except Exception as e:
+        bq_handler.record_sync_run(started, False, f"Sync failed: {e}", None, days, deep)
+        raise
+    bq_handler.record_sync_run(started, True, result.get("message", ""), result, days, deep)
+    return result
+
+
+@app.get("/email/sync/last")
+async def last_email_sync():
+    """The most recent sync run (started, finished, outcome). Session route."""
+    return {"run": bq_handler.last_sync_run()}
+
+
+async def _sync_emails_impl(days: int, deep: bool):
     """
     Sync Beatrice's Gmail (IMAP, same App Password as sending) against known
     contacts in companies + LPs. Logs exchanges, classifies replies with AI,
@@ -6224,16 +6250,20 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     except Exception as e:
         logger.warning(f"[EmailSync] thread map unavailable (address matching only): {e}")
 
+    # Already-logged Message-IDs are read BEFORE the mailbox so the fetch can
+    # skip downloading them (only the header round trip is paid for those).
+    seen = bq_handler.get_logged_message_ids()
     try:
         entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep,
-                               deep_addresses=deep_addresses, thread_map=thread_map)
+                               deep_addresses=deep_addresses, thread_map=thread_map,
+                               skip_ids=None if deep else seen)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Mailbox sync failed: {e}")
 
-    # Dedup against already-logged messages
-    seen = bq_handler.get_logged_message_ids()
+    # Dedup against already-logged messages (belt and braces: the prefetch
+    # skips most of them, this catches the rest)
     new_entries = [e for e in entries if e.get("message_id") not in seen]
 
     # ── Autoresponders are not replies ───────────────────────────────────────
@@ -6477,26 +6507,27 @@ async def sync_emails(days: int = Query(30, description="How many days back to s
     # just the stage advance that should have happened.
     handled = {r["entity_name"] for r in replies}
     past_contact = {"Responded", "Meeting", "DD", "Offer", "Won"}
+    # Investor self-heal reads the LOG, not this run's entries: since already
+    # logged mail is no longer downloaded, the log is the only complete view.
+    try:
+        from services.ooo_detect import is_auto_reply as _is_auto_inv
+        for r in bq_handler.get_received_log(limit=2000, entity_type="investor"):
+            ename = r.get("entity_name") or ""
+            if not ename or ename in handled:
+                continue
+            if r.get("classification") in bq_handler.NON_REPLY_CLASSES:
+                continue
+            if _is_auto_inv(r.get("subject", ""), r.get("snippet", ""), ""):
+                continue
+            if _sender_of(r.get("counterparty_email", "")).get("status") == "Contacted":
+                investor_handler.update_status(ename, "Responded", created_by="email-sync")
+                advanced.append(f"{ename} (investor, self-heal)")
+                handled.add(ename)
+    except Exception as ex:
+        logger.warning(f"Investor self-heal pass failed: {ex}")
     for r in sorted((e for e in entries if e["direction"] == "received"), key=lambda x: x.get("sent_at") or ""):
         ename = r["entity_name"]
         if ename in handled:
-            continue
-        if r["entity_type"] == "investor":
-            # Same self-heal for investors: a genuine reply logged in an earlier
-            # run whose investor still sits in Contacted.
-            try:
-                from services.ooo_detect import is_auto_reply as _is_auto_inv
-                if _is_auto_inv(r.get("subject", ""), r.get("snippet", ""), r.get("headers", "")):
-                    continue
-                if r.get("classification") in bq_handler.NON_REPLY_CLASSES:
-                    continue
-                inv_status = _sender_of(r["counterparty_email"]).get("status")
-                if inv_status == "Contacted":
-                    investor_handler.update_status(ename, "Responded", created_by="email-sync")
-                    advanced.append(f"{ename} (investor, self-heal)")
-                    handled.add(ename)
-            except Exception as ex:
-                logger.warning(f"Investor self-heal failed for {ename}: {ex}")
             continue
         if r["entity_type"] != "company":
             continue

@@ -16,12 +16,27 @@ export default function SyncEmailsButton({ onSynced }: { onSynced?: () => void |
       title="Read Beatrice's mailbox (IMAP), log exchanges with known contacts, classify replies, auto-advance stages"
       onClick={async () => {
         setSyncing(true);
+        const startedAt = Date.now();
         try {
           const r = await dealApi.syncEmails(30);
           alert(r.message || 'Email sync complete.');
           await onSynced?.();
         } catch (e: any) {
-          alert(`Email sync failed: ${e.message}`);
+          const msg = String(e?.message || '');
+          if (!/failed to fetch|networkerror|load failed/i.test(msg)) { alert(`Email sync failed: ${msg}`); return; }
+          // The connection dropped (proxies cut idle requests at ~5 min) while
+          // the backend kept going. Every run is recorded server-side; poll
+          // for the one that started after this click and report its outcome.
+          for (let i = 0; i < 60; i++) {
+            await new Promise(res => setTimeout(res, 10_000));
+            const { run } = await dealApi.getLastSync().catch(() => ({ run: null }));
+            if (run?.finished_at && new Date(run.started_at.replace(' ', 'T') + (run.started_at.endsWith('Z') || run.started_at.includes('+') ? '' : 'Z')).getTime() >= startedAt - 120_000) {
+              alert(run.ok ? (run.message || 'Email sync complete.') : `Email sync failed: ${run.message}`);
+              await onSynced?.();
+              return;
+            }
+          }
+          alert('The sync is still running after 10 minutes. It will finish on its own; refresh the page later to see the results.');
         } finally {
           setSyncing(false);
         }

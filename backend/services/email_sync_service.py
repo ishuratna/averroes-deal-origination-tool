@@ -10,6 +10,7 @@ interested / not_now / declined / question / other.
 """
 import os
 import email
+import re
 import email.utils
 import imaplib
 import json
@@ -84,9 +85,38 @@ def _thread_refs(msg) -> List[str]:
     return refs
 
 
+_MSGID_RE = re.compile(rb"Message-ID:\s*(<[^>]+>)", re.IGNORECASE)
+_SEQ_RE = re.compile(rb"^(\d+) ")
+
+
+def _prefetch_message_ids(mail, ids: List[bytes]) -> Dict[bytes, str]:
+    """ONE round trip for the Message-ID header of every candidate, so the
+    expensive RFC822 download happens only for mail not already in the log.
+    Returns {seq_id: message_id}; ids whose header could not be read are
+    simply absent (and therefore fetched in full)."""
+    out: Dict[bytes, str] = {}
+    if not ids:
+        return out
+    try:
+        status, data = mail.fetch(b",".join(ids), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+        if status != "OK" or not data:
+            return out
+        for item in data:
+            if not isinstance(item, tuple) or len(item) < 2:
+                continue
+            m = _SEQ_RE.match(item[0] if isinstance(item[0], bytes) else b"")
+            mid = _MSGID_RE.search(item[1] if isinstance(item[1], bytes) else b"")
+            if m and mid:
+                out[m.group(1)] = mid.group(1).decode("utf-8", "ignore").strip()
+    except Exception as e:
+        logger.warning(f"[EmailSync] Message-ID prefetch failed ({e}); falling back to full fetch")
+    return out
+
+
 def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict],
                   known_domains: Dict[str, dict] = None, addresses: List[str] = None,
-                  max_fetch: int = 500, thread_map: Dict[str, dict] = None) -> List[dict]:
+                  max_fetch: int = 500, thread_map: Dict[str, dict] = None,
+                  skip_ids: set = None) -> List[dict]:
     """
     Fetch messages from one folder, keeping only known-contact exchanges.
     Direction is detected PER MESSAGE (From == our sender → 'sent', else
@@ -139,7 +169,23 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 return []
             ids = data[0].split()
         # Most recent first, bounded to keep runs fast
-        for msg_id in list(reversed(ids))[:max_fetch]:
+        candidates = list(reversed(ids))[:max_fetch]
+        # Already-logged mail is not downloaded again: one header round trip
+        # tells us which of the ~500 candidates are new. A 30-day sync used to
+        # pull every message in full every time (375s, 9 Sep 2026).
+        skipped = 0
+        if skip_ids:
+            mids = _prefetch_message_ids(mail, candidates)
+            keep = []
+            for i in candidates:
+                mid = mids.get(i)
+                if mid and mid in skip_ids:
+                    skipped += 1
+                    continue
+                keep.append(i)
+            candidates = keep
+            logger.info(f"[EmailSync] {folder}: {skipped} already logged, {len(candidates)} to read")
+        for msg_id in candidates:
             status, msg_data = mail.fetch(msg_id, "(RFC822)")
             if status != "OK" or not msg_data or not msg_data[0]:
                 continue
@@ -222,7 +268,8 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
 def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
                  known_domains: Dict[str, dict] = None, deep: bool = False,
                  deep_addresses: List[str] = None,
-                 thread_map: Dict[str, dict] = None) -> List[dict]:
+                 thread_map: Dict[str, dict] = None,
+                 skip_ids: set = None) -> List[dict]:
     """
     Read Beatrice's mailbox (IMAP, same App Password as sending) and return
     entries for messages exchanged with known contacts only.
@@ -266,13 +313,13 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
             # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
             # one pass; direction is detected per message inside _fetch_folder.
             got = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
-                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
             if not got:
                 # Fallback for non-Gmail IMAP layouts
                 got = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
-                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
                 got += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
-                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map)
+                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
             for e in got:
                 e["mailbox"] = sender
             entries += got

@@ -1819,6 +1819,51 @@ class BigQueryHandler:
                           job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
         return writes
 
+    # ── sync_runs: the record of every email sync, so a browser whose
+    #    connection dropped mid-run can still learn how the run ended ─────────
+    def _ensure_sync_runs_table(self) -> str:
+        t = f"{self.project_id}.{self.dataset_id}.sync_runs"
+        if getattr(self, "_sync_runs_ok", False):
+            return t
+        try:
+            self.client.get_table(t)
+        except Exception:
+            self.client.create_table(bigquery.Table(t, schema=[bigquery.SchemaField(n, ty) for n, ty in [
+                ("started_at", "TIMESTAMP"), ("finished_at", "TIMESTAMP"), ("ok", "BOOL"),
+                ("message", "STRING"), ("result_json", "STRING"), ("days", "INT64"), ("deep", "BOOL")]]))
+        self._sync_runs_ok = True
+        return t
+
+    def record_sync_run(self, started_at, ok: bool, message: str, result: Optional[Dict],
+                        days: int, deep: bool) -> None:
+        if not self.client:
+            return
+        try:
+            t = self._ensure_sync_runs_table()
+            self.client.query(f"""INSERT INTO `{t}` (started_at, finished_at, ok, message, result_json, days, deep)
+                                  VALUES (@s, CURRENT_TIMESTAMP(), @ok, @m, @r, @d, @deep)""",
+                              job_config=bigquery.QueryJobConfig(query_parameters=[
+                                  bigquery.ScalarQueryParameter("s", "TIMESTAMP", started_at),
+                                  bigquery.ScalarQueryParameter("ok", "BOOL", ok),
+                                  bigquery.ScalarQueryParameter("m", "STRING", (message or "")[:4000]),
+                                  bigquery.ScalarQueryParameter("r", "STRING", json.dumps(result, default=str)[:60000] if result else ""),
+                                  bigquery.ScalarQueryParameter("d", "INT64", int(days)),
+                                  bigquery.ScalarQueryParameter("deep", "BOOL", bool(deep))])).result()
+        except Exception as e:
+            logger.warning(f"record_sync_run failed: {e}")
+
+    def last_sync_run(self) -> Optional[Dict]:
+        if not self.client:
+            return None
+        try:
+            rows = self._run_query(f"""SELECT CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at,
+                                              ok, message, days, deep
+                                       FROM `{self._ensure_sync_runs_table()}` ORDER BY started_at DESC LIMIT 1""")
+            return rows[0] if rows else None
+        except Exception as e:
+            logger.warning(f"last_sync_run failed: {e}")
+            return None
+
     def get_message_id_entity_map(self) -> Dict[str, Dict]:
         """Every real logged Message-ID -> its entity, for thread matching in
         the sync. Synthetic dedup ids (no '<' prefix) are excluded: they never
