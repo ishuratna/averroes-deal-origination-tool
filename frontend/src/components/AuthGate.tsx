@@ -47,11 +47,28 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<"loading" | "open" | "locked">("loading");
   const [config, setConfig] = useState<{ client_id: string; allowed_domain: string } | null>(null);
   const [error, setError] = useState("");
+  // How long we have been waiting, so a slow start SAYS something instead of
+  // showing a blank screen. The backend scales to zero, so the first request
+  // after a deploy or an idle period has to boot a container.
+  const [waited, setWaited] = useState(0);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    if (state !== "loading") return;
+    const t = setInterval(() => setWaited((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [state]);
+
+  useEffect(() => {
+    // A hung request is NOT the same as a failed one. The old code caught
+    // errors and fell through to "open", but had no timeout at all, so a cold
+    // start left the whole app on a blank "Loading..." forever with nothing to
+    // click (Ishu, 10 Sep 2026). Bound the wait, then retry, then say so.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/auth/config`);
+        const res = await fetch(`${API_BASE_URL}/auth/config`, { signal: ctrl.signal });
         const cfg = await res.json();
         if (!cfg.auth_enabled) {
           sessionStorage.removeItem("averroes_auth_on");
@@ -65,11 +82,18 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setConfig(cfg);
         setState(getStoredToken() ? "open" : "locked");
       } catch {
-        // Backend unreachable — don't lock the UI over it
+        // A cold container usually answers on the second try, and by then it
+        // is warm. Retry twice before giving up on it.
+        if (attempt < 2) { setAttempt((n) => n + 1); return; }
+        // Still nothing: the backend is genuinely unreachable. Never lock the
+        // UI over that; let the app load and let each call report its own error.
         setState("open");
+      } finally {
+        clearTimeout(timer);
       }
     })();
-  }, []);
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [attempt]);
 
   useEffect(() => {
     if (state !== "locked" || !config?.client_id) return;
@@ -112,7 +136,24 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, [state, config]);
 
   if (state === "loading") {
-    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", color: "#94a3b8", fontFamily: "sans-serif", fontSize: 14 }}>Loading…</div>;
+    // After a few seconds, say what is happening. The server sleeps when nobody
+    // is using it, so the first visit of the day waits for it to wake up. A
+    // silent "Loading..." for 30 seconds is indistinguishable from a dead app.
+    const slow = waited >= 4;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f8fafc", fontFamily: "sans-serif", gap: "0.6rem" }}>
+        <div style={{ fontWeight: 800, fontSize: 18, color: "#0f172a", letterSpacing: "0.02em" }}>AVERROES<span style={{ color: "#2563eb" }}>INTEL</span></div>
+        <div style={{ color: "#94a3b8", fontSize: 14 }}>
+          {slow ? "Waking the server up. This takes a moment after it has been idle." : "Loading…"}
+        </div>
+        {waited >= 12 && (
+          <button onClick={() => { setWaited(0); setAttempt((n) => n + 1); }}
+                  style={{ marginTop: "0.4rem", padding: "0.45rem 1.1rem", fontSize: 13, borderRadius: 999, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", cursor: "pointer" }}>
+            Try again
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (state === "locked") {

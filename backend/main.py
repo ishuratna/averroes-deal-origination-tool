@@ -113,13 +113,44 @@ bq_handler = BigQueryHandler(project_id=GCP_PROJECT, dataset_id=BQ_DATASET)
 investor_handler = InvestorBQHandler(bq_handler.client, bq_handler.project_id, dataset_id=BQ_DATASET)
 investor_scraper = InvestorScraper()
 
-# ─── Load qualification criteria from BQ into criteria module at startup ──────
-try:
-    _startup_criteria = bq_handler.get_criteria()
-    set_criteria_from_bq(_startup_criteria)
-    logger.info(f"Loaded qualification criteria from BQ (v{_startup_criteria.get('_version', '?')})")
-except Exception as _e:
-    logger.warning(f"Could not load BQ criteria at startup, using defaults: {_e}")
+# ─── Qualification criteria: loaded from BQ, but NEVER on the critical path ───
+#
+# This used to be a blocking BigQuery query at import time. Cloud Run scales to
+# zero, so the first request after a deploy or an idle period paid for it, and
+# a cold start ran to tens of seconds. The frontend's AuthGate waits on
+# /auth/config, so the whole app sat on a blank "Loading..." screen while a
+# container booted (Ishu, 10 Sep 2026).
+#
+# The load now happens on a daemon thread, and anything that actually depends on
+# the criteria calls _ensure_criteria() first. In practice the thread has long
+# since finished; the wait exists so a request that arrives during a cold start
+# gets the REAL criteria rather than silently qualifying against defaults.
+import threading as _threading  # noqa: E402
+
+_criteria_ready = _threading.Event()
+
+
+def _load_criteria_once():
+    try:
+        crit = bq_handler.get_criteria()
+        set_criteria_from_bq(crit)
+        logger.info(f"Loaded qualification criteria from BQ (v{crit.get('_version', '?')})")
+    except Exception as e:
+        logger.warning(f"Could not load BQ criteria, using defaults: {e}")
+    finally:
+        # Set even on failure: defaults are a legitimate outcome, and a caller
+        # must never block forever waiting for a load that already gave up.
+        _criteria_ready.set()
+
+
+def _ensure_criteria(timeout: float = 20.0):
+    """Block until the criteria load has finished (or given up). Cheap after
+    the first call: an Event that is already set returns immediately."""
+    if not _criteria_ready.wait(timeout):
+        logger.warning("Criteria still loading after %ss — proceeding with defaults.", timeout)
+
+
+_threading.Thread(target=_load_criteria_once, name="criteria-load", daemon=True).start()
 
 # --- Utilities ---
 
@@ -2427,6 +2458,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 "is_uk_ireland": True, "is_tech": True, "size_qualified": None,
                 "size_bucket": "", "size_confidence": "", "size_reason": ""}
     else:
+        # The hard filters read the criteria: never judge a company against
+        # defaults just because this request landed on a cold container.
+        _ensure_criteria()
         qual = qualify_company_with_gemini(company_data)
     new_status = qual["status"]
 
@@ -2904,6 +2938,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     if company_data.get("source") == "Quick Research":
         try:
             fresh = bq_handler.get_company_full(company_name) or {}
+            _ensure_criteria()
             verdict = qualify_company_with_gemini(fresh)
             if not verdict.get("qualified"):
                 from google.cloud import bigquery as bq_lib

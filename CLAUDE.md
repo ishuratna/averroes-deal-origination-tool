@@ -377,6 +377,24 @@ mistake is both visible and correctable. This one logged nothing, which is why
   (the deployed container has no git history, and commit messages are for
   engineers). Newest first.
 
+## 6d. Cold start: nothing blocking at import, nothing unbounded in the client
+
+- Cloud Run scales to zero. Whatever runs at IMPORT time is paid for by the
+  first request after a deploy or an idle spell, by the real person waiting.
+- Loading the qualification criteria was a blocking BigQuery query at import.
+  A cold start therefore ran to tens of seconds and the app sat on a blank
+  "Loading..." (Ishu, 10 Sep 2026). It now loads on a daemon thread; anything
+  that depends on it calls `_ensure_criteria()`, which waits on an Event that
+  is set even when the load FAILED (defaults are a legitimate outcome, and a
+  caller must never block forever on a load that already gave up). Never put a
+  new blocking network call at module scope.
+- `AuthGate` had a `catch` but NO timeout, and a hung request is not a failed
+  one: nothing ever rejected, so the gate never left "loading" and the user got
+  a blank screen with nothing to click. Any fetch the UI blocks on needs an
+  AbortController deadline, a bounded retry, and a message that says what is
+  happening. Falling through to "open" on failure is right: an unreachable
+  backend must not lock the UI, because each call reports its own error anyway.
+
 ## 7. Verification before push (hard-learned)
 
 - `python3 -m compileall backend` (lazy imports hide f-string syntax errors),
