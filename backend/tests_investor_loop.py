@@ -104,7 +104,7 @@ chk("entity parameter present", "entity: str = Query(\"company\"" in src)
 chk("investor branch uses the investors table", "investor_handler.table_id" in src)
 chk("investor stages filtered to the active loop", "('Contacted', 'Responded', 'Meeting')" in src)
 chk("email_log side is filtered by the same entity", "WHERE entity_type = '{entity_type}'" in src)
-sync_src = inspect.getsource(main.sync_emails)
+sync_src = inspect.getsource(main._sync_emails_impl)
 chk("sync advances investors only on a GENUINE reply (NON_REPLY_CLASSES)",
     "cls not in bq_handler.NON_REPLY_CLASSES and sender.get(\"status\") == \"Contacted\"" in sync_src)
 chk("sync stamps the investor's last reply", "investor_handler.stamp_reply(" in sync_src)
