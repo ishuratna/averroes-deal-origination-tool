@@ -32,7 +32,7 @@ from ai.criteria import (
     set_criteria_from_bq, preview_criteria,
 )
 from ai.enrichment import EnrichmentAgent
-from services.companies_house_service import extract_ch_financials
+from services.companies_house_service import extract_ch_financials, person_names_for_match
 from ai.scoring import score_company, compute_revenue_band, estimate_revenue_m
 from config.sourcing_config import SOURCING_CRITERIA
 
@@ -2566,6 +2566,11 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 trust_known_number=_trust_known,
                 hq_city=company_data.get("hq_city", ""),
                 known_since=str(company_data.get("ingested_at") or ""),
+                # The officer gate: when the name alone cannot settle it (a
+                # one-word name, or two candidates neck and neck), a person we
+                # already know sitting on the register does. founder_info first
+                # — it is this run's research, not a contact a reply overwrote.
+                person_names=person_names_for_match(founder_info, company_data),
             )
             if ch_data.get("error"):
                 logger.warning(f"CH extraction returned error for {company_name}: {ch_data['error']}")

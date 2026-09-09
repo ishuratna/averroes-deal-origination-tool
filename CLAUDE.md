@@ -214,6 +214,39 @@ mistake is both visible and correctable. This one logged nothing, which is why
   (`_enforce_grounding_budget`) and are logged via `log_smartfill(kind)`.
   Never add a grounded Gemini call outside this accounting.
 
+## 4aa. The officer gate (a person we know, found on the register)
+
+- A one-word company name is UNMATCHABLE by string similarity: "foundit" sits
+  inside FOUNDIT PROPERTY, FOUNDIT! GROUP, FOUND IT LONDON and hundreds more,
+  so `_name_gate` correctly returns `core-ambiguous` for every candidate and
+  `extract_ch_financials` refuses them all. That refusal is right and it also
+  loses real matches: FoundIt! IS 09690801, and the proof is that Warren Cowan,
+  the contact on our row, is an active director there. Its accounts sat unread.
+- `_officer_verify` therefore runs as a FOURTH disambiguator in
+  `_pick_best_match`, but ONLY when the top pick is below the financials bar or
+  a different company is within 8 points of it. Never otherwise: a confident
+  name match must cost zero extra register calls (enforced by a test).
+- It NEVER rescues a candidate that failed `_name_gate`. Officer agreement does
+  not marry two unrelated names; it breaks the tie between candidates already
+  in contention. Name AND person, never person alone.
+- The SURNAME carries the identity, not the forename. Surname + a matching
+  forename or shared initial = `full` -> gate becomes `officer-verified`
+  (admitted alongside exact/exact-core/contains, confidence
+  `verified-officer`). Surname alone = +20 tie-break and NO promotion, because
+  a common surname on a same-named company is a coincidence we cannot rule out.
+  A shared forename alone is worth nothing.
+- Absence is not evidence: a candidate nobody matches keeps exactly the score
+  and gate level it had. This gate can only ADD matches.
+- Names come from `person_names_for_match`, researched contact FIRST and
+  `contact_name` LAST — the send path can overwrite `contact_name` with
+  whoever replied, who may never have been near the register. A wrong name
+  matches nothing, so a bad guess costs one free API call, never a wrong
+  company. Single-token and bracketed (test row) names are refused outright.
+- Officers and PSC names arrive in DIFFERENT formats ("COWAN, Warren James"
+  vs "Mr Warren James Cowan"). `_person_tokens` normalises both or the
+  comparison is meaningless. Check directors first, then the PSC register: a
+  founder off the board often still holds significant control.
+
 ## 4a. Identity guard (same-named companies must never mix)
 
 - Every grounded enrichment call receives the row's SEED ANCHORS as identity

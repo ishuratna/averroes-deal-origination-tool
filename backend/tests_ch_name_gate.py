@@ -19,8 +19,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from services import companies_house_service as chs  # noqa: E402
 from services.companies_house_service import (  # noqa: E402
-    _incorporated_after, _name_gate, _pick_best_match,
+    _incorporated_after, _name_gate, _officer_name_match, _person_tokens,
+    _pick_best_match, person_names_for_match,
 )
 
 fails = 0
@@ -124,6 +126,120 @@ picked = _pick_best_match(good, "Vrinsoft Technology", sector="Software",
                           description="software", known_since="2026-03-01")
 chk("a distinctive name still matches", picked and picked["company_number"], "111")
 chk("...at full strength", picked and picked["_match_gate"], "exact-core")
+
+# ── The officer gate ─────────────────────────────────────────────────────────
+#
+# Anchored on a REAL miss, the mirror image of Porta:
+#
+#   Stored row : "FoundIt!"  (foundit.com, contact Warren Cowan)
+#   On CH      : FOUNDIT! GROUP LIMITED (09690801), active, London, SIC 62012,
+#                Warren James Cowan an active director since 2015
+#   Result     : refused. "foundit" is one word, so every candidate came back
+#                core-ambiguous and no financials were ever read.
+#
+# The name gate is right to refuse on the name alone. What settles it is that a
+# person we already knew about is on that company's register.
+
+print()
+print("-- name parsing, both register formats --")
+chk("officers format: surname first, comma", _person_tokens("COWAN, Warren James"), ("cowan", ["warren", "james"]))
+chk("PSC format: forename first, titled", _person_tokens("Mr Warren James Cowan"), ("cowan", ["warren", "james"]))
+chk("plain two-word name", _person_tokens("Warren Cowan"), ("cowan", ["warren"]))
+chk("suffixes are not names", _person_tokens("WILLMOTT, Roger Guy, Nr"), ("willmott", ["roger", "guy"]))
+chk("a single token yields no forename", _person_tokens("Cowan"), ("cowan", []))
+chk("empty is None", _person_tokens("  "), None)
+
+print()
+print("-- how well two people agree --")
+chk("same person, both formats", _officer_name_match("Warren Cowan", "COWAN, Warren James"), "full")
+chk("initial is enough to confirm", _officer_name_match("W Cowan", "COWAN, Warren James"), "full")
+chk("relative: surname only, never full", _officer_name_match("Alicia Cowan", "COWAN, Warren James"), "surname")
+chk("different surname is nothing", _officer_name_match("Warren Newbert", "COWAN, Warren James"), "")
+chk("a shared FORENAME alone proves nothing", _officer_name_match("Warren Newbert", "SMITH, Warren"), "")
+chk("one-word name cannot reach full", _officer_name_match("Cowan", "COWAN, Warren James"), "surname")
+
+print()
+print("-- which names we are willing to use --")
+chk("researched contact first, row contact after, deduplicated",
+    person_names_for_match({"contact_name": "Warren Cowan"},
+                           {"contact_name": "warren cowan", "original_contact_name": "Andreas Pouros"}),
+    ["Warren Cowan", "Andreas Pouros"])
+chk("a single-word contact is not usable", person_names_for_match({"contact_name": "Warren"}), [])
+chk("the test row's bracketed name is not a person",
+    person_names_for_match({"contact_name": "Averroes Admin (Test)"}), [])
+
+print()
+print("-- promotion, with the register stubbed --")
+_real_off, _real_psc = chs.get_officers_summary, chs.get_psc_summary
+_REGISTER = {
+    "09690801": ["CARPENTER, James Daniel", "COWAN, Alicia Nadine", "COWAN, Warren James"],
+    "13176168": ["PATEL, Nikhil"],
+}
+calls = []
+
+
+def _fake_officers(number, max_officers=6):
+    calls.append(number)
+    return {"officers_summary": "", "directors": [{"name": n} for n in _REGISTER.get(number, [])]}
+
+
+def _fake_psc(number):
+    return {"psc_summary": "", "ownership_verified": "", "psc_individuals": []}
+
+
+chs.get_officers_summary, chs.get_psc_summary = _fake_officers, _fake_psc
+try:
+    foundit = [
+        {"title": "FOUNDIT PROPERTY LTD", "company_number": "13176168", "company_status": "active",
+         "date_of_creation": "2021-02-03", "sic_codes": [], "snippet": "",
+         "address": {"locality": "London", "country": "England"}},
+        {"title": "FOUNDIT! GROUP LIMITED", "company_number": "09690801", "company_status": "active",
+         "date_of_creation": "2015-07-17", "sic_codes": ["62012"], "snippet": "software development",
+         "address": {"locality": "London", "country": "United Kingdom"}},
+    ]
+    blind = _pick_best_match([dict(c) for c in foundit], "FoundIt!", sector="Software",
+                             description="software", known_since="2026-01-01")
+    chk("without a person the name alone still cannot settle it", blind["_match_gate"], "core-ambiguous")
+
+    calls.clear()
+    seeing = _pick_best_match([dict(c) for c in foundit], "FoundIt!", sector="Software",
+                              description="software", known_since="2026-01-01",
+                              person_names=["Warren Cowan"])
+    chk("the director we know decides it", seeing["company_number"], "09690801")
+    chk("...and it is promoted past the financials bar", seeing["_match_gate"], "officer-verified")
+    chk("...with the evidence recorded",
+        "Warren" in (seeing.get("_officer_evidence") or "") and "director" in (seeing.get("_officer_evidence") or ""), True)
+    chk("...having checked no more than the candidates in play", len(calls) <= 5, True)
+
+    # A name nobody on the register shares must change NOTHING. This is the
+    # whole safety property: the gate can only ever add matches.
+    calls.clear()
+    stranger = _pick_best_match([dict(c) for c in foundit], "FoundIt!", sector="Software",
+                                description="software", known_since="2026-01-01",
+                                person_names=["Jane Nobody"])
+    chk("an unknown person leaves the verdict exactly as it was",
+        stranger["_match_gate"], "core-ambiguous")
+
+    # Surname alone breaks a tie but must not promote: a common surname on a
+    # same-named company is a coincidence we cannot rule out.
+    relative = _pick_best_match([dict(c) for c in foundit], "FoundIt!", sector="Software",
+                                description="software", known_since="2026-01-01",
+                                person_names=["Priya Cowan"])
+    chk("surname alone is a tie-break, not a promotion", relative["_match_gate"], "core-ambiguous")
+
+    # And it must never fire when the name gate already settled things — that
+    # is where the API calls would be wasted.
+    calls.clear()
+    strong = _pick_best_match(
+        [{"title": "VRINSOFT TECHNOLOGY LTD", "company_number": "111", "company_status": "active",
+          "date_of_creation": "2015-01-01", "sic_codes": ["62012"], "snippet": "software",
+          "address": {"locality": "London", "country": "England"}}],
+        "Vrinsoft Technology", sector="Software", description="software",
+        known_since="2026-03-01", person_names=["Warren Cowan"])
+    chk("a confident name match costs no register calls", calls, [])
+    chk("...and keeps its own gate level", strong["_match_gate"], "exact-core")
+finally:
+    chs.get_officers_summary, chs.get_psc_summary = _real_off, _real_psc
 
 print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")

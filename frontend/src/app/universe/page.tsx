@@ -2017,6 +2017,10 @@ function UniverseInner() {
            skipped name-matching entirely. Distinct from "high" on purpose. */
         .result-ch-conf-verified { background: #dbeafe; color: #1e40af; }
         .result-ch-conf-verified-website { background: #e0e7ff; color: #3730a3; }
+        /* The name plausibly matched AND a person we already knew about is on
+           that company's register. Two independent sources, so it reads as a
+           verification rather than a confidence level. */
+        .result-ch-conf-verified-officer { background: #dcfce7; color: #166534; }
         .outreach-loading { text-align: center; padding: 2.5rem 1.5rem; }
         .outreach-loading p { color: #64748b; margin-top: 0.75rem; font-size: 0.95rem; }
         .outreach-loading .loading-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 0.15rem; }

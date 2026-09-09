@@ -179,6 +179,143 @@ def _incorporated_after(item: dict, known_since: str) -> bool:
     return created > since
 
 
+# ── The OFFICER GATE: a person we know, found on the register ────────────────
+#
+# A one-word company name can never be resolved by string similarity: "foundit"
+# sits inside FOUNDIT PROPERTY, FOUNDIT! GROUP, FOUND IT LONDON and hundreds
+# more, so _name_gate correctly refuses all of them (core-ambiguous). That
+# refusal is right, and it also loses real matches: FoundIt! IS company
+# 09690801, and the proof is that Warren Cowan, the person on our row, is an
+# active director there.
+#
+# So: a name that plausibly matches PLUS a person we independently know is a
+# far stronger identity claim than either alone. This never runs on a candidate
+# that FAILED the name gate — officer agreement cannot marry two unrelated
+# names, it only breaks the tie between candidates already in contention.
+#
+# The SURNAME carries the identity, not the forename. "Warren" appears on
+# thousands of UK director records; "Cowan" active at a company called foundit
+# is decisive. A forename or shared initial confirms it.
+#
+# Cost: zero AI, at most two free CH calls per candidate, and only on rows we
+# are currently refusing outright.
+
+_NAME_TITLES = {"mr", "mrs", "ms", "miss", "dr", "prof", "professor", "sir", "dame",
+                "lord", "lady", "rev", "hon", "mx"}
+# Suffixes CH appends to officer names, which are not part of anyone's name.
+_NAME_SUFFIXES = {"jr", "sr", "i", "ii", "iii", "iv", "nr", "bsc", "msc", "mba",
+                  "phd", "fca", "aca", "cbe", "obe", "mbe"}
+
+
+def _person_tokens(name: str) -> Optional[Tuple[str, List[str]]]:
+    """(surname, forenames) from a person's name, in either register format.
+
+    Companies House is not consistent: the officers endpoint returns
+    "COWAN, Warren James" (surname first, comma) while the PSC register
+    returns "Mr Warren James Cowan" (forename first, sometimes titled). Both
+    have to parse to the same pair, or the comparison is meaningless.
+
+    Returns None when there is nothing usable, and (surname, []) for a single
+    token, which the caller must treat as weak: with one word we cannot tell a
+    forename from a surname.
+    """
+    raw = _normalize_name(name)
+    if not raw:
+        return None
+    # The comma is the only reliable signal of surname-first, and
+    # _normalize_name has already turned it into a space, so read it first.
+    surname_first = "," in (name or "")
+    parts = [p for p in raw.split() if p not in _NAME_TITLES and p not in _NAME_SUFFIXES]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return (parts[0], [])
+    if surname_first:
+        return (parts[0], parts[1:])
+    return (parts[-1], parts[:-1])
+
+
+def _officer_name_match(ours: str, theirs: str) -> str:
+    """"full" | "surname" | "" — how well two person names agree.
+
+    "full"    surnames match AND a forename matches, or shares its initial
+              (registers hold "Warren", cards hold "W", both are the person).
+    "surname" surnames match but no forename evidence either way.
+    ""        no agreement, or our name is a single word that is not their
+              surname. A single word is never enough for "full": "Warren" alone
+              could be anybody.
+    """
+    a, b = _person_tokens(ours), _person_tokens(theirs)
+    if not a or not b:
+        return ""
+    (sa, fa), (sb, fb) = a, b
+    if sa != sb:
+        return ""
+    if not fa or not fb:
+        return "surname"
+    if set(fa) & set(fb):
+        return "full"
+    if {f[0] for f in fa} & {f[0] for f in fb}:
+        return "full"
+    return "surname"
+
+
+def person_names_for_match(*sources: dict) -> List[str]:
+    """Collect the people we believe are behind a company, best evidence first.
+
+    Order matters. `contact_name` is the LAST resort because the send path can
+    overwrite it with whoever happened to reply, which may be a salesperson who
+    has never been near the register. The name SmartFill researched, and the
+    original contact preserved before any adoption, are the ones actually
+    likely to be a founder or director. A wrong name simply matches nothing,
+    so a bad guess costs an API call, never a wrong company.
+    """
+    out, seen = [], set()
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in ("contact_name", "original_contact_name", "contact_email_name"):
+            v = (src.get(key) or "").strip()
+            # A single token cannot be told apart from a forename, and the
+            # bracketed test rows are not people at all.
+            if not v or "(" in v or len(v.split()) < 2:
+                continue
+            if v.lower() in seen:
+                continue
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+def _officer_verify(company_number: str, person_names: List[str]) -> Tuple[str, str]:
+    """Best agreement between the people we know and the people on the register.
+
+    Checks active DIRECTORS first, then the PSC register, because a founder who
+    has stepped off the board often still holds significant control. Returns
+    ("full" | "surname" | "", evidence) where evidence names the person and
+    where they were found, for the audit trail.
+    """
+    names = [n for n in (person_names or []) if (n or "").strip()]
+    if not company_number or not names:
+        return ("", "")
+
+    best, evidence = "", ""
+    for source, people in (("director", [d.get("name", "") for d in
+                                         get_officers_summary(company_number, max_officers=25).get("directors", [])]),
+                           ("person with significant control",
+                            [n for n, _ in get_psc_summary(company_number).get("psc_individuals", [])])):
+        for ours in names:
+            for theirs in people:
+                verdict = _officer_name_match(ours, theirs)
+                if verdict == "full":
+                    return ("full", f"{theirs} is an active {source} and matches our contact {ours}")
+                if verdict == "surname" and not best:
+                    best, evidence = ("surname", f"{theirs} is an active {source}, surname matches our contact {ours}")
+        if best == "full":
+            break
+    return (best, evidence)
+
+
 def _pick_best_match(
     results: List[dict],
     company_name: str,
@@ -186,6 +323,7 @@ def _pick_best_match(
     description: str = "",
     hq_city: str = "",
     known_since: str = "",
+    person_names: Optional[List[str]] = None,
 ) -> Optional[dict]:
     """
     Pick the best matching company from CH search results.
@@ -201,6 +339,10 @@ def _pick_best_match(
     office sits in the same city is meaningfully more likely to be the real
     company than a same-named one on the other side of the country — this is
     real, independent evidence, not a name-similarity heuristic.
+
+    person_names: people we independently believe are behind the target (the
+    contact SmartFill found, the founder). Used only when the best candidate is
+    too weak to trust or too close to call — see the officer gate above.
     """
     if not results:
         return None
@@ -267,6 +409,42 @@ def _pick_best_match(
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best = scored[0]
+
+    # ── The officer gate ──
+    # Only when the top pick is too weak to be trusted with financials, or a
+    # different company came within a hair of it. Both are cases we currently
+    # refuse or flag, so this can only add matches: a candidate that gains
+    # nothing here keeps exactly the score and gate level it already had.
+    weak_top = best.get("_match_gate") not in ("exact", "exact-core", "contains")
+    close_top = len(scored) > 1 and (best_score - scored[1][0]) <= 8 \
+        and scored[1][1].get("company_number") != best.get("company_number")
+    if person_names and (weak_top or close_top):
+        checked = 0
+        for i, (sc, item) in enumerate(scored):
+            if checked >= 5:
+                break
+            checked += 1
+            verdict, evidence = _officer_verify(item.get("company_number", ""), person_names)
+            if not verdict:
+                continue
+            item["_officer_match"] = verdict
+            item["_officer_evidence"] = evidence
+            if verdict == "full":
+                # A person we independently know is on this company's register.
+                # The name already passed the gate, so the pair together is at
+                # least as strong as an exact core match.
+                item["_match_gate"] = "officer-verified"
+                scored[i] = (sc + 40, item)
+                logger.info(f"[CH] Officer gate: '{company_name}' -> '{item.get('title')}' "
+                            f"(#{item.get('company_number')}) verified. {evidence}")
+            else:
+                # Surname alone breaks a tie. It does NOT promote the gate:
+                # a common surname on a same-named company is a coincidence we
+                # have no way to rule out.
+                scored[i] = (sc + 20, item)
+        if checked:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            best_score, best = scored[0]
 
     # If a DIFFERENT company came within a hair of the top score, this was a
     # coin-flip, not a confident pick — the caller (extract_ch_financials)
@@ -677,9 +855,15 @@ def extract_ch_financials(
     trust_known_number: bool = True,
     hq_city: str = "",
     known_since: str = "",
+    person_names: Optional[List[str]] = None,
 ) -> Dict:
     """
     Full pipeline: Find company → Download accounts PDF → Parse with Gemini.
+
+    person_names: people we independently believe are behind this company (the
+    contact SmartFill found, the founder). Feeds the officer gate, which is the
+    only way a one-word company name can be resolved by search rather than by
+    registration number.
 
     known_since: when we first knew of this company (its ingested_at). Any CH
     company incorporated after that date is discarded as impossible before the
@@ -742,7 +926,8 @@ def extract_ch_financials(
             return {"error": f"No results found on Companies House for '{company_name}'"}
 
         best = _pick_best_match(results, company_name, sector, description,
-                                hq_city=hq_city, known_since=known_since)
+                                hq_city=hq_city, known_since=known_since,
+                                person_names=person_names)
         if not best:
             return {"error": f"No confident match found on Companies House for '{company_name}'"}
 
@@ -752,7 +937,9 @@ def extract_ch_financials(
         # similar" match (fuzzy/partial) or a core name that collapsed only
         # via mismatched descriptor words (core-ambiguous) is refused outright
         # rather than reported as fact. No confident match beats a wrong one.
-        if gate_level not in ("exact", "exact-core", "contains"):
+        # "officer-verified" is admitted because it is not a name judgement at
+        # all: a person we independently know sits on that company's register.
+        if gate_level not in ("exact", "exact-core", "contains", "officer-verified"):
             return {"error": f"Match for '{company_name}' too uncertain to trust with financials "
                              f"(best candidate: '{best.get('title')}', gate={gate_level}) — refusing to guess."}
 
@@ -761,7 +948,11 @@ def extract_ch_financials(
         runner_up_gap = best.get("_runner_up_gap")
         close_call = runner_up_gap is not None and runner_up_gap <= 8
 
-        if gate_level == "exact":
+        if gate_level == "officer-verified":
+            # Two independent sources agree (the name AND a person on the
+            # register), so a close-run name contest no longer matters.
+            match_confidence = "verified-officer"
+        elif gate_level == "exact":
             match_confidence = "medium" if close_call else "high"
         elif gate_level == "exact-core":
             match_confidence = "medium" if close_call else "high"
@@ -770,7 +961,9 @@ def extract_ch_financials(
 
         logger.info(f"[CH] Step 1 result: '{official_name}' (#{company_number}), "
                     f"gate={gate_level}, confidence={match_confidence}"
-                    + (f" (close call vs. a different company, gap={runner_up_gap})" if close_call else ""))
+                    + (f" — {best.get('_officer_evidence')}" if best.get("_officer_evidence") else "")
+                    + (f" (close call vs. a different company, gap={runner_up_gap})"
+                       if close_call and gate_level != "officer-verified" else ""))
 
     # ── Step 2: Get company profile (skip if the known-number path already has it) ──
     if profile is None:
