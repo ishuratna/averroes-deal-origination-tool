@@ -2646,14 +2646,29 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     #    (@ch_company_number non-blank) — a failed lookup wipes nothing, a
     #    successful one may legitimately refresh or clear.
     # 4. Description: longer wins (existing rule). Scores: always fresh.
+    # 5. STAGE: enrichment improves what we KNOW; it never undoes work already
+    #    done. The qualifier reads only the record, so for a company we are
+    #    mid-conversation with it happily returns "Qualified" and the write
+    #    would silently undo an email sent, a reply received, a meeting held.
+    #    Guarded here rather than at the call sites: every path into SmartFill
+    #    lands on this one UPDATE.
+    _protected = list(bq_handler.WORK_DONE_STAGES)
+    _prior_status = company_data.get("status") or ""
+    _stage_kept = _prior_status in _protected and _prior_status != new_status
+    if _stage_kept:
+        logger.info(f"[SmartFill] '{company_name}' stays {_prior_status}: the qualifier "
+                    f"said {new_status}, but that stage records work already done.")
+        new_status = _prior_status
     try:
         from google.cloud import bigquery as bq_lib
         query = f"""UPDATE `{bq_handler.table_id}` SET
             last_smartfill_at = CURRENT_TIMESTAMP(),
-            stage_entered_at = CASE WHEN IFNULL(status, '') != @status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
+            stage_entered_at = CASE WHEN status NOT IN UNNEST(@protected) AND IFNULL(status, '') != @status
+                                    THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
             qualified_at = CASE WHEN @status = 'Qualified' THEN IFNULL(qualified_at, CURRENT_TIMESTAMP()) ELSE qualified_at END,
-            status = @status,
-            unfit_reason = '',
+            -- A stage that records real work is never rewritten by enrichment.
+            status = CASE WHEN status IN UNNEST(@protected) THEN status ELSE @status END,
+            unfit_reason = CASE WHEN status IN UNNEST(@protected) THEN unfit_reason ELSE '' END,
             website = IFNULL(NULLIF(@website, ''), website),
             investors_raw = IFNULL(NULLIF(@investors_raw, ''), investors_raw),
             contact_name = IFNULL(NULLIF(@contact_name, ''), contact_name),
@@ -2720,6 +2735,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             WHERE name = @name"""
         job_config = bq_lib.QueryJobConfig(query_parameters=[
             bq_lib.ScalarQueryParameter("status", "STRING", new_status),
+            bq_lib.ArrayQueryParameter("protected", "STRING", _protected),
             bq_lib.ScalarQueryParameter("website", "STRING", website),
             bq_lib.ScalarQueryParameter("investors_raw", "STRING", merged_investors),
             bq_lib.ScalarQueryParameter("contact_name", "STRING", founder_info.get("contact_name", "")),
@@ -2786,6 +2802,17 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     except Exception as e:
         logger.error(f"SmartFill BQ update failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+
+    # Doctrine 2a: every path that writes `status` logs a status_change, or the
+    # move is invisible to reconciliation and to whoever asks "why did this
+    # company go backwards". This path wrote status for a year and logged
+    # nothing, which is why the FoundIt! demotion left no trace at all.
+    if _prior_status and _prior_status != new_status:
+        try:
+            bq_handler._log_activity(company_name, "status_change", "smartfill",
+                                     old_status=_prior_status, new_status=new_status)
+        except Exception as e:
+            logger.warning(f"[SmartFill] status_change log failed for {company_name} (non-fatal): {e}")
 
     # Companies House figures also land in the multi-year store, FILL-ONLY: a
     # (period, metric) we already hold - from an earlier filing or a founder's
@@ -2881,13 +2908,17 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             if not verdict.get("qualified"):
                 from google.cloud import bigquery as bq_lib
                 bq_handler.client.query(
+                    # Same rule as the main write: a verdict never undoes work
+                    # already done. If we have emailed them or spoken to them,
+                    # "not a fit" is a decision for a person to make.
                     f"""UPDATE `{bq_handler.table_id}` SET
                             status = 'Not a Fit', unfit_reason = @r,
                             stage_entered_at = CURRENT_TIMESTAMP()
-                        WHERE name = @n""",
+                        WHERE name = @n AND status NOT IN UNNEST(@protected)""",
                     job_config=bq_lib.QueryJobConfig(query_parameters=[
                         bq_lib.ScalarQueryParameter("r", "STRING", verdict.get("reason") or "Failed hard filters"),
                         bq_lib.ScalarQueryParameter("n", "STRING", company_name),
+                        bq_lib.ArrayQueryParameter("protected", "STRING", list(bq_handler.WORK_DONE_STAGES)),
                     ])).result()
                 bq_handler._log_activity(company_name, "status_change", "quick-research",
                                          old_status=new_status, new_status="Not a Fit")

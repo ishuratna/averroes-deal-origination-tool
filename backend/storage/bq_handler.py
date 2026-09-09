@@ -460,6 +460,20 @@ class BigQueryHandler:
                    "Responded", "Meeting", "DD", "Offer", "Won", "Lost"]
     ACTIVE_PIPELINE_STAGES = ("Qualified", "Contacted", "Responded", "Meeting", "DD", "Offer")
 
+    # Stages that record REAL WORK already done: an email actually sent, a reply
+    # actually received, a meeting actually held, a decision actually taken.
+    # Enrichment (SmartFill / SmartEnrich) exists to improve what we KNOW about
+    # a company. It must never move one backwards out of one of these, because
+    # the qualifier only reads the record, has no idea an email was ever sent,
+    # and would happily return "Qualified" for a company we are mid-conversation
+    # with. That is exactly what happened to FoundIt! (10 Sep 2026): a SmartFill
+    # re-run to attach its Companies House number silently reset a Responded
+    # company to Qualified, reset stage_entered_at, and logged nothing.
+    #
+    # 'Not a Fit' is NOT protected: it is a verdict, not work, and re-running
+    # enrichment on a rejected company in order to re-judge it is the point.
+    WORK_DONE_STAGES = ("Contacted", "Responded", "Meeting", "DD", "Offer", "Won", "Lost")
+
     # ── THE REPLY RULE ───────────────────────────────────────────────────────
     #
     #   Qualified  = promoted from the Master Universe. No outreach sent yet.

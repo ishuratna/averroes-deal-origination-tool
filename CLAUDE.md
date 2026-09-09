@@ -214,6 +214,33 @@ mistake is both visible and correctable. This one logged nothing, which is why
   (`_enforce_grounding_budget`) and are logged via `log_smartfill(kind)`.
   Never add a grounded Gemini call outside this accounting.
 
+## 3a. ENRICHMENT NEVER UNDOES WORK (the stage guard)
+
+- `qualify_company_with_gemini` reads the RECORD. It cannot know an email was
+  sent, a reply came back, or a meeting happened, so for a company we are
+  mid-conversation with it correctly answers "Qualified". The SmartFill write
+  took that as an instruction: `status = @status`, unconditional.
+- That cost a live conversation. FoundIt! (10 Sep 2026) sat at Responded. A
+  SmartFill re-run whose ONLY purpose was to attach the CH number we had just
+  found reset it to Qualified and reset `stage_entered_at`. It logged nothing,
+  so the demotion was invisible to reconciliation and to the activity log, and
+  the company simply disappeared from the Responded queue.
+- `bq_handler.WORK_DONE_STAGES` (Contacted, Responded, Meeting, DD, Offer, Won,
+  Lost) are stages that record work ACTUALLY DONE. Enrichment writes everything
+  else it learns and leaves `status`, `stage_entered_at` and `unfit_reason`
+  alone on those rows: `status = CASE WHEN status IN UNNEST(@protected) THEN
+  status ELSE @status END`. Only a PERSON moves a company out of them.
+- `Qualified` and `Not a Fit` are deliberately NOT protected: nothing has
+  happened yet in the first, and re-judging the second is the whole point of
+  re-running enrichment on a rejected company.
+- The guard lives at the single UPDATE, not at the call sites: manual SmartFill,
+  bulk, nightly auto and `/smartfill/run-by-number` all land on it. Adding a
+  new caller must not require remembering this rule.
+- And per 2a, that write now logs `status_change` when the stage really moves.
+  It never did, which is exactly why the loss left no trace.
+- `tests_smartfill_stage_guard.py` enforces all of the above against the real
+  handler source.
+
 ## 4aa. The officer gate (a person we know, found on the register)
 
 - A one-word company name is UNMATCHABLE by string similarity: "foundit" sits
