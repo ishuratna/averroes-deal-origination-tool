@@ -71,6 +71,14 @@ class InvestorBQHandler:
         ("pb_id", "STRING"),                 # PitchBook Limited Partner ID — dedup/update key
         ("aka", "STRING"),                   # also known as
         ("contact_title", "STRING"),
+        # "found" (published address) or "inferred" (guessed from the domain).
+        # An inferred address must never be presented as a found one.
+        ("contact_confidence", "STRING"),
+        # The investor gate's verdict (ai/investor_gate.py): where they sit and,
+        # when refused, the one sentence explaining why. Stored so the card can
+        # show the reason without re-running anything.
+        ("gate_region", "STRING"),
+        ("gate_unfit_reason", "STRING"),
         ("contact_phone", "STRING"),
         ("hq_email", "STRING"),
         ("global_region", "STRING"),         # HQ Global Region (e.g. Europe, Middle East)
@@ -675,8 +683,12 @@ class InvestorBQHandler:
             website = @website,
             description = CASE WHEN (@description != '' AND LENGTH(@description) > LENGTH(IFNULL(description, ''))) THEN @description ELSE description END,
             contact_name = @contact_name,
+            contact_title = CASE WHEN @contact_title != '' THEN @contact_title ELSE contact_title END,
             contact_email = @contact_email,
+            contact_confidence = CASE WHEN @contact_email != '' THEN @contact_confidence ELSE contact_confidence END,
             linkedin_url = @linkedin_url,
+            gate_region = CASE WHEN @gate_region != '' THEN @gate_region ELSE gate_region END,
+            gate_unfit_reason = @gate_unfit_reason,
             lp_fit_score = @lp_fit_score,
             score_geography = @score_geography,
             score_pe_appetite = @score_pe_appetite,
@@ -691,6 +703,10 @@ class InvestorBQHandler:
             WHERE LOWER(name) = LOWER(@name)"""
         job_config = bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("investor_type", "STRING", fields.get("investor_type") or "Unknown"),
+            bigquery.ScalarQueryParameter("contact_title", "STRING", fields.get("contact_title") or ""),
+            bigquery.ScalarQueryParameter("contact_confidence", "STRING", fields.get("contact_confidence") or ""),
+            bigquery.ScalarQueryParameter("gate_region", "STRING", fields.get("gate_region") or ""),
+            bigquery.ScalarQueryParameter("gate_unfit_reason", "STRING", fields.get("gate_unfit_reason") or ""),
             bigquery.ScalarQueryParameter("aum_m", "FLOAT64", fields.get("aum_m")),
             bigquery.ScalarQueryParameter("ticket_min_m", "FLOAT64", fields.get("ticket_min_m")),
             bigquery.ScalarQueryParameter("ticket_max_m", "FLOAT64", fields.get("ticket_max_m")),

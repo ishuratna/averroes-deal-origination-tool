@@ -6916,9 +6916,8 @@ async def investorfill(investor_name: str):
     InvestorFill: Gemini + Google Search researches the investor —
     type, AUM, ticket size, contacts + 4-criteria LP fit score.
     """
-    _enforce_grounding_budget(1, "InvestorFill")
-
-    # Pull existing context (portfolio overlap helps the search)
+    # Pull existing context first: the GATE reads it, and a row we already know
+    # is wrong must never reach a grounded call (doctrine 4).
     context = {}
     try:
         for inv in investor_handler.get_all():
@@ -6928,7 +6927,29 @@ async def investorfill(investor_name: str):
     except Exception:
         pass
 
-    result = investor_fill(investor_name, context)
+    # ── THE GATE (Ishu, 11 Sep 2026): type, geography, size. Pure, zero AI. ──
+    # Exactly the shape of SmartFill's hard filters: an investor that fails is
+    # parked with the reason and never costs a grounded call. Skipped when we
+    # know nothing yet (a bare name from mining), because "unknown" is what
+    # research is FOR, and skipped for the Internal Test row.
+    from ai.investor_gate import qualify_investor, target_brief
+    _known = any(context.get(k) for k in ("investor_type", "hq_country", "region",
+                                          "aum_m", "ticket_min_m", "ticket_max_m", "description"))
+    if _known and context.get("source") != "Internal Test":
+        gate = qualify_investor(context)
+        if not gate["qualified"]:
+            try:
+                investor_handler.update_status(investor_name, "Passed", created_by="investor-gate",
+                                               reason="not_a_fit", reason_detail=gate["unfit_reason"])
+            except Exception as e:
+                logger.warning(f"[InvestorGate] park failed for '{investor_name}': {e}")
+            logger.info(f"[InvestorGate] '{investor_name}' refused before any AI: {gate['unfit_reason']}")
+            return {"status": "Not a fit", "investor": investor_name, "gated": True,
+                    "unfit_reason": gate["unfit_reason"], "checks": gate["checks"],
+                    "region": gate["region"], "ai_calls": 0}
+
+    _enforce_grounding_budget(1, "InvestorFill")
+    result = investor_fill(investor_name, context, target_brief=target_brief(context))
     if result.get("error"):
         raise HTTPException(status_code=422, detail=result["error"])
 
@@ -6952,8 +6973,24 @@ async def investorfill(investor_name: str):
         except Exception as e:
             logger.warning(f"CH enrichment failed for investor '{investor_name}': {e}")
 
+    # RE-GATE on what we just learned. For most investors this run is the first
+    # time we know the country or the assets at all, so a gate that only ran on
+    # the stored row would let every unresearched investor straight through.
+    post = qualify_investor({**context, **{k: v for k, v in result.items() if v not in (None, "")}})
+    result["gate_region"] = post["region"]
+    result["gate_unfit_reason"] = post["unfit_reason"]
+
     if not investor_handler.update_enrichment(investor_name, result):
         raise HTTPException(status_code=500, detail="Database update failed")
+    if not post["qualified"] and context.get("source") != "Internal Test":
+        # Facts found by the research disqualify them. Park it, but keep every
+        # field we just paid for: the next person deserves to see WHY.
+        try:
+            investor_handler.update_status(investor_name, "Passed", created_by="investor-gate",
+                                           reason="not_a_fit", reason_detail=post["unfit_reason"])
+        except Exception as e:
+            logger.warning(f"[InvestorGate] post-research park failed for '{investor_name}': {e}")
+        logger.info(f"[InvestorGate] '{investor_name}' refused on researched facts: {post['unfit_reason']}")
     try:
         investor_handler.recompute_priority(investor_name)   # inputs changed -> tier may change
     except Exception as e:
@@ -7158,6 +7195,60 @@ def _recompute_investor_priority(name: Optional[str]) -> dict:
 async def recompute_investor_priority(name: Optional[str] = Query(None)):
     """Session route: recompute the co-investment priority for one investor or all."""
     return _recompute_investor_priority(name)
+
+
+@app.get("/investors/gate-audit")            # UI (session)
+@app.get("/admin/investors/gate-audit")      # ops (token), sign-in exempt
+async def investors_gate_audit(request: Request, apply: int = Query(0, description="1 = park the refused; default is a dry run")):
+    """What the investor gate would do to the whole universe. ZERO AI.
+
+    A filter that can park thousands of rows must be previewable before it is
+    applied, so this DEFAULTS TO A DRY RUN and reports counts by reason. The
+    lesson is doctrine 2a's: a bulk change nobody previewed and nothing logged
+    is a change nobody can undo.
+    """
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
+    from ai.investor_gate import qualify_investor
+
+    rows = investor_handler.get_all()
+    refused, by_reason, by_region = [], {}, {}
+    checked = skipped_bare = 0
+    for inv in rows:
+        if inv.get("source") == "Internal Test":
+            continue
+        # A bare mined name has nothing to judge. Not a refusal, just unknown.
+        if not any(inv.get(k) for k in ("investor_type", "hq_country", "region",
+                                        "aum_m", "ticket_min_m", "ticket_max_m", "description")):
+            skipped_bare += 1
+            continue
+        checked += 1
+        gate = qualify_investor(inv)
+        by_region[gate["region"]] = by_region.get(gate["region"], 0) + 1
+        if gate["qualified"]:
+            continue
+        which = next(k for k in ("type", "geography", "size") if not gate["checks"][k]["pass"])
+        by_reason[which] = by_reason.get(which, 0) + 1
+        refused.append({"name": inv.get("name"), "status": inv.get("status"),
+                        "investor_type": inv.get("investor_type"), "hq_country": inv.get("hq_country"),
+                        "aum_m": inv.get("aum_m"), "failed": which, "reason": gate["unfit_reason"]})
+
+    parked = 0
+    if apply:
+        for r in refused:
+            if r["status"] in ("Passed", "Talk Later", "Contacted", "Responded", "Meeting", "Committed"):
+                continue   # never undo work already done, or re-park the parked
+            try:
+                investor_handler.update_status(r["name"], "Passed", created_by="investor-gate",
+                                               reason="not_a_fit", reason_detail=r["reason"])
+                parked += 1
+            except Exception as e:
+                logger.warning(f"[InvestorGate] park failed for '{r['name']}': {e}")
+
+    return {"dry_run": not apply, "total_rows": len(rows), "checked": checked,
+            "too_bare_to_judge": skipped_bare, "would_refuse": len(refused),
+            "by_failed_filter": by_reason, "by_region": by_region,
+            "parked": parked, "sample": refused[:60]}
 
 
 @app.post("/admin/investors/recompute-priority")

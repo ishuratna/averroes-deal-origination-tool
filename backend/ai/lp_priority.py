@@ -2,7 +2,7 @@
 LP priority for a deal-by-deal CO-INVESTMENT raise (per Ishu, 9 Sep 2026).
 
 The old lp_fit_score was built for a fund raise (geography, PE appetite,
-ticket, tech affinity). Averroes is raising deal by deal at GBP 250K-2M per
+ticket, tech affinity). Averroes is raising deal by deal at GBP 200K-10M per
 LP, so "important" means: writes DIRECT cheques into growth software, at our
 size, in our home geographies (UK/IE, GCC, then Europe), recently active, and
 reachable warm. PURE function, zero AI: every input is already on the row
@@ -24,24 +24,25 @@ import re
 from datetime import date
 from typing import Dict, List, Optional
 
-# GBP 250K-2M per LP, expressed in the USD millions PitchBook reports in.
-TICKET_MIN_USD_M, TICKET_MAX_USD_M = 0.3, 2.6
+# THE CHEQUE BAND: GBP 200K to 10M per investor, per deal (Ishu, confirmed
+# 11 Sep 2026), expressed in the USD millions PitchBook reports in.
+#
+# It lives in ai/investor_gate.py and is imported here, never copied. The gate
+# uses it to EXCLUDE an investor whose stated ticket cannot overlap ours; this
+# module uses it to RANK. When those two disagreed (the gate at 200K-10M while
+# the ranking still ran on 250K-2M) we would have emailed the wrong people a
+# correct number, so there is exactly one definition.
+# The geography sets and the cheque band are defined in ai/investor_gate.py,
+# which runs FIRST in the pipeline, and are imported here so the filter and the
+# ranking can never disagree about what the GCC is or what cheque we write.
+from ai.investor_gate import (  # noqa: F401
+    EUROPE, GCC, TICKET_MAX_USD_M, TICKET_MIN_USD_M, UK_IE, _low,
+)
 
-GCC = {"saudi arabia", "ksa", "united arab emirates", "uae", "qatar", "kuwait", "bahrain", "oman",
-       "dubai", "abu dhabi", "riyadh", "doha", "manama", "muscat"}
-UK_IE = {"united kingdom", "uk", "england", "scotland", "wales", "northern ireland", "ireland",
-         "london", "dublin", "edinburgh", "manchester"}
-EUROPE = {"france", "germany", "netherlands", "belgium", "luxembourg", "switzerland", "spain", "italy",
-          "portugal", "austria", "denmark", "sweden", "norway", "finland", "poland", "czech republic",
-          "monaco", "liechtenstein", "europe", "western europe", "nordics", "benelux"}
 DIRECT_CHEQUE_TYPES = {"family office", "hnwi", "uhnwi", "angel", "single family office", "multi-family office"}
 
 WARM_TAGS = {"gcc": 15, "bea": 15, "partner": 15, "network": 12, "co-investor": 15, "warm": 12, "intro": 10}
 WEIGHTS = {"coinvest": 0.30, "ticket": 0.20, "affinity": 0.15, "geography": 0.15, "recency": 0.10, "readiness": 0.10}
-
-
-def _low(v) -> str:
-    return (v or "").strip().lower() if isinstance(v, str) else ""
 
 
 def parse_tags(s) -> List[str]:
@@ -78,7 +79,7 @@ def _coinvest_score(inv: Dict) -> (float, str):
     if itype in DIRECT_CHEQUE_TYPES:
         return 0.8, f"{inv.get('investor_type')}: writes direct cheques by nature"
     # Type ceilings come BEFORE track record: a pension with 40 fund
-    # commitments is still a pension for a GBP 250K-2M cheque.
+    # commitments is still a pension for a GBP 200K-10M cheque.
     if "sovereign" in itype or "institutional" in itype or "bank" in itype or "pension" in itype or "insurance" in itype:
         return 0.2, "institutional: co-invests only at scale"
     if "fund of funds" in itype:
@@ -111,7 +112,7 @@ def _ticket_score(inv: Dict) -> (float, str):
             v = None
         if v:
             if 20 <= v <= 3000:
-                return 0.7, f"{label} ${v:,.0f}M implies GBP 250K-2M cheques are natural"
+                return 0.7, f"{label} ${v:,.0f}M implies our cheque size is natural"
             if v > 3000:
                 return 0.4, f"{label} ${v:,.0f}M: our cheque is small for them"
             return 0.4, f"{label} ${v:,.0f}M: our cheque may be large for them"

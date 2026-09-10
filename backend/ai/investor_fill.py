@@ -57,10 +57,16 @@ def _extract_json(text: str) -> dict:
     raise json.JSONDecodeError("No JSON object found in response", text[:80], 0)
 
 
-def investor_fill(name: str, context: Dict = None) -> Dict:
+def investor_fill(name: str, context: Dict = None, target_brief: str = "") -> Dict:
     """
     Enrich + score one investor. Returns dict of fields for
     InvestorBQHandler.update_enrichment, plus 'error' key on failure.
+
+    target_brief: who the DECISION MAKER is for this kind of investor, from
+    ai.investor_gate.target_brief. A family office is decided by its CIO, a
+    wealthy individual decides for themselves, a multi-family office by its
+    head of private markets. Getting this wrong wastes the one email we get,
+    so the ladder is passed in rather than left to the model's instincts.
     """
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
@@ -89,7 +95,13 @@ Search the web thoroughly for this investor and determine:
    "VC", "PE", "Angel", "Corporate", "Sovereign/Institutional", "Unknown"
 2. PROFILE — HQ city & country, website, AUM in £ millions (convert currencies),
    typical investment/commitment size range in £ millions, 1-2 sentence description
-3. CONTACT — key principal or IR contact name, email if public, LinkedIn URL
+3. THE DECISION MAKER — the single person who could actually say yes to a
+   co-investment, with their exact job title, their email if it is publicly
+   available, and their LinkedIn URL.
+   {target_brief or "Prefer the Chief Investment Officer, head of investments, managing partner or principal."}
+   Also state, in contact_confidence, whether the email is one you actually
+   FOUND published ("found") or one you inferred from the domain pattern
+   ("inferred"). Never present an inferred address as found.
 4. LP FIT SCORING — score each criterion 0.0-1.0 based on EVIDENCE found:
 
    a) geography: UK=1.0, Ireland/Western Europe=0.8, Saudi Arabia/GCC=0.9,
@@ -120,7 +132,9 @@ Return ONLY valid JSON:
   "ticket_max_m": number or null,
   "description": "1-2 sentences",
   "contact_name": "string or null",
+  "contact_title": "their exact job title, or null",
   "contact_email": "string or null",
+  "contact_confidence": "found" | "inferred" | null,
   "linkedin_url": "string or null",
   "scores": {{
     "geography": {{"score": 0.0-1.0 or null, "explanation": "one sentence"}},
@@ -183,7 +197,9 @@ Return ONLY valid JSON:
             "website": result.get("website") or "",
             "description": result.get("description") or "",
             "contact_name": result.get("contact_name") or "",
+            "contact_title": result.get("contact_title") or "",
             "contact_email": result.get("contact_email") or "",
+            "contact_confidence": result.get("contact_confidence") or "",
             "linkedin_url": result.get("linkedin_url") or "",
             "lp_fit_score": lp_fit,
             "score_geography": scores.get("geography"),
