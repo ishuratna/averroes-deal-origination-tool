@@ -176,35 +176,53 @@ mistake is both visible and correctable. This one logged nothing, which is why
   `entity=investor` and the same 14 / 7 day thresholds; never a second SQL.
 - THE GATE (`ai/investor_gate.py`, PURE, zero AI, zero network) decides whether
   an investor enters the pipeline AT ALL, and runs BEFORE any grounded call,
-  exactly as SmartFill's hard filters do for companies (doctrine 4). Ishu,
-  11 Sep 2026. Three checks, and the FIRST failure is the one reported, in the
-  order a human cares about: what they are, where they are, how big they are.
-    1. TYPE. Institutions are refused outright, not ranked down: pensions,
-       insurers, sovereigns, endowments, banks, funds of funds, consultants.
-       `INSTITUTIONAL_EXCEPTIONS` is checked FIRST, because "family foundation"
-       and "private bank client" contain institutional words and are precisely
-       our audience.
-    2. GEOGRAPHY. UK/IE, Europe or the GCC, judged on where they ARE.
-       `_geo_blob` deliberately EXCLUDES `geo_preferences`: that is where they
-       invest, and including it let a Singapore office with a European mandate
-       through. The email asks for a coffee in London or Riyadh.
-    3. SIZE. `AUM_CEILING_USD_M = 1000` (Ishu's choice of the tighter option):
+  exactly as SmartFill's hard filters do for companies (doctrine 4). TWO
+  filters (Ishu, 11 Sep 2026, revised the same day):
+    1. REACH. Based in the UK/IE, Europe or the GCC, OR a stated mandate
+       covering the UK, Ireland or Europe. EITHER ROUTE QUALIFIES. I first
+       excluded `geo_preferences`, calling it a bug that a Singapore office
+       with a European mandate passed; Ishu overruled that and is right, since
+       someone already writing cheques into UK companies is warmer than a
+       neighbour, and reach is solvable by a call while mandate is not. A GULF
+       mandate alone does NOT qualify: we raise there, we do not invest there.
+    2. SIZE. `AUM_CEILING_USD_M = 1000` (Ishu's choice of the tighter option):
        an investor puts 1 to 5 per cent of assets into one private position and
        ignores anything under about half a per cent, so at USD 1bn our GBP 10M
        is roughly 1 per cent and material, at USD 5bn it is 0.2 per cent and
        beneath notice. `AUM_FLOOR_USD_M = 10`, deliberately low: a UHNWI with
        USD 10M can comfortably write GBP 200K and is exactly our audience.
        A STATED ticket range beats any assets proxy, because it is their number.
+  TYPE IS NOT A FILTER. It was, for about an hour. Ishu removed it: "lets not
+  completely eliminate institutions, lets only put Size as the criteria." Size
+  already excludes every institution worth avoiding, by arithmetic rather than
+  keyword, and the type filter also threw out the small pension that CAN write
+  GBP 2M. `looks_institutional` survives as INFORMATION for the card and for
+  `lp_priority`'s ranking: a preference, not a wall.
   UNKNOWN IS NOT A FAILURE. A missing country, AUM or ticket PASSES, flagged,
-  because refusing everything we cannot measure would empty a universe of
-  11,763 mostly-undisclosed family offices. Finding the number is research's job.
-  So the gate runs TWICE: once on the stored row (skipped when the row is too
-  bare to judge, and always skipped for the Internal Test investor), and again
-  on the researched facts, which is usually the first time we know the country.
-  A post-research refusal PARKS the investor but keeps every field we paid for.
-  `GET /investors/gate-audit` (+ `/admin/` alias) previews the whole universe
-  and DEFAULTS TO A DRY RUN; `apply=1` parks the refused and never touches a
-  row at Contacted or beyond.
+  and goes through to research to find that very information (Ishu: "unknown
+  will go through smartfill by itself"). So the gate runs TWICE: once on the
+  stored row (skipped when too bare to judge, always skipped for the Internal
+  Test investor), and again on the researched facts, which is usually the first
+  time we know the country. A post-research refusal PARKS the investor but
+  keeps every field we paid for. The reported reason is SIZE FIRST, because
+  that is the criterion Ishu kept.
+  `GET /investors/gate-audit` (+ `/admin/` alias) previews the whole universe,
+  DEFAULTS TO A DRY RUN, and reports qualifying rows split by which email they
+  need; `apply=1` parks the refused and never touches a row at Contacted or
+  beyond.
+- WHICH EMAIL depends on HOW they qualified, and only ONE is written.
+  `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
+  coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`
+  (TBU #175). `lp_recipient_warning` returns the mismatch FIRST, before any
+  gatekeeper warning, because inviting a Zurich family office for coffee in
+  Riyadh is a worse mistake than writing to an assistant.
+- NEVER INFER AN EMAIL ADDRESS (Ishu, 11 Sep 2026: "we will either find them or
+  keep them out"). `_found_email_only` enforces it IN CODE and not only in the
+  prompt, because an instruction is a request and this is a rule: anything the
+  research marked other than `found`, anything with no confidence stated, and
+  any general enquiries inbox is DROPPED, keeping the person's name and title,
+  which are most of the value. A guessed address bounces, and a bounce burns
+  the one approach we get with that investor.
 - THE CHEQUE BAND is GBP 200K to 10M (Ishu, confirmed 11 Sep 2026), defined
   ONCE as `TICKET_MIN_USD_M` / `TICKET_MAX_USD_M` in `ai/investor_gate.py` and
   imported by `lp_priority`. The geography sets live there too, for the same
@@ -218,9 +236,7 @@ mistake is both visible and correctable. This one logged nothing, which is why
   by someone deciding for a group, so syndicate is tested before individual.
   The ladder is passed INTO `investor_fill` rather than left to the model, and
   the prompt forbids returning an assistant, an analyst or a general inbox when
-  a decision maker can be found. `contact_confidence` records whether an email
-  was FOUND published or INFERRED from the domain; an inferred address must
-  never be shown as found.
+  a decision maker can be found.
 - PRIORITY (`ai/lp_priority.py`, pure, zero AI) is the ONE ranking of
   investors for the raise: deal-by-deal co-investment at GBP 250K-2M per LP
   (Ishu, 9 Sep 2026). Weighted fit (co-invest appetite, ticket, software
@@ -263,10 +279,8 @@ mistake is both visible and correctable. This one logged nothing, which is why
   outreach doctrine is that email opens the door and a HUMAN TOUCHPOINT (call,
   referral, meeting) walks through it. Nothing prompts or records that
   touchpoint; a reply merely moves the investor to Responded.
-- The cheque band is UNRESOLVED and the email deliberately states no number.
-  `ai/lp_priority.py` ranks on GBP 250K-2M; Ishu has said GBP 200K-10M. Until
-  he confirms, do not put a figure in the copy: an email quoting one band while
-  the ranking uses another emails the wrong people a correct number.
+- The email states NO cheque figure, deliberately: it is a door opener, and a
+  number invites a decision before a conversation.
 
 ## 3. Event truth
 

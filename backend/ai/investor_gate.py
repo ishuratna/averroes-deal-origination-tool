@@ -1,41 +1,60 @@
 """
-The investor gate: the three hard filters an investor must pass BEFORE any AI
-research runs. Pure, zero AI, zero network. Mirrors SmartFill's hard filters
-for companies (doctrine 4: no grounded call on a row we already know is wrong).
+The investor gate: the hard filters an investor must pass BEFORE any AI research
+runs. Pure, zero AI, zero network. Mirrors SmartFill's hard filters for
+companies (doctrine 4: no grounded call on a row we already know is wrong).
 
-Per Ishu, 11 Sep 2026. An investor only enters the pipeline if:
+TWO filters, per Ishu 11 Sep 2026 (revised the same day, see below):
 
-  1. TYPE          not an institution. He has been explicit and repeated:
-                   "no institutions whatsoever". Pensions, insurers, sovereigns,
-                   endowments, banks, funds of funds and consultants do not
-                   write GBP 200K to 10M into a single deal, and the process
-                   cost is wrong for both sides.
-  2. GEOGRAPHY     headquartered in the UK/Ireland, Europe, or the GCC.
-                   Everything else is out of reach for a coffee in London or
-                   Riyadh, which is what the email actually asks for.
-  3. SIZE          big enough to write our cheque, and NOT SO BIG that our
-                   cheque is beneath their notice.
+  1. GEOGRAPHY  they are in the UK/Ireland, Europe or the GCC, OR their stated
+                mandate covers the UK, Ireland or Europe. Either route
+                qualifies.
+  2. SIZE       big enough to write our cheque, and NOT SO BIG that our cheque
+                is beneath their notice.
 
-WHY A CEILING EXISTS AT ALL. An investor typically puts 1 to 5 per cent of
-assets into one private position, and will not spend diligence time on
-anything under roughly half a per cent. Our top cheque is GBP 10M, so:
+TYPE IS NO LONGER A FILTER. It was, briefly. Ishu removed it: "lets not
+completely eliminate institutions, lets only put Size as the criteria." He is
+right, and the reason is that SIZE ALREADY DOES THE WORK. Every institution we
+actually want to avoid fails the AUM ceiling on its own arithmetic, so a
+separate type filter only added a second way to be wrong, and it wrongly
+excluded the small institution that CAN write GBP 2M. `lp_priority` still ranks
+institutions down, which is the right instrument: a preference, not a wall.
+
+GEOGRAPHY IS ABOUT REACH, AND MANDATE COUNTS. Earlier the same day I removed
+`geo_preferences` from the geography test, calling it a bug that a Singapore
+family office with a European mandate passed. Ishu overruled that: "their GEO
+mandate if is UK/Ireland, awesome." He is right on the substance. Someone who
+already invests in UK companies is a warmer prospect than someone who merely
+lives nearby, and reach is solvable by a call while mandate is not.
+
+But WHICH ROUTE qualified them decides HOW WE WRITE, and only the GCC email
+exists so far, so the gate records the route in `email_strategy`:
+
+    gcc            based in the Gulf        -> LP email v3 is written for them
+    uk_eu          based in UK/IE/Europe    -> different content needed (TBU)
+    mandate_only   elsewhere, UK/EU mandate -> different content again (TBU)
+
+`lp_recipient_warning` surfaces that, so nobody invites a Zurich family office
+for a coffee in Riyadh.
+
+WHY A SIZE CEILING EXISTS. An investor typically puts 1 to 5 per cent of assets
+into one private position, and will not spend diligence time on anything under
+roughly half a per cent. Our top cheque is GBP 10M, so:
 
     AUM  USD 1bn   ->  GBP 10M is about 1 per cent          material
     AUM  USD 5bn   ->  GBP 10M is about 0.2 per cent        beneath notice
     AUM  USD 20bn  ->  GBP 10M is a rounding error          not a conversation
 
-Ishu chose USD 1bn as the ceiling (11 Sep 2026), the tighter of the options:
-we would rather always be a material line in a smaller book than an ignorable
-one in a large book.
+Ishu chose USD 1bn, the tighter option: better a material line in a smaller
+book than an ignorable one in a large book.
 
-THE FLOOR IS DELIBERATELY LOW. A single wealthy individual with USD 10M can
-comfortably write GBP 200K. Excluding them would delete exactly the audience
-the email is written for.
+THE FLOOR IS DELIBERATELY LOW. A wealthy individual with USD 10M can comfortably
+write GBP 200K, and excluding them would delete exactly the audience the email
+is written for.
 
-UNKNOWN IS NOT A FAILURE. Most family offices publish nothing. A missing AUM
-or ticket range PASSES the size check, flagged as unverified, because refusing
-everything we cannot measure would empty the universe. Only a figure we
-actually hold can disqualify.
+UNKNOWN IS NOT A FAILURE. Most family offices publish nothing. A missing
+country, AUM or ticket PASSES, flagged, and goes through to research to find
+that very information (Ishu: "unknown will go through smartfill by itself to
+find that particular information"). Only a figure we actually hold disqualifies.
 """
 import re
 from typing import Dict, List, Optional, Tuple
@@ -67,9 +86,11 @@ TICKET_MAX_USD_M = 13.0
 AUM_FLOOR_USD_M = 10.0      # below this they cannot comfortably write GBP 200K
 AUM_CEILING_USD_M = 1000.0  # above this GBP 10M is under 1 per cent: immaterial
 
-# Types that are institutional BY NATURE. No amount of stated appetite makes a
-# pension fund a deal-by-deal co-investor at our size, so this is a filter and
-# not a score. (lp_priority separately ranks them down; belt and braces.)
+# Institutional markers. NOT A FILTER any more (Ishu, 11 Sep 2026): size already
+# excludes every institution we actually want to avoid, and a type filter also
+# threw out the small institution that CAN write GBP 2M. Kept because
+# `looks_institutional` is useful on the card and in `lp_priority`'s ranking:
+# a preference, not a wall.
 INSTITUTIONAL_MARKERS = (
     "pension", "insurance", "insurer", "assurance", "sovereign", "sovereign wealth",
     "endowment", "foundation trust", "superannuation", "fund of funds", "fund-of-funds",
@@ -109,51 +130,78 @@ def _num(v) -> Optional[float]:
         return None
 
 
-def _geo_blob(inv: Dict) -> str:
-    """WHERE THEY ARE. Deliberately excludes `geo_preferences`, which is where
-    they INVEST: a Singapore family office with a European mandate is still in
-    Singapore, and the email asks for a coffee in London or Riyadh. Including
-    it let every global investor through the geography filter."""
+def _base_blob(inv: Dict) -> str:
+    """Where they ARE."""
     return " ".join(_low(inv.get(k)) for k in
                     ("hq_country", "hq_city", "region", "global_region"))
 
 
-def check_type(inv: Dict) -> Tuple[bool, str]:
-    """Institution by nature? Returns (passes, reason)."""
+def _mandate_blob(inv: Dict) -> str:
+    """Where they INVEST. A separate field because it qualifies by a different
+    route and, crucially, calls for a different email."""
+    return " ".join(_low(inv.get(k)) for k in
+                    ("geo_preferences", "strategy_preferences", "other_preferences",
+                     "policy_description"))
+
+
+def looks_institutional(inv: Dict) -> str:
+    """The institutional marker found, or "". INFORMATIONAL ONLY.
+
+    This does not refuse anybody. Size decides (Ishu, 11 Sep 2026), and size
+    catches every institution worth avoiding by arithmetic rather than by
+    keyword. A small institution that can write GBP 2M is welcome.
+    """
     blob = f"{_low(inv.get('investor_type'))} {_low(inv.get('name'))} " \
            f"{(_low(inv.get('description')))[:300]}"
     # An exception anywhere wins: "Al Rasheed Family Office (private bank
     # client)" contains "bank" and is plainly not a bank.
     if any(x in blob for x in INSTITUTIONAL_EXCEPTIONS):
-        return True, ""
+        return ""
     for marker in INSTITUTIONAL_MARKERS:
         if marker in blob:
-            return False, (f"Institutional investor ({marker}). They do not write GBP 200K to 10M "
-                           f"into a single deal, and Averroes does not raise from institutions.")
-    return True, ""
+            return marker
+    return ""
 
 
-def check_geography(inv: Dict) -> Tuple[bool, str, str]:
-    """In the UK/Ireland, Europe or the GCC? Returns (passes, region, reason).
+def check_geography(inv: Dict) -> Tuple[bool, str, str, str]:
+    """Returns (passes, region, email_strategy, reason).
 
-    Judged on where the investor IS, not where they invest: the ask is a coffee
-    in London or Riyadh. A stated European or UK mandate is recorded but does
-    not rescue an investor headquartered in Singapore.
+    TWO routes in, per Ishu (11 Sep 2026):
+      WHERE THEY ARE      the Gulf, or the UK/Ireland, or Europe.
+      WHAT THEY BACK      a stated mandate covering the UK, Ireland or Europe,
+                          wherever they happen to sit. Someone already writing
+                          cheques into UK companies is a warmer prospect than
+                          someone who merely lives nearby.
+
+    The route matters beyond a yes: it decides which email they should get, and
+    only the GCC one is written. `email_strategy` carries that forward so the
+    draft can say so rather than sending the wrong invitation.
     """
-    blob = _geo_blob(inv)
-    if any(g in blob for g in GCC):
-        return True, "GCC", ""
-    if any(g in blob for g in UK_IE):
-        return True, "UK/IE", ""
-    if any(g in blob for g in EUROPE):
-        return True, "Europe", ""
-    if not blob.strip():
-        # Unknown location: let it through to research, which is what research
-        # is FOR. The gate re-runs after InvestorFill with a real country.
-        return True, "unknown", ""
+    base, mandate = _base_blob(inv), _mandate_blob(inv)
+
+    if any(g in base for g in GCC):
+        return True, "GCC", "gcc", ""
+    if any(g in base for g in UK_IE):
+        return True, "UK/IE", "uk_eu", ""
+    if any(g in base for g in EUROPE):
+        return True, "Europe", "uk_eu", ""
+
+    # Not based in reach. Does their MANDATE bring them in?
+    if any(g in mandate for g in UK_IE):
+        return True, "mandate: UK/IE", "mandate_only", ""
+    if any(g in mandate for g in EUROPE):
+        return True, "mandate: Europe", "mandate_only", ""
+    # A Gulf MANDATE is not a qualification: we raise there, we do not invest
+    # there, so an investor who only looks at Gulf assets is not our audience.
+
+    if not base.strip() and not mandate.strip():
+        # Nothing to judge. Research exists to find this.
+        return True, "unknown", "unknown", ""
+
     where = (inv.get("hq_country") or inv.get("global_region") or inv.get("region") or "").strip()
-    return False, "out of scope", (f"Headquartered outside our reach ({where or 'not UK, Europe or GCC'}). "
-                                   f"We raise in the UK, Europe and the Gulf.")
+    return False, "out of scope", "none", (
+        f"Based outside the UK, Europe and the Gulf ({where or 'location unclear'}) with no stated "
+        f"UK, Irish or European mandate. Nothing to talk to them about.")
 
 
 def check_size(inv: Dict) -> Tuple[bool, str, str]:
@@ -193,43 +241,51 @@ def check_size(inv: Dict) -> Tuple[bool, str, str]:
     return True, "unknown", ""
 
 
+# Which email each qualifying route needs. Only the first exists.
+EMAIL_STRATEGIES = {
+    "gcc": "LP email v3, written for the Gulf: a coffee in London or Riyadh.",
+    "uk_eu": "TBU. A UK or European investor needs different content; the Gulf email does not fit.",
+    "mandate_only": "TBU. Based elsewhere but backs UK and European companies, so different again.",
+    "unknown": "Region not established yet. Research first.",
+}
+
+
 def qualify_investor(inv: Dict) -> Dict:
     """The gate. PURE. Run this BEFORE spending a grounded call on an investor.
 
     Returns:
-      qualified     bool, all three checks passed
-      unfit_reason  the ONE sentence to show a human, empty when qualified
-      checks        per-check verdict and reason, for the card's evidence panel
-      region        UK/IE | GCC | Europe | unknown | out of scope
-      size_basis    what the size check judged on
-      wants         True when the type is one we actively want (informational)
+      qualified        bool, both filters passed
+      unfit_reason     the ONE sentence to show a human, empty when qualified
+      checks           per-check verdict and reason, for the card
+      region           GCC | UK/IE | Europe | mandate: ... | unknown | out of scope
+      email_strategy   which email they need: gcc | uk_eu | mandate_only | unknown
+      size_basis       what the size check judged on
+      institutional    the institutional marker found, or "". NOT a refusal.
+      wants            True when the type is one we actively want
     """
-    type_ok, type_why = check_type(inv)
-    geo_ok, region, geo_why = check_geography(inv)
+    geo_ok, region, strategy, geo_why = check_geography(inv)
     size_ok, size_basis, size_why = check_size(inv)
+    inst = looks_institutional(inv)
 
     checks = {
-        "type": {"pass": type_ok, "why": type_why or "Not an institution."},
-        "geography": {"pass": geo_ok, "why": geo_why or f"{region} investor."},
+        "geography": {"pass": geo_ok, "why": geo_why or f"{region}."},
         "size": {"pass": size_ok, "why": size_why or (
-            "Size unknown, worth researching." if size_basis == "unknown"
+            "Size unknown, research will find it." if size_basis == "unknown"
             else f"{size_basis} sits inside our range.")},
     }
-    # ONE reason, in the order a human would care about: what they are, then
-    # where, then how big. A list of three failures helps nobody.
-    reason = ""
-    for ok, why in ((type_ok, type_why), (geo_ok, geo_why), (size_ok, size_why)):
-        if not ok:
-            reason = why
-            break
+    # Size first: it is the criterion Ishu kept, and a fund that is too big is
+    # a harder no than a location we might work around.
+    reason = size_why if not size_ok else (geo_why if not geo_ok else "")
 
     blob = f"{_low(inv.get('investor_type'))} {(_low(inv.get('description')))[:300]}"
     return {
-        "qualified": type_ok and geo_ok and size_ok,
+        "qualified": geo_ok and size_ok,
         "unfit_reason": reason,
         "checks": checks,
         "region": region,
+        "email_strategy": strategy,
         "size_basis": size_basis,
+        "institutional": inst,
         "wants": any(m in blob for m in DIRECT_CHEQUE_MARKERS),
     }
 

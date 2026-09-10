@@ -6946,7 +6946,8 @@ async def investorfill(investor_name: str):
             logger.info(f"[InvestorGate] '{investor_name}' refused before any AI: {gate['unfit_reason']}")
             return {"status": "Not a fit", "investor": investor_name, "gated": True,
                     "unfit_reason": gate["unfit_reason"], "checks": gate["checks"],
-                    "region": gate["region"], "ai_calls": 0}
+                    "region": gate["region"], "email_strategy": gate["email_strategy"],
+                    "ai_calls": 0}
 
     _enforce_grounding_budget(1, "InvestorFill")
     result = investor_fill(investor_name, context, target_brief=target_brief(context))
@@ -6979,6 +6980,9 @@ async def investorfill(investor_name: str):
     post = qualify_investor({**context, **{k: v for k, v in result.items() if v not in (None, "")}})
     result["gate_region"] = post["region"]
     result["gate_unfit_reason"] = post["unfit_reason"]
+    # Which email this investor needs. Only the Gulf one is written, so the
+    # draft warns rather than silently sending a Riyadh coffee invite to Zurich.
+    result["email_strategy"] = post["email_strategy"]
 
     if not investor_handler.update_enrichment(investor_name, result):
         raise HTTPException(status_code=500, detail="Database update failed")
@@ -7212,7 +7216,7 @@ async def investors_gate_audit(request: Request, apply: int = Query(0, descripti
     from ai.investor_gate import qualify_investor
 
     rows = investor_handler.get_all()
-    refused, by_reason, by_region = [], {}, {}
+    refused, by_reason, by_region, by_email_strategy = [], {}, {}, {}
     checked = skipped_bare = 0
     for inv in rows:
         if inv.get("source") == "Internal Test":
@@ -7226,12 +7230,15 @@ async def investors_gate_audit(request: Request, apply: int = Query(0, descripti
         gate = qualify_investor(inv)
         by_region[gate["region"]] = by_region.get(gate["region"], 0) + 1
         if gate["qualified"]:
+            st = gate["email_strategy"]
+            by_email_strategy[st] = by_email_strategy.get(st, 0) + 1
             continue
-        which = next(k for k in ("type", "geography", "size") if not gate["checks"][k]["pass"])
+        which = next(k for k in ("size", "geography") if not gate["checks"][k]["pass"])
         by_reason[which] = by_reason.get(which, 0) + 1
         refused.append({"name": inv.get("name"), "status": inv.get("status"),
                         "investor_type": inv.get("investor_type"), "hq_country": inv.get("hq_country"),
                         "aum_m": inv.get("aum_m"), "failed": which, "reason": gate["unfit_reason"]})
+        continue
 
     parked = 0
     if apply:
@@ -7248,6 +7255,8 @@ async def investors_gate_audit(request: Request, apply: int = Query(0, descripti
     return {"dry_run": not apply, "total_rows": len(rows), "checked": checked,
             "too_bare_to_judge": skipped_bare, "would_refuse": len(refused),
             "by_failed_filter": by_reason, "by_region": by_region,
+            # Which email each qualifying investor needs. Only "gcc" exists.
+            "qualified_by_email_strategy": by_email_strategy,
             "parked": parked, "sample": refused[:60]}
 
 

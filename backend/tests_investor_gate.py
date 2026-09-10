@@ -44,37 +44,58 @@ chk("the band is GBP 200K to 10M in USD millions", (g.TICKET_MIN_USD_M, g.TICKET
 chk("geography is defined once too", g.GCC is __import__("ai.lp_priority", fromlist=["GCC"]).GCC)
 
 print()
-print("-- filter 1: no institutions, whatever they say about themselves --")
-for t in ("Pension Fund", "Insurance Company", "Sovereign Wealth Fund", "Endowment",
-          "Fund of Funds", "Bank", "Asset Manager", "Investment Consultant"):
-    r = q(name="Big Co", investor_type=t, hq_country="United Kingdom")
-    chk(f"{t} refused", r["qualified"], False)
-chk("...and the reason names what they are",
-    "Institutional" in q(name="X", investor_type="Pension Fund", hq_country="UK")["unfit_reason"])
-# The exception matters: these contain institutional WORDS and are our target.
-chk("a family foundation is NOT an institution",
+print("-- type is NOT a filter: size decides (Ishu, revised 11 Sep 2026) --")
+# It was a filter for about an hour. Size already excludes every institution
+# worth avoiding, by arithmetic rather than keyword, and the type filter also
+# threw out the small institution that CAN write GBP 2M.
+small_pension = q(name="County Pension", investor_type="Pension Fund", hq_country="UK",
+                  ticket_min_m=1, ticket_max_m=3)
+chk("a small pension writing 1-3M is WELCOME", small_pension["qualified"])
+chk("...and is still flagged as institutional for the ranking, not refused",
+    small_pension["institutional"], "pension")
+giant = q(name="State Pension", investor_type="Pension Fund", hq_country="UK", aum_m=90000)
+chk("a USD 90bn pension is refused, but on SIZE", giant["qualified"], False)
+chk("...and the reason is the arithmetic, not the label", "under 1 per cent" in giant["unfit_reason"])
+chk("only two checks exist now", sorted(giant["checks"].keys()), ["geography", "size"])
+chk("a family foundation is not read as institutional",
     q(name="Al Rasheed Family Foundation", investor_type="Family Office",
-      hq_country="Saudi Arabia")["qualified"])
-chk("a private bank's CLIENT is not a bank",
-    q(name="Private Office", investor_type="Single Family Office",
-      description="A family office serving a private banking client", hq_country="UAE")["qualified"])
+      hq_country="Saudi Arabia")["institutional"], "")
 
 print()
-print("-- filter 2: UK/Ireland, Europe, the GCC. Where they ARE, not where they invest --")
+print("-- filter 1: reach. Where they ARE, or what their MANDATE covers --")
 for country, region in (("Saudi Arabia", "GCC"), ("United Arab Emirates", "GCC"),
                         ("United Kingdom", "UK/IE"), ("Ireland", "UK/IE"),
                         ("Switzerland", "Europe"), ("Germany", "Europe")):
     r = q(name="FO", investor_type="Family Office", hq_country=country)
-    chk(f"{country} passes as {region}", (r["qualified"], r["region"]), (True, region))
-for country in ("United States", "Singapore", "Japan", "Australia", "Brazil"):
-    chk(f"{country} refused", q(name="FO", investor_type="Family Office", hq_country=country)["qualified"], False)
-chk("...and the reason says where they are",
-    "Singapore" in q(name="FO", investor_type="Family Office", hq_country="Singapore")["unfit_reason"])
-chk("a European MANDATE does not rescue a Singapore office (the ask is a coffee)",
+    chk(f"based in {country} passes as {region}", (r["qualified"], r["region"]), (True, region))
+# Ishu overruled my earlier removal of mandate, and he is right: someone
+# already writing cheques into UK companies is warmer than a neighbour.
+r = q(name="FO", investor_type="Family Office", hq_country="Singapore",
+      geo_preferences="United Kingdom, Europe")
+chk("a Singapore office with a UK mandate QUALIFIES", r["qualified"])
+chk("...recorded as mandate, not as being based here", r["region"], "mandate: UK/IE")
+chk("a Singapore office with an Asia-only mandate is refused",
     q(name="FO", investor_type="Family Office", hq_country="Singapore",
-      geo_preferences="Europe, United Kingdom")["qualified"], False)
-chk("an unknown location goes THROUGH to research, which is what research is for",
+      geo_preferences="Asia, Japan")["qualified"], False)
+chk("a GULF mandate alone does not qualify: we raise there, we do not invest there",
+    q(name="FO", investor_type="Family Office", hq_country="Singapore",
+      geo_preferences="Middle East, GCC")["qualified"], False)
+chk("nothing known at all goes through to research",
     q(name="Some Office", investor_type="Family Office")["region"], "unknown")
+
+print()
+print("-- the route in decides WHICH email, and only the Gulf one exists --")
+chk("Gulf based -> the email we have",
+    q(name="A", investor_type="Family Office", hq_country="Qatar")["email_strategy"], "gcc")
+chk("UK based -> needs its own content (TBU)",
+    q(name="A", investor_type="Family Office", hq_country="London")["email_strategy"], "uk_eu")
+chk("European based -> same TBU bucket",
+    q(name="A", investor_type="Family Office", hq_country="France")["email_strategy"], "uk_eu")
+chk("qualifying on mandate alone -> a third content strategy (TBU)",
+    q(name="A", investor_type="Family Office", hq_country="Singapore",
+      geo_preferences="United Kingdom")["email_strategy"], "mandate_only")
+chk("every qualifying route has an entry explaining what is needed",
+    all(k in g.EMAIL_STRATEGIES for k in ("gcc", "uk_eu", "mandate_only", "unknown")))
 
 print()
 print("-- filter 3: big enough to write our cheque, small enough for it to matter --")
@@ -108,15 +129,15 @@ print("-- unknown is never a failure: most family offices publish nothing --")
 r = q(name="Discreet Family Office", investor_type="Single Family Office", hq_country="Qatar")
 chk("no AUM and no ticket still qualifies", r["qualified"])
 chk("...flagged as unmeasured rather than silently assumed", r["size_basis"], "unknown")
-chk("...and the size check says it is worth researching",
-    "worth researching" in r["checks"]["size"]["why"])
+chk("...and the size check says research will find it",
+    "research will find it" in r["checks"]["size"]["why"])
 
 print()
-print("-- one reason, in the order a human cares: what, where, how big --")
+print("-- one reason, size first: it is the criterion Ishu kept --")
 r = q(name="Giant Pension", investor_type="Pension Fund", hq_country="United States", aum_m=90000)
-chk("all three fail but only the type is reported", "Institutional" in r["unfit_reason"])
-chk("...and every check is still recorded for the card",
-    [r["checks"][k]["pass"] for k in ("type", "geography", "size")], [False, False, False])
+chk("both fail but only one reason is shown", "under 1 per cent" in r["unfit_reason"])
+chk("...and both checks are still recorded for the card",
+    [r["checks"][k]["pass"] for k in ("geography", "size")], [False, False])
 
 print()
 print("-- who to write to, by what kind of investor this is --")
@@ -145,6 +166,8 @@ chk("the gate is checked before the budget is spent", gate_at < spend_at)
 chk("a refused investor returns without any AI call", '"ai_calls": 0' in src)
 chk("a refused investor is parked with the reason, not deleted",
     'reason="not_a_fit"' in src and 'gate["unfit_reason"]' in src)
+chk("the email strategy travels with the enrichment result",
+    'result["email_strategy"] = post["email_strategy"]' in src)
 chk("the decision-maker ladder is passed into the research call",
     "target_brief=target_brief(context)" in src)
 chk("the gate RE-RUNS on researched facts, since research usually finds the country",

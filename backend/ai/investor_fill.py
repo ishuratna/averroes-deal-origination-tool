@@ -57,6 +57,32 @@ def _extract_json(text: str) -> dict:
     raise json.JSONDecodeError("No JSON object found in response", text[:80], 0)
 
 
+def _found_email_only(result: Dict) -> str:
+    """The contact email ONLY when the research actually found it published.
+
+    Anything the model marked inferred, or shaped like a construction from the
+    person's name, is dropped. The NAME and TITLE are kept: knowing that the
+    CIO is Faisal Al Rasheed is most of the value, and a wrong address is worse
+    than none because it bounces and burns the approach.
+    """
+    email = (result.get("contact_email") or "").strip()
+    if not email or "@" not in email:
+        return ""
+    conf = (result.get("contact_confidence") or "").strip().lower()
+    if conf and conf != "found":
+        logger.info(f"[InvestorFill] Dropping {conf} email {email!r}: we do not guess addresses.")
+        return ""
+    if not conf:
+        # No confidence stated is not a licence to trust it.
+        logger.info(f"[InvestorFill] Dropping email {email!r}: research did not confirm it was published.")
+        return ""
+    local = email.split("@", 1)[0].lower()
+    if local in ("info", "contact", "hello", "enquiries", "enquiry", "general", "admin", "office", "mail"):
+        logger.info(f"[InvestorFill] Dropping general inbox {email!r}: not a decision maker.")
+        return ""
+    return email
+
+
 def investor_fill(name: str, context: Dict = None, target_brief: str = "") -> Dict:
     """
     Enrich + score one investor. Returns dict of fields for
@@ -99,9 +125,13 @@ Search the web thoroughly for this investor and determine:
    co-investment, with their exact job title, their email if it is publicly
    available, and their LinkedIn URL.
    {target_brief or "Prefer the Chief Investment Officer, head of investments, managing partner or principal."}
-   Also state, in contact_confidence, whether the email is one you actually
-   FOUND published ("found") or one you inferred from the domain pattern
-   ("inferred"). Never present an inferred address as found.
+   DO NOT GUESS AN EMAIL ADDRESS. Return contact_email ONLY if you actually
+   found that exact address published somewhere. Never construct one from a
+   name and a domain, never offer firstname.lastname@, and never return a
+   general enquiries address in its place. If you cannot find a published
+   address, return null and set contact_confidence to "not_found" while still
+   returning the person's NAME and TITLE, which are the valuable part.
+   Set contact_confidence to "found" only for an address you actually saw.
 4. LP FIT SCORING — score each criterion 0.0-1.0 based on EVIDENCE found:
 
    a) geography: UK=1.0, Ireland/Western Europe=0.8, Saudi Arabia/GCC=0.9,
@@ -134,7 +164,7 @@ Return ONLY valid JSON:
   "contact_name": "string or null",
   "contact_title": "their exact job title, or null",
   "contact_email": "string or null",
-  "contact_confidence": "found" | "inferred" | null,
+  "contact_confidence": "found" | "not_found",
   "linkedin_url": "string or null",
   "scores": {{
     "geography": {{"score": 0.0-1.0 or null, "explanation": "one sentence"}},
@@ -198,8 +228,13 @@ Return ONLY valid JSON:
             "description": result.get("description") or "",
             "contact_name": result.get("contact_name") or "",
             "contact_title": result.get("contact_title") or "",
-            "contact_email": result.get("contact_email") or "",
-            "contact_confidence": result.get("contact_confidence") or "",
+            # Ishu, 11 Sep 2026: "lets not infer email addresses, we will
+            # either find them or keep them out". Enforced HERE and not only in
+            # the prompt, because an instruction is a request and this is a
+            # rule: a guessed address bounces, and a bounce burns the one
+            # approach we get with that investor.
+            "contact_email": _found_email_only(result),
+            "contact_confidence": "found" if _found_email_only(result) else "not_found",
             "linkedin_url": result.get("linkedin_url") or "",
             "lp_fit_score": lp_fit,
             "score_geography": scores.get("geography"),

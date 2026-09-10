@@ -475,15 +475,34 @@ _LP_GATEKEEPER_TITLES = (
 
 
 def lp_recipient_warning(investor: Dict) -> str:
-    """Rule 4: say so when we are not writing to a decision maker.
+    """Rule 4: say so when we are about to write to the wrong person, or send
+    the wrong email entirely.
 
     Returned on the draft rather than enforced, because a gatekeeper is
     sometimes the only way in and that is the sender's call to make. What must
-    never happen is sending to the wrong desk WITHOUT noticing.
+    never happen is sending to the wrong desk, or the wrong content, WITHOUT
+    noticing.
     """
     email = (investor.get("contact_email") or "").strip().lower()
     title = (investor.get("contact_title") or "").strip().lower()
     name = (investor.get("contact_name") or "").strip()
+
+    # FIRST: is this even the right email? The v3 copy is written for the Gulf
+    # ("a coffee in London or Riyadh"), and the UK/Europe and mandate-only
+    # variants are not written yet (TBU). Inviting a Zurich family office for
+    # coffee in Riyadh is a worse mistake than writing to a gatekeeper.
+    try:
+        from ai.investor_gate import qualify_investor
+        strategy = qualify_investor(investor).get("email_strategy")
+    except Exception:
+        strategy = None
+    if strategy == "uk_eu":
+        return ("This is a UK or European investor, and the only email written so far is the Gulf "
+                "one (it offers a coffee in London or Riyadh). Edit it before sending, or wait for "
+                "the UK and Europe version.")
+    if strategy == "mandate_only":
+        return ("This investor qualifies on their UK or European MANDATE, not on where they sit, so "
+                "the Gulf email does not fit. Edit it before sending, or wait for that version.")
 
     if not name and not email:
         return "No contact on file yet. Run InvestorFill to find the principal before sending."
