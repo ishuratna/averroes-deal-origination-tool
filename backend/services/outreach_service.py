@@ -388,54 +388,148 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
         return _fallback_template(company_data)
 
 
-# ── Investor (LP) outreach: structure v2 ─────────────────────────────────────
-# Per Ishu (9 Sep 2026): an INVITATION to talk, human, no placeholders.
-#   1. "Hi {first},"
-#   2. Who writes and who we are: investor relations at Averroes Capital (or a
-#      Partner when Bea's mailbox sends); a London-based technology investor
-#      taking growth equity or significant and majority positions in software
-#      and tech companies, primarily UK and Ireland.
-#   3. WHY THEM: one specific, personal line from what we hold (co-investment
-#      appetite, tech exposure, a company we both know). Never generic praise.
-#   4. How we invest: deal by deal alongside a pool of investors, many of whom
-#      have backed us across more than one round, now widening that circle;
-#      collaborative, alongside management teams; Glowday and Journey have
-#      delivered strong returns for the investors who came in with us.
-#   5. The invitation: share our philosophy, no expectation beyond a
-#      conversation; a short call in the coming weeks, or a short note first.
-#   6. "Best," and the signature (added on send).
+# ── Investor (LP) outreach: structure v3 ─────────────────────────────────────
+# Per Ishu (11 Sep 2026), replacing v2. v2 was a good letter and the wrong
+# instrument: it explained the firm in full before anyone had agreed to talk.
+# The email is not the pitch. Its ONLY job is to open a door that a human
+# touchpoint then walks through, so the six rules are:
+#
+#   1. VERY SHORT and personal. Not a corporate pitch. Four short paragraphs,
+#      under 120 words of house copy. If it reads like a brochure, it is wrong.
+#   2. Brief intro, then the GCC EXPANSION, which is the actual reason we are
+#      writing to this person now and the only news in the email.
+#   3. TAILORED BY AUDIENCE. A wealthy individual and a family office do not
+#      hear the same sentence: an individual joins deals personally, a family
+#      office co-invests alongside its own direct programme.
+#   4. Addressed to the DECISION MAKER (a principal, a CIO, a head of
+#      investments). `lp_recipient_warning` flags it when the stored contact
+#      is plainly not one, so the sender can fix it before pressing send.
+#   5. NO corporate profile, no attachment, no deck, and no offer to send one.
+#      Fuller information goes out only after they reply. This is why v2's
+#      "I can send a short note on Averroes first" is gone.
+#   6. The ask is to CONNECT: a coffee, or a short call. Not a meeting agenda,
+#      not diligence, not documents.
+#
 # ZERO em dashes or en dashes anywhere. Structure changes happen HERE only.
-AVERROES_LP_POSITIONING = (
-    "We are a technology investor based in London, taking growth equity or significant and "
-    "majority positions in software and tech companies, primarily in the UK and Ireland.")
-AVERROES_LP_MODEL = (
-    "We invest deal by deal alongside a pool of investors, many of whom have backed us across more "
-    "than one round, and we are now widening that circle. Our approach is collaborative: we work "
-    "alongside the management teams we back rather than around them, and the companies we have "
-    "invested in, Glowday and Journey among them, have delivered strong returns for the investors "
-    "who came in with us.")
-AVERROES_LP_INVITATION = (
-    "I would enjoy sharing our philosophy and how we work with our investors, with no expectation "
-    "beyond a conversation. Would you be open to a short call in the coming weeks? If it is easier, "
-    "I can send a short note on Averroes first.")
+
+# Read as ONE sentence with the role line: "I look after investor relations at
+# Averroes Capital, a technology investor based in London backing software
+# companies in the UK and Ireland." Two short sentences here read like a form.
+# The cheque size. The single most useful concrete fact in the email: it tells
+# an investor in one clause whether we are worth ten minutes, and it is NOT a
+# performance claim, so it carries no regulatory weight. Change it HERE.
+# NOTE: ai/lp_priority.py still ranks on GBP 250K-2M pending Ishu's
+# confirmation of the wider band (see the discovery doc). If he settles on a
+# different range, these two must move together.
+# Where we are. Two cities, because "based in London and Riyadh" is the whole
+# credibility of a Gulf approach in five words: it says we are not flying in
+# once and disappearing.
+AVERROES_LP_BASE = "based in London and Riyadh"
+
+# Paragraph 1, after the name and title.
+# "on each deal" restores the deal-by-deal fact in three words, which is what
+# tells an investor this is not a blind fund commitment.
+AVERROES_LP_WHO = (
+    "We buy and back software companies in the UK and Ireland, alongside a small group of investors "
+    "who come in with us on each deal.")
+
+# Paragraph 2. THE REASON FOR WRITING, and the part every earlier version was
+# missing. v3.0 said "we are expanding our investor base in the Gulf", which is
+# a fact about us and gives the reader nothing. This says what is actually
+# happening: exits coming, more UK companies to buy, so the investor pool is
+# growing. That is news, and news is what earns a reply.
+# Tightened from Ishu's draft: "are now looking to acquire" became "are
+# acquiring" (we either are or we are not), and "further expanding our GCC
+# investor pool for fundraising" became "widening our investor group in the
+# Gulf", because expanding an investor pool is self-evidently for fundraising.
+AVERROES_LP_WHY_NOW = (
+    "With promising exits lined up for next year, we are acquiring more UK companies and widening "
+    "our investor group in the Gulf.")
+
+# Paragraph 3. The ask: a coffee in either city, or a named fifteen minutes.
+# "I can share more then" is what keeps rule 5 honest, the fuller picture is
+# the reward for a conversation, not an attachment on a cold email.
+# FINAL, Ishu's own wording (11 Sep 2026). "If this sounds interesting to you"
+# is his: it keeps the ask low pressure and lets the reader opt in rather than
+# be asked for time they have not agreed to give. Two cities, and a named
+# fifteen minutes as the easier alternative. No offer to send anything, which
+# is rule 5: the fuller picture is the reward for a conversation.
+AVERROES_LP_ASK = (
+    "If this sounds interesting to you, could we catch up over a coffee, in London or Riyadh? "
+    "If fifteen minutes on a call is easier, just let me know.")
+
+# Titles that indicate the person can actually decide, and titles that mean we
+# are writing to the wrong desk. Rule 4 (target the decision maker) is about
+# WHO, so it belongs in the draft, not in the sender's memory.
+_LP_DECISION_TITLES = (
+    "chief investment", "cio", "head of investment", "head of private", "managing partner",
+    "general partner", "partner", "principal", "founder", "chairman", "chair", "president",
+    "chief executive", "ceo", "managing director", "board member", "trustee", "owner",
+    "family principal", "head of direct", "investment director", "portfolio manager",
+)
+_LP_GATEKEEPER_TITLES = (
+    "assistant", "secretary", "receptionist", "office manager", "intern", "analyst",
+    "associate", "coordinator", "administrator", "marketing", "hr", "recruit",
+    "compliance", "operations", "accountant", "bookkeep", "support", "info", "enquir",
+)
+
+
+def lp_recipient_warning(investor: Dict) -> str:
+    """Rule 4: say so when we are not writing to a decision maker.
+
+    Returned on the draft rather than enforced, because a gatekeeper is
+    sometimes the only way in and that is the sender's call to make. What must
+    never happen is sending to the wrong desk WITHOUT noticing.
+    """
+    email = (investor.get("contact_email") or "").strip().lower()
+    title = (investor.get("contact_title") or "").strip().lower()
+    name = (investor.get("contact_name") or "").strip()
+
+    if not name and not email:
+        return "No contact on file yet. Run InvestorFill to find the principal before sending."
+    local = email.split("@", 1)[0] if "@" in email else ""
+    if local in ("info", "contact", "hello", "enquiries", "enquiry", "general", "admin", "office", "mail"):
+        return ("This is a general enquiries address, not a person. It will reach a gatekeeper: "
+                "worth finding the principal or the CIO first.")
+    if title:
+        if any(t in title for t in _LP_DECISION_TITLES):
+            return ""
+        if any(t in title for t in _LP_GATEKEEPER_TITLES):
+            return (f"'{investor.get('contact_title')}' is unlikely to decide. Aim for the principal, "
+                    f"the CIO or the head of investments.")
+        return ""
+    if not name:
+        return "We have an address but no named person. Confirm who this reaches before sending."
+    return "No title on file, so we cannot tell whether this person decides. Worth a check."
 
 
 def _lp_role_line(prof: Dict) -> str:
-    """Who is writing, kept true to the mailbox that sends: Ishu's investor
-    relations line when the investor mailbox is configured, a Partner line
-    while Bea's mailbox is the fallback."""
-    if prof.get("fallback") or (prof.get("sig_title") or "").lower().startswith("partner"):
-        return "I am a Partner at Averroes Capital."
-    return "I look after investor relations at Averroes Capital."
+    """"I am Ellie, Director of Investor Relations at Averroes Capital, based in
+    London and Riyadh."
+
+    Name and title come from the MAILBOX that actually sends, never from a
+    constant, so the email can never claim to be from someone it is not. Set
+    INVESTOR_OUTREACH_NAME and INVESTOR_SIGNATURE_TITLE on Cloud Run (TBU #166)
+    and this line becomes hers; until then it is Bea's, and says Partner.
+    """
+    who = (prof.get("name") or prof.get("sig_name") or "").strip()
+    first = who.split()[0] if who else ""
+    title = (prof.get("sig_title") or "").strip()
+    if not title:
+        title = "Partner" if prof.get("fallback") else "Director of Investor Relations"
+    if first:
+        return f"I am {first}, {title} at Averroes Capital, {AVERROES_LP_BASE}."
+    return f"I am writing from Averroes Capital, {AVERROES_LP_BASE}."
 
 
 def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
-    """Draft the LP invitation (structure v2). The only AI-written part is the
-    personal WHY THEM line; the positioning, model and invitation are fixed
-    house copy. No Google Search. Falls back to a fully fixed template."""
+    """Draft the LP door opener (structure v3). The only AI-written part is the
+    personal WHY THEM line; intro, GCC line, audience sentence and the ask are
+    fixed house copy. No Google Search. Falls back to a fully fixed template."""
     api_key = os.getenv("GEMINI_API_KEY")
     prof = sender_profile("investor")
     role_line = _lp_role_line(prof)
+    recipient_warning = lp_recipient_warning(investor)
 
     name = investor.get("name", "")
     contact_name = investor.get("contact_name", "")
@@ -461,40 +555,53 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
             context_parts.append(f"{label}: {val}")
     lp_context = "\n".join(context_parts) if context_parts else f"Investor: {name}"
 
-    subject = f"Averroes Capital, {name}"
+    # A person's subject line, not a mail merge's. No company name, no colon.
+    subject = "Averroes Capital, an introduction"
 
     def _assemble(why_them: str) -> str:
-        parts = [greeting, "", f"{role_line} {AVERROES_LP_POSITIONING}", ""]
+        # 1. Who I am and what we do.
+        # 2. Why THEM, when we know something true (dropped entirely otherwise:
+        #    Ishu's own draft has no such line and reads perfectly without one).
+        # 3. Why NOW: exits coming, more UK companies to buy, pool growing.
+        # 4. The ask: coffee in London or Riyadh, or fifteen minutes.
+        parts = [greeting, "", f"{role_line} {AVERROES_LP_WHO}", ""]
         if why_them:
             parts += [why_them, ""]
-        parts += [AVERROES_LP_MODEL, "", AVERROES_LP_INVITATION, "", "Best,"]
+        parts += [AVERROES_LP_WHY_NOW, "", AVERROES_LP_ASK, "", "Best,"]
         return "\n".join(parts)
 
-    generic_why = (f"Given {name}'s activity in private markets, I thought an introduction might be of interest."
-                   if name else "")
-    fallback = {"subject": subject, "body": _assemble(generic_why), "to": contact_email or "",
+    # No AI available: send the email WITHOUT a why-them line rather than with
+    # a generic one. v2's "Given your activity in private markets" was exactly
+    # the corporate filler these rules exist to remove.
+    fallback = {"subject": subject, "body": _assemble(""), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
-                "from": sender_label("investor"), "is_fallback": True}
+                "from": sender_label("investor"), "recipient_warning": recipient_warning,
+                "is_fallback": True}
     if not api_key:
         return fallback
 
-    prompt = f"""You write ONE sentence, at most two, for an email from Averroes Capital (a London-based
-technology investor, growth equity and majority positions in UK and Irish software companies,
-investing deal by deal with a pool of co-investors) to {contact_name or 'the principal'} at {name},
-a potential co-investor.
+    prompt = f"""You write ONE short sentence for a deliberately brief, personal email from Averroes Capital
+(a London technology investor backing UK and Irish software, investing deal by deal with a small
+group of co-investors, now expanding its investor base in the Gulf) to
+{contact_name or 'the principal'} at {name}, a potential co-investor.
 
-Write the WHY THEM sentence only: something specific and true from the intelligence below that
-explains why we are writing to them in particular. Prefer, in this order: a company we both know
-(they have backed a company in our universe); a stated co-investment or direct investing appetite;
-technology or growth exposure; their geographic mandate. It must read as one person writing to
-another, warm and plain, not flattery and not a sales line.
+Write the WHY THEM sentence only: one specific, true reason we are writing to THEM rather than to
+anyone else. Prefer, in this order: a company we both know (they have backed a company in our
+universe); a stated co-investment or direct investing appetite; technology exposure; their
+region or their presence in the Gulf.
+
+RULES
+- ONE sentence. Under 25 words. The whole email is four short paragraphs and this is one of them.
+- Plain and human, as one person writes to another. No flattery, no adjectives like impressive or
+  exciting, no sales language, nothing that sounds like a brochure.
+- British spelling. No em dashes or en dashes, use commas or full stops.
+- Do not mention Averroes, returns, performance, a call, a meeting or any document. The rest of
+  the email does that.
+- DO NOT INVENT ANYTHING. If the intelligence below gives you nothing specific and true, return an
+  empty string. An empty string is a good answer and the email reads perfectly well without it.
 
 INTELLIGENCE:
 {lp_context}
-
-RULES: British spelling. No em dashes or en dashes, use commas or full stops. Do not mention
-Averroes, returns, or a call (the rest of the email does that). Do not invent facts: if the
-intelligence gives you nothing specific, return an empty string.
 
 Return ONLY valid JSON: {{"why_them": "..."}}"""
 
@@ -508,11 +615,13 @@ Return ONLY valid JSON: {{"why_them": "..."}}"""
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         why = (json.loads(text).get("why_them") or "").strip() if text else ""
         why = why.replace("—", ",").replace("–", ",")
-        if len(why) > 400:
-            why = why[:400].rsplit(".", 1)[0] + "."
-        return {"subject": subject, "body": _assemble(why or generic_why), "to": contact_email or "",
+        # One sentence means one sentence. A model that ignores the word limit
+        # must not be allowed to turn a door opener back into a pitch.
+        if len(why) > 220:
+            why = why[:220].rsplit(".", 1)[0] + "."
+        return {"subject": subject, "body": _assemble(why), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
-                "from": sender_label("investor")}
+                "from": sender_label("investor"), "recipient_warning": recipient_warning}
     except Exception as e:
         logger.warning(f"LP draft failed for {name}: {e}")
         return fallback
@@ -520,15 +629,15 @@ Return ONLY valid JSON: {{"why_them": "..."}}"""
 
 def draft_lp_followup_email(investor: Dict) -> Dict[str, str]:
     """The 14-day LP follow-up: fixed template, same thread (Re: subject),
-    zero AI. One nudge, human, no new ask."""
+    zero AI. Two sentences. It offers nothing new and asks nothing new, because
+    a nudge that grows into a second pitch is worse than silence, and per rule 5
+    no material goes out before they have replied."""
     contact_name = investor.get("contact_name", "")
     first = contact_name.split()[0] if contact_name.strip() else ""
-    subj = investor.get("outreach_draft_subject") or f"Averroes Capital, {investor.get('name', '')}"
+    subj = investor.get("outreach_draft_subject") or "Averroes Capital, an introduction"
     body = (f"{'Hi ' + first + ',' if first else 'Hello,'}\n\n"
-            f"Following up on my note below in case it got buried. We are having a small number of "
-            f"conversations with investors about how Averroes works alongside its co-investors in UK "
-            f"and Irish software, and I would still value a short conversation if the timing suits.\n\n"
-            f"If it is easier, I am happy to send a short note on Averroes first.\n\n"
+            f"Floating this back up in case it got buried. Still happy to find a coffee or "
+            f"fifteen minutes whenever the timing suits you.\n\n"
             f"Best,")
     return {"to": investor.get("outreach_draft_to") or investor.get("contact_email") or "",
             "subject": subj if subj.lower().startswith("re:") else f"Re: {subj}",

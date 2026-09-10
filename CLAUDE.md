@@ -185,17 +185,41 @@ mistake is both visible and correctable. This one logged nothing, which is why
   and stays informational. Warm-path sources: PitchBook GCC export and network
   lists uploaded WITH a tag; public registers (DIFC/ADGM/CMA) are bot-protected
   and off limits (TBU #168).
-- LP email STRUCTURE v2 (Ishu, 9 Sep 2026) lives only in
-  `draft_lp_outreach_email`: an INVITATION to talk, human, no placeholders.
-  Fixed house copy (`AVERROES_LP_POSITIONING` / `_MODEL` / `_INVITATION`:
-  London tech investor, growth equity or majority positions in UK/IE software;
-  deal by deal with repeat co-investors, widening the circle; collaborative,
-  alongside management; Glowday and Journey; a short call or a short note
-  first) plus ONE AI-written "why them" sentence from the row (a shared
-  company, co-invest appetite, tech exposure, mandate; empty if nothing
-  specific). The "I" follows the sending mailbox: investor relations when the
-  investor mailbox is configured, a Partner while Bea's is the fallback. Zero
-  em or en dashes. `tests_investor_loop.py` enforces all of the above.
+- LP email STRUCTURE v3 (Ishu, 11 Sep 2026, replacing v2) lives ONLY in
+  `draft_lp_outreach_email`. v2 was a good letter and the wrong instrument: it
+  explained the firm in full before anyone had agreed to talk. THE EMAIL IS NOT
+  THE PITCH. Its only job is to open a door that a coffee or a call then walks
+  through. Six rules, all enforced by `tests_investor_loop.py`:
+    1. VERY SHORT and personal, around 90 words. A test fails it over 120.
+    2. `AVERROES_LP_WHY_NOW` is the reason for writing and the part every
+       earlier version lacked: exits lined up for next year, more UK companies
+       being acquired, the Gulf investor group widening. News earns a reply;
+       "we are expanding our investor base" is a fact about us and earns none.
+    3. NAME AND TITLE COME FROM THE MAILBOX (`_lp_role_line` reads
+       `sender_profile`), never a constant, so the email can never claim a
+       sender it is not. Bea/Partner today, Ellie/Director of Investor
+       Relations once TBU #166 is configured.
+    4. Addressed to a DECISION MAKER. `lp_recipient_warning` returns a warning
+       (never a block, a gatekeeper is sometimes the only way in) for a
+       gatekeeper title, an info@ style inbox, or no contact at all.
+    5. NO corporate profile, no attachment, and NO OFFER TO SEND ONE. Fuller
+       information follows a conversation. This is why v2's "I can send a short
+       note on Averroes first" was removed, and a test forbids its return.
+    6. The ask is a coffee in London or Riyadh, or a named fifteen minutes.
+  ONE AI-written "why them" sentence may sit after paragraph 1, and is DROPPED
+  ENTIRELY when nothing specific is known: v2 fell back to "Given your activity
+  in private markets", which is the filler these rules exist to delete.
+  The 14-day follow-up is two sentences, repeats the same ask and offers
+  nothing new. Zero em or en dashes. Copy changes happen in the
+  `AVERROES_LP_*` constants and nowhere else.
+- NOT YET IN THE TOOL, and the biggest gap in this loop: rule 6 of Ishu's
+  outreach doctrine is that email opens the door and a HUMAN TOUCHPOINT (call,
+  referral, meeting) walks through it. Nothing prompts or records that
+  touchpoint; a reply merely moves the investor to Responded.
+- The cheque band is UNRESOLVED and the email deliberately states no number.
+  `ai/lp_priority.py` ranks on GBP 250K-2M; Ishu has said GBP 200K-10M. Until
+  he confirms, do not put a figure in the copy: an email quoting one band while
+  the ranking uses another emails the wrong people a correct number.
 
 ## 3. Event truth
 
