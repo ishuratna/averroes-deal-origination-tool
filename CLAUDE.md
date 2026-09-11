@@ -263,6 +263,11 @@ mistake is both visible and correctable. This one logged nothing, which is why
   "Global": 7,565 rows have no location, and folding them into Global would
   make Global look like a finding. `REGION_BUCKETS` / `MANDATE_BUCKETS` fix
   the display order in both `investor_gate.py` and `types/index.ts`.
+- PLACE NAMES MATCH AS WHOLE WORDS, via `_mentions()` in `investor_gate.py`,
+  used by the gate, the filter rollups and `lp_priority`. Substring
+  containment put Romania in the Middle East ("r-oman-ia") and Ukraine in the
+  UK ("uk-raine") in all three (11 Sep 2026). Never test a place set with
+  `any(g in blob ...)` again.
 - WHICH EMAIL depends on HOW they qualified, and only ONE is written.
   `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
   coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`

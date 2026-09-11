@@ -186,6 +186,14 @@ for country, bucket in (("United Arab Emirates", "Middle East"), ("Saudi Arabia"
                         ("Switzerland", "Europe"), ("Germany", "Europe"),
                         ("United States", "Global"), ("Singapore", "Global"), ("Japan", "Global")):
     chk(f"{country} -> {bucket}", g.region_bucket({"hq_country": country}), bucket)
+# Substring containment put Romania in the Middle East ("r-oman-ia") and
+# Ukraine in the UK ("uk-raine"), in the gate, the ranking and the filter.
+for country in ("Romania", "Ukraine", "Slovakia", "Dominican Republic"):
+    chk(f"{country} is Global, not a false Gulf or UK match", g.region_bucket({"hq_country": country}), "Global")
+    chk(f"...and the gate agrees", g.check_geography({"hq_country": country})[1], "out of scope")
+chk("'Muscat, Oman' still matches as whole words", g.region_bucket({"hq_country": "Muscat, Oman"}), "Middle East")
+from ai.lp_priority import _region_score  # noqa: E402
+chk("the ranking uses the same word-bounded matcher", _region_score({"hq_country": "Romania"})[0], 0.3)
 chk("no location is Unknown, NOT Global: absence is not a finding",
     g.region_bucket({}), "Unknown")
 chk("the bucket list is fixed and ordered", g.REGION_BUCKETS,

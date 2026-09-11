@@ -97,6 +97,28 @@ MANDATE_BUCKETS = ("UK", "Ireland", "Europe", "Middle East", "Other")
 def _low(v) -> str:
     return (v or "").strip().lower() if isinstance(v, str) else ""
 
+
+_PLACE_RE_CACHE: Dict[frozenset, "re.Pattern"] = {}
+
+
+def _mentions(text: str, places) -> bool:
+    """Does `text` name any of `places`, as WHOLE WORDS?
+
+    Substring containment put Romania in the Middle East ("r-oman-ia") and
+    Ukraine in the UK ("uk-raine"), in the gate and in the filter alike
+    (11 Sep 2026). Every place name is matched on word boundaries, so "oman"
+    matches "Oman" and "Muscat, Oman" and never "Romania".
+    """
+    if not text:
+        return False
+    key = frozenset(places)
+    pat = _PLACE_RE_CACHE.get(key)
+    if pat is None:
+        alts = sorted((re.escape(p) for p in places), key=len, reverse=True)
+        pat = re.compile(r"(?<![a-z0-9])(?:" + "|".join(alts) + r")(?![a-z0-9])")
+        _PLACE_RE_CACHE[key] = pat
+    return pat.search(text) is not None
+
 # ── Cheque band (Ishu, 11 Sep 2026: GBP 200K to 10M, confirmed) ──────────────
 # Expressed in the USD millions PitchBook reports, at roughly 1.30.
 # lp_priority imports these, so the filter and the ranking can never drift.
@@ -170,11 +192,11 @@ def region_bucket(inv: Dict) -> str:
     base = _base_blob(inv)
     if not base.strip():
         return "Unknown"
-    if any(g in base for g in MIDDLE_EAST):
+    if _mentions(base, MIDDLE_EAST):
         return "Middle East"
-    if any(g in base for g in UK_IE):
+    if _mentions(base, UK_IE):
         return "UK & Ireland"
-    if any(g in base for g in EUROPE):
+    if _mentions(base, EUROPE):
         return "Europe"
     return "Global"
 
@@ -187,13 +209,13 @@ def mandate_buckets(inv: Dict) -> List[str]:
     if not text.strip():
         return []
     out = []
-    if any(g in text for g in UK_ONLY):
+    if _mentions(text, UK_ONLY):
         out.append("UK")
-    if any(g in text for g in IRELAND):
+    if _mentions(text, IRELAND):
         out.append("Ireland")
-    if any(g in text for g in EUROPE):
+    if _mentions(text, EUROPE):
         out.append("Europe")
-    if any(g in text for g in MIDDLE_EAST):
+    if _mentions(text, MIDDLE_EAST):
         out.append("Middle East")
     # Anything named that is not one of ours (US, Asia, Africa, "global").
     if any(w in text for w in ("united states", "usa", "north america", "asia", "africa",
@@ -238,17 +260,17 @@ def check_geography(inv: Dict) -> Tuple[bool, str, str, str]:
     """
     base, mandate = _base_blob(inv), _mandate_blob(inv)
 
-    if any(g in base for g in GCC):
+    if _mentions(base, GCC):
         return True, "GCC", "gcc", ""
-    if any(g in base for g in UK_IE):
+    if _mentions(base, UK_IE):
         return True, "UK/IE", "uk_eu", ""
-    if any(g in base for g in EUROPE):
+    if _mentions(base, EUROPE):
         return True, "Europe", "uk_eu", ""
 
     # Not based in reach. Does their MANDATE bring them in?
-    if any(g in mandate for g in UK_IE):
+    if _mentions(mandate, UK_IE):
         return True, "mandate: UK/IE", "mandate_only", ""
-    if any(g in mandate for g in EUROPE):
+    if _mentions(mandate, EUROPE):
         return True, "mandate: Europe", "mandate_only", ""
     # A Gulf MANDATE is not a qualification: we raise there, we do not invest
     # there, so an investor who only looks at Gulf assets is not our audience.

@@ -36,7 +36,7 @@ from typing import Dict, List, Optional
 # which runs FIRST in the pipeline, and are imported here so the filter and the
 # ranking can never disagree about what the GCC is or what cheque we write.
 from ai.investor_gate import (  # noqa: F401
-    EUROPE, GCC, TICKET_MAX_USD_M, TICKET_MIN_USD_M, UK_IE, _low,
+    EUROPE, GCC, TICKET_MAX_USD_M, TICKET_MIN_USD_M, UK_IE, _low, _mentions,
 )
 
 DIRECT_CHEQUE_TYPES = {"family office", "hnwi", "uhnwi", "angel", "single family office", "multi-family office"}
@@ -58,11 +58,11 @@ def parse_tags(s) -> List[str]:
 
 def _region_score(inv: Dict) -> (float, str):
     blob = " ".join(_low(inv.get(k)) for k in ("hq_country", "hq_city", "region", "global_region", "geo_preferences"))
-    if any(g in blob for g in GCC):
+    if _mentions(blob, GCC):
         return 1.0, "GCC home geography"
-    if any(g in blob for g in UK_IE):
+    if _mentions(blob, UK_IE):
         return 1.0, "UK/IE home geography"
-    if any(g in blob for g in EUROPE):
+    if _mentions(blob, EUROPE):
         return 0.7, "European"
     if not blob.strip():
         return 0.5, "geography unknown"
