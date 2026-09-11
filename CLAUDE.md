@@ -329,16 +329,44 @@ mistake is both visible and correctable. This one logged nothing, which is why
   the prompt forbids returning an assistant, an analyst or a general inbox when
   a decision maker can be found.
 - PRIORITY (`ai/lp_priority.py`, pure, zero AI) is the ONE ranking of
-  investors for the raise: deal-by-deal co-investment at GBP 250K-2M per LP
-  (Ishu, 9 Sep 2026). Weighted fit (co-invest appetite, ticket, software
-  affinity, home geography UK/IE + GCC, recency, readiness) plus a capped
-  warm-path boost from `network_tags` and portfolio overlap; tier A needs a
-  contactable principal. Stored as `priority_score/tier/details`, recomputed
-  by `investor_handler.write_priorities` after InvestorFill, uploads and tag
+  investors for the raise: deal-by-deal co-investment at GBP 200K-10M per LP
+  (Ishu, 9 Sep 2026, band confirmed 11 Sep). Weighted fit (co-invest appetite
+  0.25, ticket 0.20, SIZE 0.15, home geography UK/IE + GCC 0.15, software
+  affinity 0.10, recency 0.075, readiness 0.075) plus a capped warm-path boost
+  from `network_tags` and portfolio overlap; tier A needs a contactable
+  principal. Stored as `priority_score/tier/details`, recomputed by
+  `investor_handler.write_priorities` after InvestorFill, uploads and tag
   edits (never edited by hand). `lp_fit_score` is the older fund-raise fit
   and stays informational. Warm-path sources: PitchBook GCC export and network
   lists uploaded WITH a tag; public registers (DIFC/ADGM/CMA) are bot-protected
   and off limits (TBU #168).
+- SIZE IS TWO FACTS, AND THE RANKING MUST OBEY THE FILTER (Ishu, 11 Sep 2026:
+  "the scoring is not following the filters", Mubadala at 98 "does not make
+  sense"). How it got there: GCC geography 1.0, a fresh PitchBook date, a named
+  contact and a GCC tag, while a USD 250bn book entered the score only as a
+  soft 0.4 FALLBACK used when no ticket was stated. A weight can never hold a
+  sovereign down against four perfect dimensions, so three rules now apply:
+    1. THE TICKET is the primary size signal, scored by the SHARE OF THEIR
+       RANGE inside ours (floor 0.4 for any overlap). "5M to 500M" overlapped
+       our band and scored 1.0; it is 0.41 now, because the top of a range is
+       where the attention is.
+    2. HOW BIG THEY ARE is its own dimension (`_size_score`, via the gate's
+       `size_of`), never a fallback, and SMALLER IS BETTER: "if the cheque
+       range is the same between two investors, the smaller investor is more
+       interesting." 1.0 at USD 50M, 0.6 at the USD 1bn ceiling, 0 at 50bn.
+    3. THE HARD LAYER: `check_size` from the gate, the one definition of "too
+       big", caps the score at `SIZE_FAIL_CAP = 25` and forces tier C. A row
+       the gate could not park (protected stage, missing apply, stale score)
+       still cannot reach the top of the list. `details.size_gate` records
+       `capped_from` so the card shows what the weights alone would have said.
+  The gate changed with it: a stated ticket WAIVES THE FLOOR (a USD 5M angel
+  writing 250K cheques is real) but NEVER THE CEILING. Earlier doctrine said "a
+  stated ticket beats any assets proxy"; that let a sovereign through on a
+  published 5M minimum, and Ishu's instruction is that it never will be
+  interested whatever it publishes. Changing weights requires recomputing every
+  stored score (`POST /admin/investors/recompute-priority`); scores are
+  derived, never edited. `GET /admin/investors/gate-audit?name=` diagnoses one
+  row: stored fields, gate verdict and a fresh score side by side.
 - LP email STRUCTURE v3 (Ishu, 11 Sep 2026, replacing v2) lives ONLY in
   `draft_lp_outreach_email`. v2 was a good letter and the wrong instrument: it
   explained the firm in full before anyone had agreed to talk. THE EMAIL IS NOT

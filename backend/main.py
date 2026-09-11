@@ -7265,7 +7265,8 @@ async def recompute_investor_priority(name: Optional[str] = Query(None)):
 
 @app.get("/investors/gate-audit")            # UI (session)
 @app.get("/admin/investors/gate-audit")      # ops (token), sign-in exempt
-async def investors_gate_audit(request: Request, apply: int = Query(0, description="1 = park the refused; default is a dry run")):
+async def investors_gate_audit(request: Request, apply: int = Query(0, description="1 = park the refused; default is a dry run"),
+                               name: Optional[str] = Query(None, description="diagnose one investor by (partial) name; no writes")):
     """What the investor gate would do to the whole universe. ZERO AI.
 
     A filter that can park thousands of rows must be previewable before it is
@@ -7278,6 +7279,24 @@ async def investors_gate_audit(request: Request, apply: int = Query(0, descripti
     from ai.investor_gate import qualify_investor
 
     rows = investor_handler.get_all()
+
+    if name:
+        # Diagnosis for one investor: what the gate and the ranking make of the
+        # row AS STORED (so a stale priority_score can be compared against a
+        # fresh one). Zero AI, no writes. Added when Mubadala sat at 98
+        # (11 Sep 2026) and nobody could see which fields carried it there.
+        from ai.lp_priority import lp_priority
+        needle = name.strip().lower()
+        hits = [r for r in rows if needle in (r.get("name") or "").lower()][:10]
+        keep = ("name", "status", "investor_type", "hq_country", "hq_city", "region", "global_region",
+                "geo_preferences", "aum_m", "net_assets_m", "ticket_min_m", "ticket_max_m",
+                "strategy_preferences", "network_tags", "source", "source_companies", "contact_name",
+                "contact_email", "pb_last_updated", "last_commitment_date", "priority_score", "priority_tier",
+                "gate_region", "gate_unfit_reason", "park_reason")
+        return {"lookup": name, "matches": [
+            {"row": {k: r.get(k) for k in keep}, "gate": qualify_investor(r),
+             "priority_now": lp_priority(r)} for r in hits]}
+
     refused, by_reason, by_region, by_email_strategy = [], {}, {}, {}
     checked = skipped_bare = 0
     for inv in rows:

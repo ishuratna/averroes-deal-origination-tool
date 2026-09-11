@@ -33,11 +33,20 @@ export function PriorityBreakdown({ inv }: { inv: Investor }) {
   let d: any = null;
   try { d = inv.priority_details ? JSON.parse(inv.priority_details) : null; } catch { d = null; }
   if (!d) return <p className="cp-empty">Not prioritised yet. Run InvestorFill, add a tag, or press Recompute.</p>;
-  const rows = ['coinvest', 'ticket', 'affinity', 'geography', 'recency', 'readiness'];
-  const labels: Record<string, string> = { coinvest: 'Co-invest appetite', ticket: 'Ticket fit (£250K–2M)', affinity: 'Software affinity',
-    geography: 'Home geography', recency: 'Recency', readiness: 'Readiness (contact)' };
+  const rows = ['coinvest', 'ticket', 'size', 'geography', 'affinity', 'recency', 'readiness'];
+  const labels: Record<string, string> = { coinvest: 'Co-invest appetite', ticket: 'Ticket fit (£200K–10M)', size: 'Size (smaller is better)',
+    affinity: 'Software affinity', geography: 'Home geography', recency: 'Recency', readiness: 'Readiness (contact)' };
+  const sg = d.size_gate;
   return (
     <div className="pri-break">
+      {sg && sg.pass === false && (
+        <div className="pri-row boost" style={{ color: 'var(--danger, #b42318)' }}>
+          <span className="k">Size layer</span>
+          <span className="bar" />
+          <span className="v">cap 25</span>
+          <span className="why">Too big for our cheque, so tier C whatever else is true{sg.capped_from != null ? ` (would otherwise score ${Math.round(sg.capped_from)})` : ''}. {sg.why}</span>
+        </div>
+      )}
       {rows.map(k => d[k] && (
         <div className="pri-row" key={k}>
           <span className="k">{labels[k]}<small> ×{d[k].weight}</small></span>

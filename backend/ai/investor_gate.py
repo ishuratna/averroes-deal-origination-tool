@@ -285,13 +285,41 @@ def check_geography(inv: Dict) -> Tuple[bool, str, str, str]:
         f"UK, Irish or European mandate. Nothing to talk to them about.")
 
 
+def size_of(inv: Dict) -> Optional[Tuple[float, str]]:
+    """(USD millions, which column) for how big the investor is, or None.
+
+    AUM first, then net assets from the register. ONE reading of size, shared
+    by the gate (the ceiling) and `lp_priority` (smaller is better), so the two
+    can never measure a different number.
+    """
+    for col, label in (("aum_m", "AUM"), ("net_assets_m", "net assets")):
+        v = _num(inv.get(col))
+        if v is not None and v > 0:
+            return v, label
+    return None
+
+
 def check_size(inv: Dict) -> Tuple[bool, str, str]:
     """Big enough to write our cheque, small enough for it to matter.
 
     Returns (passes, basis, reason). `basis` names what the judgement was made
     on, so the card can show why rather than just a verdict.
     """
-    # A STATED ticket range is the strongest evidence: it is their own number.
+    # THE CEILING APPLIES FIRST AND ALWAYS (Ishu, 11 Sep 2026: "I do not think
+    # Mubadala will ever be interested", whatever ticket range it publishes).
+    # Size is TWO facts, the cheques they write AND how big they are, and a
+    # quarter-trillion book does not become a co-investor by stating a 5M
+    # minimum: our whole deal is a rounding error on their allocation sheet.
+    # So a stated ticket may WAIVE THE FLOOR (a USD 5M angel who writes 250K
+    # cheques is real), never the ceiling.
+    size = size_of(inv)
+    if size is not None:
+        v, label = size
+        if v > AUM_CEILING_USD_M:
+            return False, label, (f"{label} ${v:,.0f}M. A GBP 10M cheque is under 1 per cent of their "
+                                  f"book, so we would never be worth their diligence time.")
+
+    # A STATED ticket range is then the strongest evidence: it is their own number.
     lo, hi = _num(inv.get("ticket_min_m")), _num(inv.get("ticket_max_m"))
     if lo is not None or hi is not None:
         lo = lo if lo is not None else 0.0
@@ -304,14 +332,9 @@ def check_size(inv: Dict) -> Tuple[bool, str, str]:
                                             f"We cannot offer them a position that size.")
         return True, "stated ticket", ""
 
-    # Otherwise assets, then net assets from the register, as a proxy.
-    for col, label in (("aum_m", "AUM"), ("net_assets_m", "net assets")):
-        v = _num(inv.get(col))
-        if v is None:
-            continue
-        if v > AUM_CEILING_USD_M:
-            return False, label, (f"{label} ${v:,.0f}M. A GBP 10M cheque is under 1 per cent of their "
-                                  f"book, so we would never be worth their diligence time.")
+    # Otherwise assets as a proxy for the floor.
+    if size is not None:
+        v, label = size
         if v < AUM_FLOOR_USD_M:
             return False, label, (f"{label} ${v:,.0f}M is too small to commit GBP 200K to one "
                                   f"illiquid position.")

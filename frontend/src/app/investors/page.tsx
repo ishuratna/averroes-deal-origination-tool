@@ -387,7 +387,7 @@ function InvestorsInner() {
               <thead>
                 <tr>
                   <th><InfoTip label="Investor" tip={INVESTOR_DEFS.name} /></th>
-                  <th><InfoTip label="Priority" tip="Co-investment priority for the raise (deal by deal, GBP 250K-2M per LP): co-invest appetite, ticket fit, software affinity, home geography (UK/IE, GCC, Europe), recency, plus a warm-path boost from network tags and portfolio overlap. A = fits and contactable; B = fits, not yet contactable or partial; C = weak. Open the card for the breakdown." /></th>
+                  <th><InfoTip label="Priority" tip="Co-investment priority for the raise (deal by deal, GBP 200K-10M per LP): co-invest appetite, ticket fit (share of their range inside ours), size (smaller is better), home geography (UK/IE, GCC, Europe), software affinity, recency, plus a warm-path boost from network tags and portfolio overlap. Anything over the USD 1bn size ceiling is capped at 25 and tier C. A = fits and contactable; B = fits, not yet contactable or partial; C = weak or too big. Open the card for the breakdown." /></th>
                   <th><InfoTip label="Fit" tip={INVESTOR_DEFS.fit} /></th>
                   <th><InfoTip label="Type" tip={INVESTOR_DEFS.type} /></th>
                   <th><InfoTip label="AUM" tip={INVESTOR_DEFS.aum} /></th>

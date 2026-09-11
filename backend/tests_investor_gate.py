@@ -120,9 +120,14 @@ chk("a 25M MINIMUM is refused: we cannot offer a position that size",
     q(name="A", investor_type="Family Office", hq_country="UK", ticket_min_m=25)["qualified"], False)
 chk("a 0.05M MAXIMUM is refused: too small to be worth a vehicle",
     q(name="A", investor_type="Angel", hq_country="UK", ticket_max_m=0.05)["qualified"], False)
-chk("a stated ticket is used even when AUM would have failed",
-    q(name="A", investor_type="Family Office", hq_country="UK", aum_m=9000,
-      ticket_min_m=1, ticket_max_m=5)["size_basis"], "stated ticket")
+chk("a stated ticket WAIVES THE FLOOR: a small book that writes our cheque is real",
+    q(name="A", investor_type="Angel", hq_country="UK", aum_m=5,
+      ticket_min_m=0.3, ticket_max_m=1)["qualified"])
+r = q(name="Sovereign", investor_type="Family Office", hq_country="UAE", aum_m=250000,
+      ticket_min_m=5, ticket_max_m=500)
+chk("...but NEVER THE CEILING: a quarter-trillion book stating a 5M minimum is still refused (Ishu, 11 Sep 2026)",
+    r["qualified"], False)
+chk("...on size, judged by AUM", r["size_basis"], "AUM")
 
 print()
 print("-- unknown is never a failure: most family offices publish nothing --")
