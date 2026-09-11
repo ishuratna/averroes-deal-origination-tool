@@ -228,6 +228,39 @@ mistake is both visible and correctable. This one logged nothing, which is why
   imported by `lp_priority`. The geography sets live there too, for the same
   reason: when the filter and the ranking disagreed about the band, we would
   have emailed the wrong people a correct number.
+- INVESTORFILL (`ai/investor_fill.py`) exists ONLY to find the facts the gate
+  and `lp_priority` need, plus the decision maker. It scores nothing that
+  matters: the four 0-1 scores feed the older informational `lp_fit_score`.
+  Three defects, all found by reading the module against its CONSUMERS rather
+  than on its own (11 Sep 2026), and none of which threw an error:
+    * UNITS. It asked for GBP millions while the gate compares USD thresholds.
+      A GBP 900M office read as 900 against a 1000 ceiling and PASSED (USD
+      1.17bn, should fail); a stated GBP 250K ticket read as 0.25 against a
+      0.26 floor and was REFUSED. Every money field is now USD, the JSON keys
+      SAY so (`aum_usd_m`, `ticket_min_usd_m`), the prompt carries worked
+      conversions, and `aum_converted_from` records what was converted so a
+      wrong conversion is auditable. A unit mismatch does not fail loudly, it
+      quietly qualifies the wrong people.
+    * MISSING FIELDS. `lp_priority` puts its HEAVIEST weight (0.30, co-invest
+      appetite) on `strategy_preferences` / `other_preferences` /
+      `policy_description`, and the research returned NONE of them, so every
+      researched investor scored the 0.3 default on the dimension that decides
+      the tier. Also absent: `num_pe_commitments`, `num_vc_commitments`,
+      `last_commitment_date` (recency). All returned now.
+    * `geo_preferences`, WITHOUT WHICH THE MANDATE ROUTE IS DEAD. The gate
+      qualifies an investor whose mandate covers the UK/IE or Europe wherever
+      they sit, but research never returned the field, so only a PitchBook row
+      that happened to carry it could ever qualify that way.
+  `tests_investor_fill.py` derives the required set FROM `lp_priority`'s source
+  and fails if the research stops returning any of it, so this cannot silently
+  regress when the ranking changes.
+  IDENTITY (doctrine 4a, previously missing on the investor side): the research
+  echoes `name_as_found` and `_identity_ok` requires ONE shared distinctive
+  word, generic furniture ("Capital", "Family Office", "Partners") excluded. A
+  mismatch returns an error and writes NOTHING. Deliberately lighter than the
+  company guard because investor names are short and formulaic.
+  WRITES ARE FILL-ONLY for the PitchBook text fields: an AI paraphrase must
+  never replace the investor's own published wording.
 - WHO TO WRITE TO is structural, not a guess (`TARGET_LADDERS`, `target_brief`).
   A single family office is decided by its CIO or head of investments, a multi
   family office by its head of private markets, a wealthy individual by

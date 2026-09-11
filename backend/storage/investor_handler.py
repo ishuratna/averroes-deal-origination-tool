@@ -79,6 +79,12 @@ class InvestorBQHandler:
         # show the reason without re-running anything.
         ("gate_region", "STRING"),
         ("gate_unfit_reason", "STRING"),
+        # Most recent known investment, for lp_priority's recency dimension.
+        ("last_commitment_date", "STRING"),
+        # Doctrine 4a on the investor side: did the research come back about the
+        # investor we ASKED for? confirmed | unverified | mismatch.
+        ("identity_status", "STRING"),
+        ("identity_note", "STRING"),
         ("contact_phone", "STRING"),
         ("hq_email", "STRING"),
         ("global_region", "STRING"),         # HQ Global Region (e.g. Europe, Middle East)
@@ -689,6 +695,19 @@ class InvestorBQHandler:
             linkedin_url = @linkedin_url,
             gate_region = CASE WHEN @gate_region != '' THEN @gate_region ELSE gate_region END,
             gate_unfit_reason = @gate_unfit_reason,
+            identity_status = CASE WHEN @identity_status != '' THEN @identity_status ELSE identity_status END,
+            identity_note = CASE WHEN @identity_note != '' THEN @identity_note ELSE identity_note END,
+            -- lp_priority puts its HEAVIEST weight (0.30, co-invest appetite) on
+            -- these three, and the GATE's mandate route reads geo_preferences.
+            -- FILL-ONLY: PitchBook's own wording is authoritative where it
+            -- exists, and an AI paraphrase must never replace it.
+            strategy_preferences = IFNULL(NULLIF(strategy_preferences, ''), @strategy_preferences),
+            other_preferences = IFNULL(NULLIF(other_preferences, ''), @other_preferences),
+            policy_description = IFNULL(NULLIF(policy_description, ''), @policy_description),
+            geo_preferences = IFNULL(NULLIF(geo_preferences, ''), @geo_preferences),
+            num_pe_commitments = IFNULL(num_pe_commitments, @num_pe_commitments),
+            num_vc_commitments = IFNULL(num_vc_commitments, @num_vc_commitments),
+            last_commitment_date = IFNULL(NULLIF(last_commitment_date, ''), @last_commitment_date),
             lp_fit_score = @lp_fit_score,
             score_geography = @score_geography,
             score_pe_appetite = @score_pe_appetite,
@@ -707,6 +726,15 @@ class InvestorBQHandler:
             bigquery.ScalarQueryParameter("contact_confidence", "STRING", fields.get("contact_confidence") or ""),
             bigquery.ScalarQueryParameter("gate_region", "STRING", fields.get("gate_region") or ""),
             bigquery.ScalarQueryParameter("gate_unfit_reason", "STRING", fields.get("gate_unfit_reason") or ""),
+            bigquery.ScalarQueryParameter("identity_status", "STRING", fields.get("identity_status") or ""),
+            bigquery.ScalarQueryParameter("identity_note", "STRING", fields.get("identity_note") or ""),
+            bigquery.ScalarQueryParameter("strategy_preferences", "STRING", fields.get("strategy_preferences") or ""),
+            bigquery.ScalarQueryParameter("other_preferences", "STRING", fields.get("other_preferences") or ""),
+            bigquery.ScalarQueryParameter("policy_description", "STRING", fields.get("policy_description") or ""),
+            bigquery.ScalarQueryParameter("geo_preferences", "STRING", fields.get("geo_preferences") or ""),
+            bigquery.ScalarQueryParameter("num_pe_commitments", "INT64", fields.get("num_pe_commitments")),
+            bigquery.ScalarQueryParameter("num_vc_commitments", "INT64", fields.get("num_vc_commitments")),
+            bigquery.ScalarQueryParameter("last_commitment_date", "STRING", fields.get("last_commitment_date") or ""),
             bigquery.ScalarQueryParameter("aum_m", "FLOAT64", fields.get("aum_m")),
             bigquery.ScalarQueryParameter("ticket_min_m", "FLOAT64", fields.get("ticket_min_m")),
             bigquery.ScalarQueryParameter("ticket_max_m", "FLOAT64", fields.get("ticket_max_m")),
