@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
-import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, REGION_BUCKETS, MANDATE_BUCKETS, parseTags, isGcc } from "../../types";
+import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, REGION_BUCKETS, MANDATE_BUCKETS, parseTags, cityLabel } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
@@ -46,8 +46,11 @@ function InvestorsInner() {
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [mandateFilter, setMandateFilter] = useState<string[]>([]);   // where they INVEST
   const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [cityFilter, setCityFilter] = useState<string[]>([]);     // "City, Country", only where a city is on record
   const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const [gccOnly, setGccOnly] = useState(false);
+  // Bulk InvestorFill scope (GCC first, UK/EU later: Ishu, 11 Sep 2026). Lives
+  // in the bulk modal, not on the filter bar: it scopes a RUN, not the table.
+  const [bulkGcc, setBulkGcc] = useState(true);
   const [uploadTags, setUploadTags] = useState('');   // stamped on every row of the next upload (e.g. GCC)
   const [mining, setMining] = useState(false);
   const [filling, setFilling] = useState<string | null>(null);
@@ -191,11 +194,11 @@ function InvestorsInner() {
   };
 
   // ── Bulk InvestorFill ──
-  const openBulkFill = async () => {
+  const openBulkFill = async (gcc: boolean = bulkGcc) => {
     setBulkLoading(true);
     try {
-      // The GCC chip scopes the run: on = Gulf-based or GCC-tagged only.
-      const data = await dealApi.getInvestorFillEligible({ gcc: gccOnly });
+      // The Gulf toggle in the modal scopes the run: on = Gulf-based or GCC-tagged only.
+      const data = await dealApi.getInvestorFillEligible({ gcc });
       setBulkEligibility(data);
     } catch (e) { alert('Failed to load eligibility — is the backend deployed?'); }
     finally { setBulkLoading(false); }
@@ -260,6 +263,11 @@ function InvestorsInner() {
   const regions = REGION_BUCKETS.filter(b => investors.some(i => regionOf(i) === b)) as unknown as string[];
   const mandates = MANDATE_BUCKETS.filter(b => investors.some(i => (i.mandate_buckets || []).includes(b))) as unknown as string[];
   const allTags = Array.from(new Set(investors.flatMap(i => parseTags(i.network_tags)))).sort();
+  // Cities as "City, Country", narrowed to the chosen regions so the list is
+  // short enough to read; the MultiSelect adds a search box past 8 options.
+  const cities = useMemo(() => Array.from(new Set(
+    investors.filter(i => regionFilter.length === 0 || regionFilter.includes(regionOf(i)))
+      .map(cityLabel).filter(Boolean))).sort(), [investors, regionFilter]);
 
   const filtered = investors.filter(i => {
     const q = searchQuery.toLowerCase();
@@ -270,8 +278,8 @@ function InvestorsInner() {
     const matchesMandate = mandateFilter.length === 0 || (i.mandate_buckets || []).some(b => mandateFilter.includes(b));
     const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
     const matchesTag = tagFilter.length === 0 || parseTags(i.network_tags).some(t => tagFilter.includes(t));
-    const matchesGcc = !gccOnly || isGcc(i);
-    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesMandate && matchesTier && matchesTag && matchesGcc;
+    const matchesCity = cityFilter.length === 0 || cityFilter.includes(cityLabel(i));
+    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesMandate && matchesTier && matchesTag && matchesCity;
   });
   // Computed AFTER filtered (a use-before-declaration here crashed the page at runtime, 8 Sep 2026)
   const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
@@ -289,7 +297,7 @@ function InvestorsInner() {
   const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = ordered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, mandateFilter, tierFilter, tagFilter, gccOnly]);
+  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, mandateFilter, tierFilter, tagFilter, cityFilter]);
   const pager = ordered.length > PAGE_SIZE ? (
     <div className="pager">
       <button disabled={safePage === 0} onClick={() => setPage(0)}>«</button>
@@ -349,7 +357,7 @@ function InvestorsInner() {
             <button className="export-btn" onClick={exportCsv} disabled={filtered.length === 0}>
               ⬇ Export ({filtered.length})
             </button>
-            <button className="bulkfill-btn" onClick={openBulkFill} disabled={bulkLoading || bulkRunning}>
+            <button className="bulkfill-btn" onClick={() => openBulkFill()} disabled={bulkLoading || bulkRunning}>
               {bulkLoading ? 'Checking…' : bulkRunning ? 'Running…' : '⚡ Bulk InvestorFill'}
             </button>
           </div>
@@ -370,12 +378,10 @@ function InvestorsInner() {
           <MultiSelect label="All stages" options={[...INVESTOR_STAGES]} selected={stageFilter} onChange={setStageFilter} />
           <MultiSelect label="All types" options={types} selected={typeFilter} onChange={setTypeFilter} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
+          <MultiSelect label="All cities" options={cities} selected={cityFilter} onChange={setCityFilter} />
           <MultiSelect label="All mandates" options={mandates} selected={mandateFilter} onChange={setMandateFilter} />
           <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
           <MultiSelect label="All tags" options={allTags} selected={tagFilter} onChange={setTagFilter} />
-          <button className={`quick-chip ${gccOnly ? 'on' : ''}`}
-                  title="KSA + GCC base: HQ in Saudi Arabia, UAE, Qatar, Kuwait, Bahrain or Oman, or tagged GCC"
-                  onClick={() => setGccOnly(v => !v)}>GCC {gccOnly ? `(${filtered.length})` : ''}</button>
           <span className="tier-summary">{tierCounts.map(([t, n]) => `${t} ${n}`).join(' · ')}</span>
         </section>
 
@@ -428,7 +434,7 @@ function InvestorsInner() {
                       <td>{inv.investor_type && inv.investor_type !== 'Unknown' ? <span className="type-badge">{inv.investor_type}</span> : '—'}</td>
                       <td className="num-cell">{inv.aum_m ? `$${inv.aum_m >= 1000 ? (inv.aum_m / 1000).toFixed(1) + 'B' : inv.aum_m.toFixed(0) + 'M'}` : '—'}</td>
                       <td className="num-cell">{fmtTicket(inv)}</td>
-                      <td>{[inv.hq_city, inv.hq_country].filter(Boolean).join(', ') || inv.region || '—'}</td>
+                      <td>{cityLabel(inv) || inv.hq_country || inv.region || '—'}</td>
                       <td className="strat-cell" title={inv.strategy_preferences || ''}>
                         {inv.strategy_preferences
                           ? <span className={inv.strategy_preferences === 'None relevant' ? 'strat-none' : 'strat-ok'}>{inv.strategy_preferences}</span>
@@ -751,9 +757,14 @@ function InvestorsInner() {
             {!bulkRunning && !bulkProgress && (
               <>
                 <div className="fill-scores" style={{ marginTop: '0.6rem' }}>
+                  <label className="fill-score-row" style={{ cursor: 'pointer' }} title="On: only investors based in the Gulf or on a GCC-tagged list, the ones the current email is written for. Off: the whole universe.">
+                    <span>Gulf only (GCC-based or GCC-tagged)</span>
+                    <input type="checkbox" checked={bulkGcc} disabled={bulkLoading}
+                           onChange={e => { setBulkGcc(e.target.checked); openBulkFill(e.target.checked); }} />
+                  </label>
                   <div className="fill-score-row"><span>Total investors</span><b>{bulkEligibility.total_investors}</b></div>
                   {bulkEligibility.region === 'gcc' && (
-                    <div className="fill-score-row"><span>Excluded — outside the GCC (chip is on)</span><b>−{bulkEligibility.excluded_outside_region}</b></div>
+                    <div className="fill-score-row"><span>Excluded — outside the GCC</span><b>−{bulkEligibility.excluded_outside_region}</b></div>
                   )}
                   {bulkEligibility.skipped_parked > 0 && (
                     <div className="fill-score-row"><span>Skipped — parked by the gate</span><b>−{bulkEligibility.skipped_parked}</b></div>

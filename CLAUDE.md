@@ -248,11 +248,20 @@ mistake is both visible and correctable. This one logged nothing, which is why
   `/investorfill/eligible` now applies, in order: skip parked, the PitchBook
   negatives, the GATE on stored facts (refusable now = never worth a call),
   then triage, and returns `queue_head` with the reasoning for the first 25.
-  `?region=gcc` (the Investor Universe GCC chip, passed through by the bulk
-  runner) restricts the queue to Gulf-based (gate `email_strategy == "gcc"`)
-  or GCC-tagged investors: GCC FIRST, UK/EU later (Ishu, 11 Sep 2026), because
-  the Gulf email is the only one written. Same definition as `isGcc` in the
-  UI, so the chip and the queue agree about who counts.
+  `?region=gcc` (the "Gulf only" toggle INSIDE the Bulk InvestorFill modal,
+  default on) restricts the queue to Gulf-based (gate `email_strategy ==
+  "gcc"`) or GCC-tagged investors: GCC FIRST, UK/EU later (Ishu, 11 Sep 2026),
+  because the Gulf email is the only one written. It used to be a red GCC chip
+  on the filter bar; Ishu had it removed the same day, and rightly: it scoped a
+  RUN, not the table, and sat among filters that scope the table. A control
+  lives where its effect is.
+- CITY FILTER (Ishu, 11 Sep 2026) on both investor pages, options formatted
+  "City, Country" by `cityLabel()` in `types/index.ts`, the same helper the
+  Location column uses, so the filter and the column can never disagree.
+  Only investors with a city ON RECORD appear in the list (no city, no
+  option), and the list is narrowed to the selected Regions so it stays
+  readable. Region is where they roughly are; City is where to have the
+  coffee.
 - FILTER ROLLUPS are computed ONCE, server-side, from the gate's geography
   sets and served on every `/investors` row as `region_bucket` (Middle East |
   UK & Ireland | Europe | Global | Unknown) and `mandate_buckets` (any of UK,

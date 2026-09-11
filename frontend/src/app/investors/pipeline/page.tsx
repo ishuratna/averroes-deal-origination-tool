@@ -22,7 +22,7 @@ import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
 import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
-import { PRIORITY_TIERS, REGION_BUCKETS, isGcc } from '../../../types';
+import { PRIORITY_TIERS, REGION_BUCKETS, cityLabel } from '../../../types';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
@@ -49,7 +49,7 @@ function InvestorPipelineInner() {
   const [profileName, setProfileName] = useState<string | null>(null);
   const profileInv = profileName ? investors.find(x => x.name === profileName) || null : null;
   const [tierFilter, setTierFilter] = useState<string[]>([]);
-  const [gccOnly, setGccOnly] = useState(false);
+  const [cityFilter, setCityFilter] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,6 +65,9 @@ function InvestorPipelineInner() {
   const regions = useMemo(
     () => REGION_BUCKETS.filter(b => investors.some(i => regionOf(i) === b)) as unknown as string[],
     [investors]);
+  const cities = useMemo(() => Array.from(new Set(
+    investors.filter(i => regionFilter.length === 0 || regionFilter.includes(regionOf(i)))
+      .map(cityLabel).filter(Boolean))).sort(), [investors, regionFilter]);
 
   const visible = investors.filter(i => {
     const q = search.toLowerCase();
@@ -72,8 +75,8 @@ function InvestorPipelineInner() {
       || (i.contact_name || '').toLowerCase().includes(q);
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
-    const matchesGcc = !gccOnly || isGcc(i);
-    return matchesSearch && matchesRegion && matchesTier && matchesGcc;
+    const matchesCity = cityFilter.length === 0 || cityFilter.includes(cityLabel(i));
+    return matchesSearch && matchesRegion && matchesTier && matchesCity;
   });
 
   const identifiedCount = visible.filter(i => (i.status || 'Identified') === 'Identified').length;
@@ -143,8 +146,8 @@ function InvestorPipelineInner() {
         <div className="ikb-toolbar">
           <input className="ikb-search" placeholder="Search investors, contacts..." value={search} onChange={e => setSearch(e.target.value)} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
+          <MultiSelect label="All cities" options={cities} selected={cityFilter} onChange={setCityFilter} />
           <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
-          <button className={`ikb-parked-toggle ${gccOnly ? 'on' : ''}`} title="KSA + GCC network only" onClick={() => setGccOnly(v => !v)}>GCC</button>
           <button className="ikb-parked-toggle" onClick={() => setShowParked(v => !v)}>
             {showParked ? 'Hide' : 'Show'} parked ({parked.length})
           </button>

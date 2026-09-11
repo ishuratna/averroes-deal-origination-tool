@@ -596,6 +596,16 @@ const GCC_COUNTRIES = ['saudi arabia', 'united arab emirates', 'uae', 'qatar', '
 export const REGION_BUCKETS = ['Middle East', 'UK & Ireland', 'Europe', 'Global', 'Unknown'] as const;
 export const MANDATE_BUCKETS = ['UK', 'Ireland', 'Europe', 'Middle East', 'Other'] as const;
 
+/** "City, Country" for the City filter and the Location column: one format
+ *  everywhere. Empty when no city is on record, so the filter lists only
+ *  investors whose city we actually know. */
+export function cityLabel(i: { hq_city?: string | null; hq_country?: string | null }): string {
+  const city = (i.hq_city || '').trim();
+  if (!city) return '';
+  const country = (i.hq_country || '').trim();
+  return country ? `${city}, ${country}` : city;
+}
+
 export function isGcc(i: { hq_country?: string; region?: string; global_region?: string; network_tags?: string }): boolean {
   const geo = `${i.hq_country || ''} ${i.region || ''}`.toLowerCase();
   if (GCC_COUNTRIES.some(c => geo.includes(c))) return true;
