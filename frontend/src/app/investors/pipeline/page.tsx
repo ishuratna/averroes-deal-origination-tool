@@ -22,7 +22,7 @@ import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
 import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
-import { PRIORITY_TIERS, REGION_BUCKETS, cityLabel } from '../../../types';
+import { REGION_BUCKETS, CONTACTABLE_OPTIONS, cityLabel, contactableBucket } from '../../../types';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
@@ -48,7 +48,7 @@ function InvestorPipelineInner() {
   const [showParked, setShowParked] = useState(false);
   const [profileName, setProfileName] = useState<string | null>(null);
   const profileInv = profileName ? investors.find(x => x.name === profileName) || null : null;
-  const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [contactFilter, setContactFilter] = useState<string[]>([]);
   const [cityFilter, setCityFilter] = useState<string[]>([]);
 
   const load = useCallback(async () => {
@@ -74,9 +74,9 @@ function InvestorPipelineInner() {
     const matchesSearch = !q || i.name.toLowerCase().includes(q) || (i.investor_type || '').toLowerCase().includes(q)
       || (i.contact_name || '').toLowerCase().includes(q);
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
-    const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
+    const matchesContact = contactFilter.length === 0 || contactFilter.includes(contactableBucket(i));
     const matchesCity = cityFilter.length === 0 || cityFilter.includes(cityLabel(i));
-    return matchesSearch && matchesRegion && matchesTier && matchesCity;
+    return matchesSearch && matchesRegion && matchesContact && matchesCity;
   });
 
   const identifiedCount = visible.filter(i => (i.status || 'Identified') === 'Identified').length;
@@ -147,7 +147,7 @@ function InvestorPipelineInner() {
           <input className="ikb-search" placeholder="Search investors, contacts..." value={search} onChange={e => setSearch(e.target.value)} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
           <MultiSelect label="All cities" options={cities} selected={cityFilter} onChange={setCityFilter} />
-          <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
+          <MultiSelect label="Contactable or not" options={CONTACTABLE_OPTIONS} selected={contactFilter} onChange={setContactFilter} />
           <button className="ikb-parked-toggle" onClick={() => setShowParked(v => !v)}>
             {showParked ? 'Hide' : 'Show'} parked ({parked.length})
           </button>

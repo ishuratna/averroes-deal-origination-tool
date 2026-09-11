@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
-import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, REGION_BUCKETS, MANDATE_BUCKETS, parseTags, cityLabel } from "../../types";
+import { Investor, INVESTOR_STAGES, REGION_BUCKETS, MANDATE_BUCKETS, CONTACTABLE_OPTIONS, parseTags, cityLabel, contactableBucket } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
@@ -45,7 +45,7 @@ function InvestorsInner() {
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [mandateFilter, setMandateFilter] = useState<string[]>([]);   // where they INVEST
-  const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [contactFilter, setContactFilter] = useState<string[]>([]);   // Contactable vs not; the score stays as the ranking
   const [cityFilter, setCityFilter] = useState<string[]>([]);     // "City, Country", only where a city is on record
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   // Bulk InvestorFill scope (GCC first, UK/EU later: Ishu, 11 Sep 2026). Lives
@@ -276,13 +276,13 @@ function InvestorsInner() {
     const matchesType = typeFilter.length === 0 || typeFilter.includes(i.investor_type || '');
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
     const matchesMandate = mandateFilter.length === 0 || (i.mandate_buckets || []).some(b => mandateFilter.includes(b));
-    const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
+    const matchesContact = contactFilter.length === 0 || contactFilter.includes(contactableBucket(i));
     const matchesTag = tagFilter.length === 0 || parseTags(i.network_tags).some(t => tagFilter.includes(t));
     const matchesCity = cityFilter.length === 0 || cityFilter.includes(cityLabel(i));
-    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesMandate && matchesTier && matchesTag && matchesCity;
+    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesMandate && matchesContact && matchesTag && matchesCity;
   });
   // Computed AFTER filtered (a use-before-declaration here crashed the page at runtime, 8 Sep 2026)
-  const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
+  const contactableCount = filtered.filter(i => contactableBucket(i) === 'Contactable').length;
 
   // 11.5k rows rendered at once made the page unresponsive (Ishu, 9 Sep 2026).
   // The table shows ONE page of 100, most important first: priority score,
@@ -297,7 +297,7 @@ function InvestorsInner() {
   const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = ordered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, mandateFilter, tierFilter, tagFilter, cityFilter]);
+  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, mandateFilter, contactFilter, tagFilter, cityFilter]);
   const pager = ordered.length > PAGE_SIZE ? (
     <div className="pager">
       <button disabled={safePage === 0} onClick={() => setPage(0)}>«</button>
@@ -380,9 +380,9 @@ function InvestorsInner() {
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
           <MultiSelect label="All cities" options={cities} selected={cityFilter} onChange={setCityFilter} />
           <MultiSelect label="All mandates" options={mandates} selected={mandateFilter} onChange={setMandateFilter} />
-          <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
+          <MultiSelect label="Contactable or not" options={CONTACTABLE_OPTIONS} selected={contactFilter} onChange={setContactFilter} />
           <MultiSelect label="All tags" options={allTags} selected={tagFilter} onChange={setTagFilter} />
-          <span className="tier-summary">{tierCounts.map(([t, n]) => `${t} ${n}`).join(' · ')}</span>
+          <span className="tier-summary" title="Investors in view with a contact email on file">{contactableCount} of {filtered.length} contactable</span>
         </section>
 
         {/* Table */}

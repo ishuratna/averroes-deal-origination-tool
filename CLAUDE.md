@@ -255,6 +255,13 @@ mistake is both visible and correctable. This one logged nothing, which is why
   on the filter bar; Ishu had it removed the same day, and rightly: it scoped a
   RUN, not the table, and sat among filters that scope the table. A control
   lives where its effect is.
+- CONTACTABLE, NOT TIER, IS THE FILTER (Ishu, 11 Sep 2026: "just use
+  contactable vs not as a filter and fit score remains as such"). The tier
+  folded two questions into one letter (how good a fit, and can we write to
+  them), and a filter on it answered neither cleanly. `contactableBucket()` in
+  `types/index.ts` mirrors `_readiness` in `lp_priority.py` exactly (an email
+  with an @; a name alone is not contactable). The score and the chip stay;
+  the table still sorts by score.
 - CITY FILTER (Ishu, 11 Sep 2026) on both investor pages, options formatted
   "City, Country" by `cityLabel()` in `types/index.ts`, the same helper the
   Location column uses, so the filter and the column can never disagree.

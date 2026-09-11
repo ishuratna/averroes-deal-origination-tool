@@ -583,6 +583,14 @@ export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: nu
 }
 
 export const PRIORITY_TIERS = ['A', 'B', 'C', 'Parked'];
+
+/** The Contactable filter (Ishu, 11 Sep 2026: "just use contactable vs not").
+ *  SAME definition as `_readiness` in backend ai/lp_priority.py: a contact
+ *  email with an @ in it. A name alone is not contactable. */
+export const CONTACTABLE_OPTIONS = ['Contactable', 'No email yet'];
+export function contactableBucket(i: { contact_email?: string | null }): string {
+  return (i.contact_email || '').includes('@') ? 'Contactable' : 'No email yet';
+}
 export const NETWORK_TAG_SUGGESTIONS = ['GCC', 'Bea', 'Partner', 'Co-investor', 'Network', 'Warm'];
 export function parseTags(s?: string): string[] {
   return (s || '').split(/[,;|]/).map(t => t.trim()).filter(Boolean);
