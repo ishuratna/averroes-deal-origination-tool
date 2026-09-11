@@ -6771,8 +6771,20 @@ class InvestorNoteRequest(BaseModel):
 
 @app.get("/investors")
 async def get_investors():
-    """All investors (LP universe), sorted by fit score."""
-    return investor_handler.get_all()
+    """All investors (LP universe), sorted by fit score.
+
+    Each row carries two display rollups computed from the gate's geography
+    sets (ai/investor_gate.py), so the Universe and Pipeline filters share ONE
+    definition of Middle East, UK & Ireland, Europe and Global instead of
+    reading raw hq_country values (Ishu, 11 Sep 2026: "why is the UAE not
+    rolled up into Middle East?").
+    """
+    from ai.investor_gate import mandate_buckets, region_bucket
+    rows = investor_handler.get_all()
+    for r in rows:
+        r["region_bucket"] = region_bucket(r)
+        r["mandate_buckets"] = mandate_buckets(r)
+    return rows
 
 
 @app.post("/investors/mine")

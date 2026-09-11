@@ -530,6 +530,10 @@ export interface Investor {
   contact_phone?: string;
   hq_email?: string;
   global_region?: string;
+  // Server-side rollups from the gate's geography sets (one definition):
+  // where they ARE, and where they INVEST. See ai/investor_gate.py.
+  region_bucket?: 'Middle East' | 'UK & Ireland' | 'Europe' | 'Global' | 'Unknown';
+  mandate_buckets?: string[];
   year_founded?: number;
   strategy_preferences?: string;
   geo_preferences?: string;
@@ -587,6 +591,11 @@ export function parseTags(s?: string): string[] {
 // six GCC states OR an explicit GCC network tag. The 3 Aug 2026 PitchBook
 // export already holds ~870 such rows, so geography must count, not only tags.
 const GCC_COUNTRIES = ['saudi arabia', 'united arab emirates', 'uae', 'qatar', 'kuwait', 'bahrain', 'oman'];
+// Fixed display order for the region and mandate filters. Matches
+// REGION_BUCKETS / MANDATE_BUCKETS in ai/investor_gate.py.
+export const REGION_BUCKETS = ['Middle East', 'UK & Ireland', 'Europe', 'Global', 'Unknown'] as const;
+export const MANDATE_BUCKETS = ['UK', 'Ireland', 'Europe', 'Middle East', 'Other'] as const;
+
 export function isGcc(i: { hq_country?: string; region?: string; global_region?: string; network_tags?: string }): boolean {
   const geo = `${i.hq_country || ''} ${i.region || ''}`.toLowerCase();
   if (GCC_COUNTRIES.some(c => geo.includes(c))) return true;

@@ -177,6 +177,33 @@ chk("the Internal Test investor is never gated out",
     src.count('context.get("source") != "Internal Test"') >= 2)
 
 print()
+print("-- filter rollups: one definition, served on every row (Ishu, 11 Sep 2026) --")
+# "Why is the UAE not rolled up into Middle East?" Because the filter read raw
+# hq_country. Now: Middle East | UK & Ireland | Europe | Global | Unknown.
+for country, bucket in (("United Arab Emirates", "Middle East"), ("Saudi Arabia", "Middle East"),
+                        ("Qatar", "Middle East"), ("Jordan", "Middle East"),
+                        ("United Kingdom", "UK & Ireland"), ("Ireland", "UK & Ireland"),
+                        ("Switzerland", "Europe"), ("Germany", "Europe"),
+                        ("United States", "Global"), ("Singapore", "Global"), ("Japan", "Global")):
+    chk(f"{country} -> {bucket}", g.region_bucket({"hq_country": country}), bucket)
+chk("no location is Unknown, NOT Global: absence is not a finding",
+    g.region_bucket({}), "Unknown")
+chk("the bucket list is fixed and ordered", g.REGION_BUCKETS,
+    ("Middle East", "UK & Ireland", "Europe", "Global", "Unknown"))
+# Mandate: where they INVEST, from geo_preferences only. Several at once.
+chk("UK and Ireland split in the mandate filter",
+    g.mandate_buckets({"geo_preferences": "United Kingdom, Ireland"}), ["UK", "Ireland"])
+chk("Europe plus somewhere else", g.mandate_buckets({"geo_preferences": "Western Europe, North America"}),
+    ["Europe", "Other"])
+chk("a purely global mandate is Other", g.mandate_buckets({"geo_preferences": "Global"}), ["Other"])
+chk("no stated mandate is EMPTY, not Other", g.mandate_buckets({}), [])
+chk("the strategy text is NOT read as a mandate",
+    g.mandate_buckets({"strategy_preferences": "UK growth equity"}), [])
+esrc2 = inspect.getsource(main.get_investors)
+chk("GET /investors serves both rollups on every row",
+    'r["region_bucket"] = region_bucket(r)' in esrc2 and 'r["mandate_buckets"] = mandate_buckets(r)' in esrc2)
+
+print()
 print("-- applying the gate at scale: one statement, not three queries a row --")
 # 1,292 rows through update_status = ~3,900 sequential BigQuery queries, about
 # an hour. Cloud Run cuts a request at ten minutes. Ishu watched curl die at

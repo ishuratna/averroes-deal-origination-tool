@@ -253,6 +253,16 @@ mistake is both visible and correctable. This one logged nothing, which is why
   or GCC-tagged investors: GCC FIRST, UK/EU later (Ishu, 11 Sep 2026), because
   the Gulf email is the only one written. Same definition as `isGcc` in the
   UI, so the chip and the queue agree about who counts.
+- FILTER ROLLUPS are computed ONCE, server-side, from the gate's geography
+  sets and served on every `/investors` row as `region_bucket` (Middle East |
+  UK & Ireland | Europe | Global | Unknown) and `mandate_buckets` (any of UK,
+  Ireland, Europe, Middle East, Other, from `geo_preferences` ONLY). The
+  Universe and Pipeline pages read those fields; neither holds its own
+  `regionOf` on raw `hq_country` any more, which is why the UAE was not
+  rolling up into Middle East (Ishu, 11 Sep 2026). "Unknown" stays apart from
+  "Global": 7,565 rows have no location, and folding them into Global would
+  make Global look like a finding. `REGION_BUCKETS` / `MANDATE_BUCKETS` fix
+  the display order in both `investor_gate.py` and `types/index.ts`.
 - WHICH EMAIL depends on HOW they qualified, and only ONE is written.
   `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
   coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`

@@ -73,6 +73,27 @@ EUROPE = {"france", "germany", "netherlands", "belgium", "luxembourg", "switzerl
           "monaco", "liechtenstein", "europe", "western europe", "nordics", "benelux"}
 
 
+# ── Display rollups for the Investor Universe filters (Ishu, 11 Sep 2026) ────
+# "Why is the UAE not rolled up into Middle East?" Because the filter was
+# reading raw hq_country values. These buckets are computed HERE, from the
+# same sets the gate uses, and served on every investor row, so the Universe
+# and the Pipeline filter on one definition rather than two copies.
+#
+# Region (where they ARE):   Middle East | UK & Ireland | Europe | Global | Unknown
+# Mandate (where they INVEST): any of UK, Ireland, Europe, Middle East, Other
+#
+# "Unknown" is kept apart from "Global" on purpose: 7,565 rows have no location
+# at all, and folding them into Global would make Global look like a finding.
+MIDDLE_EAST = GCC | {"jordan", "lebanon", "egypt", "iraq", "middle east", "mena", "gulf",
+                     "gcc", "amman", "beirut", "cairo"}
+UK_ONLY = {"united kingdom", "uk", "england", "scotland", "wales", "northern ireland",
+           "london", "edinburgh", "manchester", "great britain", "britain"}
+IRELAND = {"ireland", "republic of ireland", "dublin", "cork", "eire"}
+
+REGION_BUCKETS = ("Middle East", "UK & Ireland", "Europe", "Global", "Unknown")
+MANDATE_BUCKETS = ("UK", "Ireland", "Europe", "Middle East", "Other")
+
+
 def _low(v) -> str:
     return (v or "").strip().lower() if isinstance(v, str) else ""
 
@@ -142,6 +163,44 @@ def _mandate_blob(inv: Dict) -> str:
     return " ".join(_low(inv.get(k)) for k in
                     ("geo_preferences", "strategy_preferences", "other_preferences",
                      "policy_description"))
+
+
+def region_bucket(inv: Dict) -> str:
+    """Where they ARE, rolled up for the filter. One of REGION_BUCKETS."""
+    base = _base_blob(inv)
+    if not base.strip():
+        return "Unknown"
+    if any(g in base for g in MIDDLE_EAST):
+        return "Middle East"
+    if any(g in base for g in UK_IE):
+        return "UK & Ireland"
+    if any(g in base for g in EUROPE):
+        return "Europe"
+    return "Global"
+
+
+def mandate_buckets(inv: Dict) -> List[str]:
+    """Where they INVEST, rolled up. A mandate can cover several, so a list.
+    Empty when no mandate is stated at all. Reads geo_preferences ONLY, not
+    the strategy text: "UK" inside a strategy sentence is not a mandate."""
+    text = _low(inv.get("geo_preferences"))
+    if not text.strip():
+        return []
+    out = []
+    if any(g in text for g in UK_ONLY):
+        out.append("UK")
+    if any(g in text for g in IRELAND):
+        out.append("Ireland")
+    if any(g in text for g in EUROPE):
+        out.append("Europe")
+    if any(g in text for g in MIDDLE_EAST):
+        out.append("Middle East")
+    # Anything named that is not one of ours (US, Asia, Africa, "global").
+    if any(w in text for w in ("united states", "usa", "north america", "asia", "africa",
+                               "latin america", "australia", "global", "worldwide", "india",
+                               "china", "japan", "singapore", "canada")):
+        out.append("Other")
+    return out or ["Other"]
 
 
 def looks_institutional(inv: Dict) -> str:

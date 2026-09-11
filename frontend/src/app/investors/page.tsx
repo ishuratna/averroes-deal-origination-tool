@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import Link from "next/link";
-import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, parseTags, isGcc } from "../../types";
+import { Investor, INVESTOR_STAGES, PRIORITY_TIERS, REGION_BUCKETS, MANDATE_BUCKETS, parseTags, isGcc } from "../../types";
 import { dealApi } from "../../services/api";
 import InfoTip from "../../components/InfoTip";
 import AuthGate from "../../components/AuthGate";
@@ -44,6 +44,7 @@ function InvestorsInner() {
   const [stageFilter, setStageFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
+  const [mandateFilter, setMandateFilter] = useState<string[]>([]);   // where they INVEST
   const [tierFilter, setTierFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [gccOnly, setGccOnly] = useState(false);
@@ -253,8 +254,11 @@ function InvestorsInner() {
 
   const types = Array.from(new Set(investors.map(i => i.investor_type).filter(Boolean))) as string[];
 
-  const regionOf = (i: Investor) => i.global_region || i.hq_country || i.region || '';
-  const regions = Array.from(new Set(investors.map(regionOf).filter(Boolean))).sort();
+  // Rolled up server-side from one set of geography definitions, in a fixed
+  // order, so "United Arab Emirates" and "Saudi Arabia" are both Middle East.
+  const regionOf = (i: Investor) => i.region_bucket || 'Unknown';
+  const regions = REGION_BUCKETS.filter(b => investors.some(i => regionOf(i) === b)) as unknown as string[];
+  const mandates = MANDATE_BUCKETS.filter(b => investors.some(i => (i.mandate_buckets || []).includes(b))) as unknown as string[];
   const allTags = Array.from(new Set(investors.flatMap(i => parseTags(i.network_tags)))).sort();
 
   const filtered = investors.filter(i => {
@@ -263,10 +267,11 @@ function InvestorsInner() {
     const matchesStage = stageFilter.length === 0 || stageFilter.includes(i.status || '');
     const matchesType = typeFilter.length === 0 || typeFilter.includes(i.investor_type || '');
     const matchesRegion = regionFilter.length === 0 || regionFilter.includes(regionOf(i));
+    const matchesMandate = mandateFilter.length === 0 || (i.mandate_buckets || []).some(b => mandateFilter.includes(b));
     const matchesTier = tierFilter.length === 0 || tierFilter.includes(i.priority_tier || '');
     const matchesTag = tagFilter.length === 0 || parseTags(i.network_tags).some(t => tagFilter.includes(t));
     const matchesGcc = !gccOnly || isGcc(i);
-    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesTier && matchesTag && matchesGcc;
+    return matchesSearch && matchesStage && matchesType && matchesRegion && matchesMandate && matchesTier && matchesTag && matchesGcc;
   });
   // Computed AFTER filtered (a use-before-declaration here crashed the page at runtime, 8 Sep 2026)
   const tierCounts = PRIORITY_TIERS.map(t => [t, filtered.filter(i => i.priority_tier === t).length] as const);
@@ -284,7 +289,7 @@ function InvestorsInner() {
   const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = ordered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, tierFilter, tagFilter, gccOnly]);
+  useEffect(() => { setPage(0); }, [searchQuery, stageFilter, typeFilter, regionFilter, mandateFilter, tierFilter, tagFilter, gccOnly]);
   const pager = ordered.length > PAGE_SIZE ? (
     <div className="pager">
       <button disabled={safePage === 0} onClick={() => setPage(0)}>«</button>
@@ -365,6 +370,7 @@ function InvestorsInner() {
           <MultiSelect label="All stages" options={[...INVESTOR_STAGES]} selected={stageFilter} onChange={setStageFilter} />
           <MultiSelect label="All types" options={types} selected={typeFilter} onChange={setTypeFilter} />
           <MultiSelect label="All regions" options={regions} selected={regionFilter} onChange={setRegionFilter} />
+          <MultiSelect label="All mandates" options={mandates} selected={mandateFilter} onChange={setMandateFilter} />
           <MultiSelect label="All tiers" options={PRIORITY_TIERS} selected={tierFilter} onChange={setTierFilter} />
           <MultiSelect label="All tags" options={allTags} selected={tagFilter} onChange={setTagFilter} />
           <button className={`quick-chip ${gccOnly ? 'on' : ''}`}

@@ -22,14 +22,15 @@ import SyncEmailsButton from '../../../components/SyncEmailsButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
 import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
-import { PRIORITY_TIERS, isGcc } from '../../../types';
+import { PRIORITY_TIERS, REGION_BUCKETS, isGcc } from '../../../types';
 import { outreachButtonState, owesReply } from '../../../lib/outreach';
 
 const BOARD_STAGES = ['Researched', 'Contacted', 'Responded', 'Meeting', 'Committed'] as const;
 const PARKED_STAGES = ['Talk Later', 'Passed'] as const;
 const STALE_DAYS = 14;
 
-const regionOf = (i: Investor) => i.global_region || i.hq_country || i.region || '';
+// Same server-side rollup the Universe uses: one definition of the regions.
+const regionOf = (i: Investor) => i.region_bucket || 'Unknown';
 const daysSince = (ts?: string) => ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 86_400_000) : null;
 
 export default function InvestorPipeline() {
@@ -60,11 +61,10 @@ function InvestorPipelineInner() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const regions = useMemo(() => {
-    const set = new Set<string>();
-    investors.forEach(i => { const r = regionOf(i); if (r) set.add(r); });
-    return Array.from(set).sort();
-  }, [investors]);
+  // Fixed order, same buckets as the Universe page.
+  const regions = useMemo(
+    () => REGION_BUCKETS.filter(b => investors.some(i => regionOf(i) === b)) as unknown as string[],
+    [investors]);
 
   const visible = investors.filter(i => {
     const q = search.toLowerCase();
