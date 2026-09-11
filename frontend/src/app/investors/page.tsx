@@ -193,7 +193,8 @@ function InvestorsInner() {
   const openBulkFill = async () => {
     setBulkLoading(true);
     try {
-      const data = await dealApi.getInvestorFillEligible();
+      // The GCC chip scopes the run: on = Gulf-based or GCC-tagged only.
+      const data = await dealApi.getInvestorFillEligible({ gcc: gccOnly });
       setBulkEligibility(data);
     } catch (e) { alert('Failed to load eligibility — is the backend deployed?'); }
     finally { setBulkLoading(false); }
@@ -745,10 +746,32 @@ function InvestorsInner() {
               <>
                 <div className="fill-scores" style={{ marginTop: '0.6rem' }}>
                   <div className="fill-score-row"><span>Total investors</span><b>{bulkEligibility.total_investors}</b></div>
+                  {bulkEligibility.region === 'gcc' && (
+                    <div className="fill-score-row"><span>Excluded — outside the GCC (chip is on)</span><b>−{bulkEligibility.excluded_outside_region}</b></div>
+                  )}
+                  {bulkEligibility.skipped_parked > 0 && (
+                    <div className="fill-score-row"><span>Skipped — parked by the gate</span><b>−{bulkEligibility.skipped_parked}</b></div>
+                  )}
+                  {bulkEligibility.excluded_by_gate > 0 && (
+                    <div className="fill-score-row"><span>Excluded — fails size or reach on stored facts</span><b>−{bulkEligibility.excluded_by_gate}</b></div>
+                  )}
+                  {bulkEligibility.held_back_fund_or_corporate_shaped > 0 && (
+                    <div className="fill-score-row"><span>Held back — fund or corporate by name</span><b>−{bulkEligibility.held_back_fund_or_corporate_shaped}</b></div>
+                  )}
                   <div className="fill-score-row"><span>Excluded — mandate outside UK/EU/ME</span><b>−{bulkEligibility.excluded_outside_mandate}</b></div>
                   <div className="fill-score-row"><span>Excluded — no relevant PE strategy</span><b>−{bulkEligibility.excluded_no_relevant_strategy}</b></div>
                   <div className="fill-score-row"><span>Skipped — already researched</span><b>−{bulkEligibility.skipped_already_researched}</b></div>
-                  <div className="fill-score-row composite"><span>Eligible for InvestorFill</span><b>{bulkEligibility.eligible_count}</b></div>
+                  <div className="fill-score-row composite"><span>Eligible for InvestorFill{bulkEligibility.region === 'gcc' ? ' (GCC)' : ''}</span><b>{bulkEligibility.eligible_count}</b></div>
+                  {bulkEligibility.queue_head?.length > 0 && (
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ cursor: 'pointer', fontSize: 12, color: '#64748b' }}>Why this order (first {bulkEligibility.queue_head.length})</summary>
+                      <ul style={{ fontSize: 12, margin: '6px 0 0', paddingLeft: 18, color: '#334155' }}>
+                        {bulkEligibility.queue_head.map((q: any) => (
+                          <li key={q.name}><b>{q.name}</b> · {q.tier} · {q.why}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                 </div>
                 <p className="fill-desc" style={{ marginTop: '0.7rem' }}>
                   1 AI call per investor → ~{bulkEligibility.estimate.total_gemini_calls} calls, token cost ≈ ${bulkEligibility.estimate.token_cost_usd_typical}. {bulkEligibility.estimate.grounding_note}

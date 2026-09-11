@@ -393,8 +393,11 @@ export const dealApi = {
     return await response.json();
   },
 
-  async getInvestorFillEligible(): Promise<any> {
-    const response = await apiFetch(`${API_BASE_URL}/investorfill/eligible`);
+  async getInvestorFillEligible(opts: { gcc?: boolean } = {}): Promise<any> {
+    // GCC first (Ishu, 11 Sep 2026): when the GCC chip is on, the queue is
+    // Gulf-based or GCC-tagged investors only, the ones the written email fits.
+    const q = opts.gcc ? '?region=gcc' : '';
+    const response = await apiFetch(`${API_BASE_URL}/investorfill/eligible${q}`);
     if (!response.ok) throw new Error('Failed to load InvestorFill eligibility');
     return await response.json();
   },

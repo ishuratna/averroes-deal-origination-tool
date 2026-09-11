@@ -127,5 +127,12 @@ chk("funds are held back unless asked", "include_funds" in esrc)
 chk("the head of the queue is explained", "queue_head" in esrc)
 
 print()
+print("-- GCC first (Ishu, 11 Sep 2026): the only email written is the Gulf one --")
+chk("the queue takes a region parameter", 'region: str = Query' in esrc)
+chk("gcc means Gulf-based (the gate's email_strategy) OR tagged GCC, same as the UI chip",
+    '["email_strategy"] != "gcc" and "gcc" not in tags' in esrc)
+chk("what was excluded by region is reported, not silently dropped", '"excluded_outside_region"' in esrc)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

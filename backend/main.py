@@ -6859,9 +6859,14 @@ async def upload_investor_file(file: UploadFile = File(...),
     }
 
 
+def _low_tags(raw) -> set:
+    return {t.strip().lower() for t in re.split(r"[,;|]", raw or "") if t.strip()}
+
+
 @app.get("/investorfill/eligible")
 async def investorfill_eligible(skip_researched: bool = Query(True, description="Skip investors already researched (have a fit score or moved past Identified)"),
-                                include_funds: bool = Query(False, description="Also queue fund-shaped and corporate-shaped names (held back by default)")):
+                                include_funds: bool = Query(False, description="Also queue fund-shaped and corporate-shaped names (held back by default)"),
+                                region: str = Query("", description="'gcc' restricts the queue to Gulf-based or GCC-tagged investors (Ishu, 11 Sep 2026: GCC first, UK/EU later)")):
     """
     Pre-flight for bulk InvestorFill. Zero AI, and now ORDERED.
 
@@ -6884,10 +6889,22 @@ async def investorfill_eligible(skip_researched: bool = Query(True, description=
     total = len(investors)
 
     excluded_gate = excluded_mandate = excluded_strategy = skipped_researched = skipped_parked = 0
+    excluded_region = 0
+    want_gcc = (region or "").strip().lower() == "gcc"
     candidates = []
     for inv in investors:
         if inv.get("source") == "Internal Test":
             continue
+        # GCC FIRST (Ishu, 11 Sep 2026). The only email written is the Gulf
+        # one, so the research budget goes to investors that email can reach:
+        # based in the Gulf, or on a list tagged GCC. Same definition as the
+        # GCC chip on the Investor Universe (isGcc), so the button and the
+        # queue agree about who counts.
+        if want_gcc:
+            tags = _low_tags(inv.get("network_tags"))
+            if qualify_investor(inv)["email_strategy"] != "gcc" and "gcc" not in tags:
+                excluded_region += 1
+                continue
         if (inv.get("status") or "") in ("Passed", "Talk Later"):
             skipped_parked += 1
             continue
@@ -6915,6 +6932,8 @@ async def investorfill_eligible(skip_researched: bool = Query(True, description=
     runnable = ordered[:grounding_remaining]
     return {
         "total_investors": total,
+        "region": "gcc" if want_gcc else "all",
+        "excluded_outside_region": excluded_region,
         "skipped_parked": skipped_parked,
         "excluded_by_gate": excluded_gate,
         "excluded_outside_mandate": excluded_mandate,

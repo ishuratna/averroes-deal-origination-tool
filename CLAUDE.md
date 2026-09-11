@@ -248,6 +248,11 @@ mistake is both visible and correctable. This one logged nothing, which is why
   `/investorfill/eligible` now applies, in order: skip parked, the PitchBook
   negatives, the GATE on stored facts (refusable now = never worth a call),
   then triage, and returns `queue_head` with the reasoning for the first 25.
+  `?region=gcc` (the Investor Universe GCC chip, passed through by the bulk
+  runner) restricts the queue to Gulf-based (gate `email_strategy == "gcc"`)
+  or GCC-tagged investors: GCC FIRST, UK/EU later (Ishu, 11 Sep 2026), because
+  the Gulf email is the only one written. Same definition as `isGcc` in the
+  UI, so the chip and the queue agree about who counts.
 - WHICH EMAIL depends on HOW they qualified, and only ONE is written.
   `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
   coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`
