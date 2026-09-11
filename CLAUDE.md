@@ -208,8 +208,18 @@ mistake is both visible and correctable. This one logged nothing, which is why
   that is the criterion Ishu kept.
   `GET /investors/gate-audit` (+ `/admin/` alias) previews the whole universe,
   DEFAULTS TO A DRY RUN, and reports qualifying rows split by which email they
-  need; `apply=1` parks the refused and never touches a row at Contacted or
-  beyond.
+  need; `apply=1` parks the refused through `park_bulk`.
+- BULK WRITES ARE ONE STATEMENT, NOT A LOOP. Applying the gate to 1,292 rows
+  via `update_status` meant three sequential BigQuery queries per row (read,
+  update, note), about an hour, and Cloud Run cuts a request at ten minutes:
+  Ishu watched curl die at 10:00 with a partial apply (11 Sep 2026).
+  `park_bulk` is the BULK TWIN of `update_status`: same columns, same
+  `stage_entered_at` reset, same audit line appended to `notes`, computed in
+  SQL from the row's OLD status (BigQuery evaluates SET against pre-update
+  values) via `UPDATE ... FROM UNNEST(@names) WITH OFFSET`. Protected stages
+  are excluded INSIDE the WHERE so a re-run is safe. The two must never drift;
+  `tests_investor_gate.py` checks they write the same fields. Any future bulk
+  stage change follows this shape.
 - WHICH EMAIL depends on HOW they qualified, and only ONE is written.
   `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
   coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`

@@ -177,5 +177,27 @@ chk("the Internal Test investor is never gated out",
     src.count('context.get("source") != "Internal Test"') >= 2)
 
 print()
+print("-- applying the gate at scale: one statement, not three queries a row --")
+# 1,292 rows through update_status = ~3,900 sequential BigQuery queries, about
+# an hour. Cloud Run cuts a request at ten minutes. Ishu watched curl die at
+# 10:00 with a partial apply (11 Sep 2026). park_bulk does it in three
+# statements and is the BULK TWIN of update_status: same writes, same audit.
+from storage.investor_handler import InvestorBQHandler as H  # noqa: E402
+one, bulk = inspect.getsource(H.update_status), inspect.getsource(H.park_bulk)
+for field in ("status", "stage_entered_at", "park_reason", "park_reason_detail", "updated_at"):
+    chk(f"park_bulk writes {field}, as update_status does", field in one and field in bulk)
+chk("park_bulk appends the same audit line to notes, computed from the OLD status in SQL",
+    "notes = CONCAT" in bulk and "IFNULL(status, 'Unknown'), ' -> Passed" in bulk)
+chk("protected stages are excluded INSIDE the SQL, so a re-run is safe",
+    "NOT IN UNNEST(@protected)" in bulk)
+chk("...and the protected list includes every work-done stage plus the parked ones",
+    {"Contacted", "Responded", "Meeting", "Committed", "Passed", "Talk Later"} <= set(H.PARK_BULK_PROTECTED))
+chk("chunks of 500 keep parameter arrays sane", "chunk: int = 500" in bulk)
+chk("no client refuses rather than pretending", H(None, "p").park_bulk([("a", "b")], "r", "t"), 0)
+audit = inspect.getsource(main.investors_gate_audit)
+chk("gate-audit apply goes through park_bulk", "park_bulk(" in audit)
+chk("...and no longer loops update_status per row", "update_status(" not in audit)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

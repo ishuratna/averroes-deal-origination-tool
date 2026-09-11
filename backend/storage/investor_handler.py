@@ -505,6 +505,68 @@ class InvestorBQHandler:
             logger.error(f"Failed to update investor status: {e}")
             return False
 
+    # Stages the bulk park must never touch. A gate verdict is not allowed to
+    # undo work done or to re-park the parked (same rule as the company-side
+    # stage guard, doctrine 3a).
+    PARK_BULK_PROTECTED = ("Passed", "Talk Later", "Contacted", "Responded", "Meeting", "Committed")
+
+    def park_bulk(self, items: list, reason: str, created_by: str, chunk: int = 500) -> int:
+        """Park many investors as Passed in a handful of statements.
+
+        THE BULK TWIN OF update_status, and it must stay in step with it: the
+        same status write, the same stage_entered_at reset, the same park
+        reason columns, and the same audit line appended to notes, computed in
+        SQL from the row's CURRENT status (BigQuery evaluates the SET list
+        against pre-update values, so `status` inside the CONCAT is the OLD
+        stage). `tests_investor_gate.py` checks the two never drift.
+
+        WHY IT EXISTS (11 Sep 2026): applying the gate to 1,292 investors
+        through update_status meant three sequential BigQuery queries per row,
+        roughly an hour of work, and Cloud Run cuts a request at ten minutes.
+        Ishu watched curl die at 10:00 with a partial apply. This does the same
+        work in three statements and returns in seconds.
+
+        items: [(name, reason_detail), ...]. Returns rows actually updated.
+        Rows at a protected stage are skipped inside the WHERE, so it is safe
+        to re-run and safe to hand a list that includes already-parked rows.
+        """
+        if not self.client or not items:
+            return 0
+        total = 0
+        for i in range(0, len(items), chunk):
+            batch = items[i:i + chunk]
+            names = [n for n, _ in batch]
+            details = [(d or "")[:900] for _, d in batch]
+            query = f"""UPDATE `{self.table_id}` t SET
+                status = 'Passed',
+                stage_entered_at = CURRENT_TIMESTAMP(),
+                park_reason = @reason,
+                park_reason_detail = @details[OFFSET(o)],
+                notes = CONCAT(IFNULL(notes, ''),
+                               '[', FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', CURRENT_TIMESTAMP()), '] ',
+                               'Stage ', IFNULL(status, 'Unknown'), ' -> Passed (', @reason,
+                               IF(@details[OFFSET(o)] != '', CONCAT(': ', @details[OFFSET(o)]), ''),
+                               ') [', @by, ']\\n'),
+                updated_at = CURRENT_TIMESTAMP()
+            FROM UNNEST(@names) AS n WITH OFFSET AS o
+            WHERE LOWER(t.name) = LOWER(n)
+              AND IFNULL(t.status, '') NOT IN UNNEST(@protected)"""
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("names", "STRING", names),
+                bigquery.ArrayQueryParameter("details", "STRING", details),
+                bigquery.ArrayQueryParameter("protected", "STRING", list(self.PARK_BULK_PROTECTED)),
+                bigquery.ScalarQueryParameter("reason", "STRING", reason or ""),
+                bigquery.ScalarQueryParameter("by", "STRING", created_by or "system"),
+            ])
+            try:
+                job = self.client.query(query, job_config=job_config)
+                job.result()
+                total += int(job.num_dml_affected_rows or 0)
+            except Exception as e:
+                logger.error(f"park_bulk failed on chunk {i // chunk + 1}: {e}")
+                raise
+        return total
+
     def pull_back_undelivered(self, name: str, reason: str, dead_address: str = "") -> bool:
         """Mirror of the company rule: a bounced LP email never reached anyone,
         so the investor returns to Researched (the pre-outreach stage), the

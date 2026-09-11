@@ -7242,15 +7242,14 @@ async def investors_gate_audit(request: Request, apply: int = Query(0, descripti
 
     parked = 0
     if apply:
-        for r in refused:
-            if r["status"] in ("Passed", "Talk Later", "Contacted", "Responded", "Meeting", "Committed"):
-                continue   # never undo work already done, or re-park the parked
-            try:
-                investor_handler.update_status(r["name"], "Passed", created_by="investor-gate",
-                                               reason="not_a_fit", reason_detail=r["reason"])
-                parked += 1
-            except Exception as e:
-                logger.warning(f"[InvestorGate] park failed for '{r['name']}': {e}")
+        # ONE bulk statement per 500 rows, not three queries per investor. The
+        # per-row version took ~an hour for 1,292 rows and Cloud Run cut it at
+        # ten minutes (11 Sep 2026). Protected stages are excluded inside the
+        # SQL, so this is safe to re-run and safe on already-parked rows.
+        todo = [(r["name"], r["reason"]) for r in refused
+                if r["status"] not in investor_handler.PARK_BULK_PROTECTED]
+        parked = investor_handler.park_bulk(todo, reason="not_a_fit", created_by="investor-gate")
+        logger.info(f"[InvestorGate] bulk-parked {parked} of {len(todo)} refused investors.")
 
     return {"dry_run": not apply, "total_rows": len(rows), "checked": checked,
             "too_bare_to_judge": skipped_bare, "would_refuse": len(refused),
