@@ -6860,21 +6860,37 @@ async def upload_investor_file(file: UploadFile = File(...),
 
 
 @app.get("/investorfill/eligible")
-async def investorfill_eligible(skip_researched: bool = Query(True, description="Skip investors already researched (have a fit score or moved past Identified)")):
+async def investorfill_eligible(skip_researched: bool = Query(True, description="Skip investors already researched (have a fit score or moved past Identified)"),
+                                include_funds: bool = Query(False, description="Also queue fund-shaped and corporate-shaped names (held back by default)")):
     """
-    Pre-flight for bulk InvestorFill. Zero AI: excludes only EXPLICIT negatives
-    from PitchBook data (mandate outside UK/Europe/ME, or stated strategy
-    preferences with none relevant). Unknowns pass — absence of data is not a no.
+    Pre-flight for bulk InvestorFill. Zero AI, and now ORDERED.
+
+    Three cuts, all free:
+      1. The GATE (ai/investor_gate.py): anything refusable on stored facts is
+         refused here and never reaches research. Parked rows are skipped.
+      2. Explicit PitchBook negatives, as before.
+      3. TRIAGE (ai/investor_triage.py): what is left is sorted so the daily
+         budget lands on names that can convert. Fund-shaped and corporate-
+         shaped names are HELD BACK unless include_funds, because a grounded
+         call confirming "yes, this is a venture fund" buys nothing.
+
+    7,413 unknowns at a few hundred calls a day is a month of budget spent in
+    arbitrary order. This is what makes it a queue.
     """
+    from ai.investor_gate import qualify_investor
+    from ai.investor_triage import order_for_research
+
     investors = investor_handler.get_all()
     total = len(investors)
 
-    excluded_mandate = 0
-    excluded_strategy = 0
-    skipped_researched = 0
-    eligible = []
-
+    excluded_gate = excluded_mandate = excluded_strategy = skipped_researched = skipped_parked = 0
+    candidates = []
     for inv in investors:
+        if inv.get("source") == "Internal Test":
+            continue
+        if (inv.get("status") or "") in ("Passed", "Talk Later"):
+            skipped_parked += 1
+            continue
         if (inv.get("geo_preferences") or "") == "Outside mandate":
             excluded_mandate += 1
             continue
@@ -6884,28 +6900,43 @@ async def investorfill_eligible(skip_researched: bool = Query(True, description=
         if skip_researched and (inv.get("lp_fit_score") is not None or (inv.get("status") or "Identified") != "Identified"):
             skipped_researched += 1
             continue
-        eligible.append(inv.get("name"))
+        # The gate on stored facts. Refusable now = never worth a call.
+        if any(inv.get(k) for k in ("investor_type", "hq_country", "region", "aum_m",
+                                    "ticket_min_m", "ticket_max_m", "description")):
+            if not qualify_investor(inv)["qualified"]:
+                excluded_gate += 1
+                continue
+        candidates.append(inv)
 
-    n = len(eligible)
-    # Trim to today's remaining free-tier grounding budget (1 grounded call each)
+    ordered, by_tier = order_for_research(candidates, include_funds=include_funds)
+    n = len(ordered)
     grounding_used = bq_handler.grounded_calls_used_today()
     grounding_remaining = max(0, DAILY_GROUNDING_BUDGET - grounding_used)
-    runnable = eligible[:grounding_remaining]
+    runnable = ordered[:grounding_remaining]
     return {
         "total_investors": total,
+        "skipped_parked": skipped_parked,
+        "excluded_by_gate": excluded_gate,
         "excluded_outside_mandate": excluded_mandate,
         "excluded_no_relevant_strategy": excluded_strategy,
         "skipped_already_researched": skipped_researched,
+        # The triage split over everything that survived the cuts above.
+        # research_last is counted but NOT queued unless include_funds=1.
+        "triage": by_tier,
+        "held_back_fund_or_corporate_shaped": 0 if include_funds else by_tier.get("research_last", 0),
         "eligible_count": n,
         "grounding_budget": DAILY_GROUNDING_BUDGET,
         "grounding_used_today": grounding_used,
         "runnable_now": len(runnable),
-        "eligible_names": runnable,
+        "eligible_names": [i.get("name") for i in runnable],
+        # Why each of the first few is where it is, so the order is auditable.
+        "queue_head": [{"name": i.get("name"), "score": i["_triage"]["score"],
+                        "tier": i["_triage"]["tier"], "why": i["_triage"]["why"]} for i in runnable[:25]],
         "estimate": {
             "gemini_calls_per_investor": 1,
             "total_gemini_calls": len(runnable),
             "token_cost_usd_typical": round(len(runnable) * 0.006, 2),
-            "grounding_note": "1 grounded call per investor, deducted from the shared daily free-tier budget — paid grounding is never used.",
+            "grounding_note": "1 grounded call per investor, deducted from the shared daily free-tier budget. Paid grounding is never used.",
         },
     }
 

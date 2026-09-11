@@ -220,6 +220,34 @@ mistake is both visible and correctable. This one logged nothing, which is why
   are excluded INSIDE the WHERE so a re-run is safe. The two must never drift;
   `tests_investor_gate.py` checks they write the same fields. Any future bulk
   stage change follows this shape.
+- RESEARCH TRIAGE (`ai/investor_triage.py`, PURE, zero AI) orders the queue
+  that bulk InvestorFill walks. The gate audit (11 Sep 2026) showed 7,413
+  investors with NO location: bare names mined from cap tables, correctly let
+  through as "unknown". Researching them in arbitrary order would spend a month
+  of grounding budget confirming that most are venture funds. THE NAME ALREADY
+  SAYS A GREAT DEAL, so `name_shape` reads it, in an order where every step was
+  learnt from a misfire:
+    fund first        "Family Ventures LLP" is a fund, not a family
+    legal form next   "Vodafone Group Plc" is a plc, not a group
+    sector/public     "Kuwait Investment Authority" is an authority, not "invest"
+    wanted words      family, holding, office, trust; Arabic particles as WHOLE
+                      WORDS (`\b(al|bin|bint)\b`), because " al " inside
+                      "capital " put Balderton Capital and Legal & General at
+                      the front as Arabic family names
+    person shape      titled (Sheikh, Sir, Dr) is strong; two plain words is
+                      only "not obviously a firm" (Hambro Perks, Local Globe,
+                      Praxis Rock all pass and are all firms) and earns a bump,
+                      not a promotion
+  Warmth adds: `source_companies` (a mined name backing ONE of our companies
+  reaches `research_first`, which is most of them), `network_tags`, a contact
+  on file. A WARM FUND stays `research_last`: the name already answered.
+  `research_last` (fund- and corporate-shaped) is HELD BACK from the queue
+  unless `include_funds=1`, and COUNTED so nobody thinks rows vanished.
+  IT IS A QUEUE ORDER, NEVER A REFUSAL: the module touches no status, and a
+  test asserts it never can. Only the gate parks.
+  `/investorfill/eligible` now applies, in order: skip parked, the PitchBook
+  negatives, the GATE on stored facts (refusable now = never worth a call),
+  then triage, and returns `queue_head` with the reasoning for the first 25.
 - WHICH EMAIL depends on HOW they qualified, and only ONE is written.
   `email_strategy` is `gcc` (the v3 copy: "based in London and Riyadh", "a
   coffee in London or Riyadh"), `uk_eu` (TBU #174) or `mandate_only`
