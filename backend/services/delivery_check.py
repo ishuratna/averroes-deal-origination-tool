@@ -175,10 +175,11 @@ def bounced_address(snippet: str = "", headers: str = "",
     the machine's own statement of who could not be reached. Falls back to the
     first address in the body that is not ours.
 
-    `exclude` is our own sending address: a bounce report quotes it as the
+    `exclude` is our own sending address (or several: the founder mailbox and
+    both investor desks, 14 Sep 2026): a bounce report quotes it as the
     sender, and clearing that would be catastrophic.
     """
-    mine = _norm(exclude)
+    mine = {_norm(x) for x in ((exclude,) if isinstance(exclude, str) else (exclude or ()))} - {""}
     text = f"{headers or ''}\n{snippet or ''}"
 
     for field in ("final-recipient", "original-recipient", "x-failed-recipients"):
@@ -186,12 +187,12 @@ def bounced_address(snippet: str = "", headers: str = "",
                       text, re.I)
         if m:
             found = m.group(1).strip().lower()
-            if found and found != mine:
+            if found and found not in mine:
                 return found
 
     for cand in _EMAIL_RE.findall(snippet or ""):
         c = cand.strip().lower().rstrip(".,;:)")
-        if c == mine:
+        if c in mine:
             continue
         # Skip the provider's own support and daemon addresses.
         if any(d in c for d in _DAEMON_ADDRESSES):

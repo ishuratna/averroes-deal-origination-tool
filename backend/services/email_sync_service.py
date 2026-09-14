@@ -288,7 +288,7 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
     # LP mailbox is matched and logged exactly like one to the founder mailbox.
     from services.outreach_service import sender_profile
     mailboxes, _seen_boxes = [], set()
-    for prof in (sender_profile("founder"), sender_profile("investor")):
+    for prof in (sender_profile("founder"), sender_profile("investor"), sender_profile("investor_intl")):
         if prof["configured"] and prof["email"].lower() not in _seen_boxes:
             _seen_boxes.add(prof["email"].lower())
             mailboxes.append(prof)      # the investor fallback shares Bea's box: read once

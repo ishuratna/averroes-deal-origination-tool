@@ -47,6 +47,38 @@ inv = osvc.sender_profile("investor")
 chk("configured once both env vars exist, no fallback", (inv["configured"], inv["fallback"]), (True, False))
 chk("label reads Name <address>", osvc.sender_label("investor"), "Ishu Ratna <lp@averroescapital.com>")
 chk("founder profile untouched", osvc.sender_profile("founder")["email"], osvc.SENDER_EMAIL)
+print()
+print("── Two investor desks, routed by region (Ishu, 14 Sep 2026) ──")
+intl = osvc.sender_profile("investor_intl")
+chk("the UK/Europe/global desk borrows the founder mailbox until INVESTOR_INTL_* is set",
+    (intl["email"], intl["fallback"]), (osvc.SENDER_EMAIL, True))
+chk("...and its label names the desk", "UK, Europe and global desk" in osvc.sender_label("investor_intl")
+    if osvc.sender_profile("founder")["configured"] else True)
+os.environ["INVESTOR_INTL_OUTREACH_EMAIL"] = "bea2@averroescapital.com"
+os.environ["INVESTOR_INTL_SMTP_PASSWORD"] = "app-pass-2"
+os.environ["INVESTOR_INTL_OUTREACH_NAME"] = "Beatrice Carrara"
+chk("configured, no fallback", osvc.sender_profile("investor_intl")["fallback"], False)
+chk("Riyadh family office -> Ellie's desk", osvc.investor_sender_kind({"hq_country": "Saudi Arabia"}), "investor")
+chk("Dubai by city -> Ellie's desk", osvc.investor_sender_kind({"hq_city": "Dubai"}), "investor")
+chk("GCC-tagged list -> Ellie's desk even without a location", osvc.investor_sender_kind({"network_tags": "GCC"}), "investor")
+chk("London office -> Bea's secondary", osvc.investor_sender_kind({"hq_country": "United Kingdom"}), "investor_intl")
+chk("Zurich -> Bea's secondary", osvc.investor_sender_kind({"hq_country": "Switzerland"}), "investor_intl")
+chk("Singapore with a UK mandate -> Bea's secondary (global)", osvc.investor_sender_kind({"hq_country": "Singapore", "geo_preferences": "United Kingdom"}), "investor_intl")
+chk("unknown region -> Bea's secondary, never Riyadh", osvc.investor_sender_kind({"name": "Mystery LP"}), "investor_intl")
+chk("Romania is not Oman", osvc.investor_sender_kind({"hq_country": "Romania"}), "investor_intl")
+d_me = osvc.draft_lp_outreach_email({"name": "Al X", "hq_country": "UAE", "contact_name": "Ahmed"})
+d_uk = osvc.draft_lp_outreach_email({"name": "Y Office", "hq_country": "United Kingdom", "contact_name": "Tom"})
+chk("Gulf draft is written as Ellie's desk", "lp@averroescapital.com" in d_me["from"])
+chk("UK draft is written as Bea's secondary", "bea2@averroescapital.com" in d_uk["from"])
+chk("follow-up follows the same routing", "bea2@" in osvc.draft_lp_followup_email({"name": "Y", "hq_country": "France"})["from"])
+main_src = open("main.py").read()
+chk("the send path derives the desk from the investor row, never from the caller",
+    "sender=investor_sender_kind(_row)" in main_src and 'sender="investor")' not in main_src)
+sync_src0 = open("services/email_sync_service.py").read()
+chk("the sync reads all three mailboxes", 'sender_profile("investor_intl")' in sync_src0)
+for k in ("INVESTOR_INTL_OUTREACH_EMAIL", "INVESTOR_INTL_SMTP_PASSWORD", "INVESTOR_INTL_OUTREACH_NAME"):
+    os.environ.pop(k, None)
+
 sig = osvc.build_signature("Ishu Ratna", "Associate", "lp@averroescapital.com")
 chk("signature carries name, title, address and the disclaimer",
     all(x in sig["text"] for x in ("Ishu Ratna", "Associate", "lp@averroescapital.com", "Appointed Representative")))
@@ -58,7 +90,7 @@ print("── LP email structure v3 (the door opener) ──")
 # its only job is to open a door that a coffee or a call then walks through.
 d = osvc.draft_lp_outreach_email({"name": "Acme Family Office", "contact_name": "Jane Roe",
                                   "contact_email": "jane@acme.com", "contact_title": "Chief Investment Officer",
-                                  "investor_type": "Single Family Office"})
+                                  "investor_type": "Single Family Office", "hq_country": "Saudi Arabia"})
 body = d["body"]
 chk("fallback (no API key) is marked so it is never persisted", d.get("is_fallback"), True)
 chk("subject is a person's, not a mail merge's", d["subject"], "Averroes Capital, an introduction")

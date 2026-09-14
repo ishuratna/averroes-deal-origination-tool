@@ -4,6 +4,7 @@ Generates personalised PE/growth capital outreach emails using Gemini AI.
 Uses company data already saved in BQ (from SmartFill) - no extra Google Search calls.
 """
 import os
+import re
 import json
 import smtplib
 import logging
@@ -546,7 +547,7 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     personal WHY THEM line; intro, GCC line, audience sentence and the ask are
     fixed house copy. No Google Search. Falls back to a fully fixed template."""
     api_key = os.getenv("GEMINI_API_KEY")
-    prof = sender_profile("investor")
+    prof = sender_profile(investor_sender_kind(investor))
     role_line = _lp_role_line(prof)
     recipient_warning = lp_recipient_warning(investor)
 
@@ -594,7 +595,7 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     # the corporate filler these rules exist to remove.
     fallback = {"subject": subject, "body": _assemble(""), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
-                "from": sender_label("investor"), "recipient_warning": recipient_warning,
+                "from": sender_label(prof["kind"]), "recipient_warning": recipient_warning,
                 "is_fallback": True}
     if not api_key:
         return fallback
@@ -640,7 +641,7 @@ Return ONLY valid JSON: {{"why_them": "..."}}"""
             why = why[:220].rsplit(".", 1)[0] + "."
         return {"subject": subject, "body": _assemble(why), "to": contact_email or "",
                 "contact_name": contact_name or "", "investor": name,
-                "from": sender_label("investor"), "recipient_warning": recipient_warning}
+                "from": sender_label(prof["kind"]), "recipient_warning": recipient_warning}
     except Exception as e:
         logger.warning(f"LP draft failed for {name}: {e}")
         return fallback
@@ -660,7 +661,7 @@ def draft_lp_followup_email(investor: Dict) -> Dict[str, str]:
             f"Best,")
     return {"to": investor.get("outreach_draft_to") or investor.get("contact_email") or "",
             "subject": subj if subj.lower().startswith("re:") else f"Re: {subj}",
-            "body": body, "investor": investor.get("name", ""), "from": sender_label("investor")}
+            "body": body, "investor": investor.get("name", ""), "from": sender_label(investor_sender_kind(investor))}
 
 
 # ── Email signature (appended automatically at send time) ────────────────────
@@ -738,37 +739,68 @@ SIGNATURE_HTML = _founder_sig["html"]
 # carries fallback=True and every draft/modal From line says so. Once
 # INVESTOR_OUTREACH_EMAIL + INVESTOR_SMTP_PASSWORD are set the fallback
 # disappears without a code change.
+# TWO INVESTOR MAILBOXES, ROUTED BY REGION (Ishu, 14 Sep 2026, "rule number
+# one"): Ellie runs the Middle East investor pipeline from her mailbox
+# (INVESTOR_*); Bea runs UK, Europe and everyone else from her SECONDARY
+# mailbox (INVESTOR_INTL_*). `investor_sender_kind(investor)` is the ONE
+# place that decides which, from the same region rollup the filters use, so
+# the From line, the signature, the sync and the bounce pass can never
+# disagree about whose conversation an investor is.
+INVESTOR_SENDER_KINDS = ("investor", "investor_intl")
+_INVESTOR_ENV_PREFIX = {"investor": "INVESTOR_", "investor_intl": "INVESTOR_INTL_"}
+_INVESTOR_DESK = {"investor": "Middle East desk", "investor_intl": "UK, Europe and global desk"}
+
+
 def sender_profile(kind: str = "founder") -> Dict[str, str]:
     founder = {
         "kind": "founder", "email": SENDER_EMAIL, "name": SENDER_NAME, "password": SMTP_PASSWORD,
         "sig_name": SIG_NAME, "sig_title": SIG_TITLE, "sig_phone": SIG_PHONE,
         "configured": bool(SENDER_EMAIL and SMTP_PASSWORD), "fallback": False,
     }
-    if kind != "investor":
+    if kind not in INVESTOR_SENDER_KINDS:
         return founder
-    email = os.getenv("INVESTOR_OUTREACH_EMAIL", "")
-    name = os.getenv("INVESTOR_OUTREACH_NAME", "")
-    pw = os.getenv("INVESTOR_SMTP_PASSWORD", "")
+    px = _INVESTOR_ENV_PREFIX[kind]
+    email = os.getenv(f"{px}OUTREACH_EMAIL", "")
+    name = os.getenv(f"{px}OUTREACH_NAME", "")
+    pw = os.getenv(f"{px}SMTP_PASSWORD", "")
     if email and pw:
         return {
-            "kind": "investor", "email": email, "name": name, "password": pw,
-            "sig_name": os.getenv("INVESTOR_SIGNATURE_NAME", name),
-            "sig_title": os.getenv("INVESTOR_SIGNATURE_TITLE", ""),
-            "sig_phone": os.getenv("INVESTOR_SIGNATURE_PHONE", ""),
-            "configured": True, "fallback": False,
+            "kind": kind, "email": email, "name": name, "password": pw,
+            "sig_name": os.getenv(f"{px}SIGNATURE_NAME", name),
+            "sig_title": os.getenv(f"{px}SIGNATURE_TITLE", ""),
+            "sig_phone": os.getenv(f"{px}SIGNATURE_PHONE", ""),
+            "configured": True, "fallback": False, "desk": _INVESTOR_DESK[kind],
         }
-    return {**founder, "kind": "investor", "fallback": True}
+    return {**founder, "kind": kind, "fallback": True, "desk": _INVESTOR_DESK[kind]}
+
+
+def investor_sender_kind(investor: Optional[Dict]) -> str:
+    """Which investor mailbox owns this investor. Middle East (by the shared
+    region rollup, or a GCC network tag) -> "investor" (Ellie); everything
+    else, INCLUDING an unknown region, -> "investor_intl" (Bea's secondary).
+    Unknown goes to Bea because a wrong guess there costs a forwarded email,
+    while a wrong guess the other way invites a Zurich office to Riyadh."""
+    if not investor:
+        return "investor_intl"
+    try:
+        from ai.investor_gate import region_bucket
+        if region_bucket(investor) == "Middle East":
+            return "investor"
+    except Exception:
+        pass
+    tags = [t.strip().lower() for t in re.split(r"[,;|]", investor.get("network_tags") or "") if t.strip()]
+    return "investor" if "gcc" in tags else "investor_intl"
 
 
 def sender_label(kind: str = "founder") -> str:
-    """'Name <address>' for the UI; says so when the investor side is borrowing
+    """'Name <address>' for the UI; says so when an investor desk is borrowing
     the founder mailbox, or when nothing is configured at all."""
     p = sender_profile(kind)
     if not p["configured"]:
         return "not configured (OUTREACH_EMAIL / OUTREACH_SMTP_PASSWORD)"
     label = f"{p['name'] or p['email']} <{p['email']}>"
     if p.get("fallback"):
-        label += " (founder mailbox; investor mailbox not configured yet)"
+        label += f" (founder mailbox; {p.get('desk', 'investor')} mailbox not configured yet)"
     return label
 
 

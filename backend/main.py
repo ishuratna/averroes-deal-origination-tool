@@ -5614,7 +5614,10 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
     try:
         from services.outreach_service import sender_profile
         inv_rows = bq_handler.get_received_log(limit=limit, entity_type="investor")
-        inv_addr = sender_profile("investor").get("email") or our_address
+        # Both investor desks plus the founder mailbox: a bounce report quotes
+        # the sender, and the sender must never be read as the dead address.
+        inv_addr = [a for a in (our_address, sender_profile("investor").get("email"),
+                                sender_profile("investor_intl").get("email")) if a]
         inv_newest: Dict[str, dict] = {}
         for r in inv_rows:
             n = r.get("entity_name") or ""
@@ -7143,7 +7146,9 @@ async def investor_compose_draft(investor_name: str):
         subject = base if base.lower().startswith("re:") else f"Re: {base}"
     if investor.get("source") == "Internal Test":
         to = INVESTOR_TEST_RECIPIENT
-    return {"to": to, "subject": subject, "body": "", "investor": investor_name, "from": sender_label("investor")}
+    from services.outreach_service import investor_sender_kind
+    return {"to": to, "subject": subject, "body": "", "investor": investor_name,
+            "from": sender_label(investor_sender_kind(investor))}
 
 
 @app.post("/admin/investors/test-seed")
@@ -7203,8 +7208,11 @@ async def send_investor_outreach(req: InvestorOutreachSendRequest):
             in_reply_to, references = t.get("in_reply_to", ""), t.get("references", "")
         except Exception as e:
             logger.warning(f"thread lookup failed for investor {req.investor_name}: {e}")
+    # Which desk sends is decided by the investor's region, never by the caller.
+    from services.outreach_service import investor_sender_kind
+    _row = investor_handler.get_by_name(req.investor_name) if req.investor_name else None
     result = send_email(to, req.subject, req.body, in_reply_to=in_reply_to,
-                        references=references, sender="investor")
+                        references=references, sender=investor_sender_kind(_row))
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result["detail"])
     if req.investor_name:
