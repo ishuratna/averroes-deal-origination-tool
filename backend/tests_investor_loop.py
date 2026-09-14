@@ -189,5 +189,19 @@ chk("sync advances investors only on a GENUINE reply (NON_REPLY_CLASSES)",
 chk("sync stamps the investor's last reply", "investor_handler.stamp_reply(" in sync_src)
 
 print()
+print("── Out-of-office for investors (Ishu, 14 Sep 2026) ──")
+import inspect as _insp
+ih_src = open("storage/investor_handler.py").read()
+chk("investors carry the same OOO columns as targets", '("ooo_until", "STRING"), ("ooo_note", "STRING")' in ih_src)
+chk("stamp_ooo clears reply state like the company UPDATE", "last_reply_at = NULL, reply_classification = NULL" in ih_src.split("def stamp_ooo")[1].split("def ")[0])
+ooo_src = main_src.split("def _apply_ooo")[1].split("# ── Delivery verification")[0]
+chk("_apply_ooo writes investors through investor_handler.stamp_ooo", "investor_handler.stamp_ooo(" in ooo_src)
+chk("...pulls a Responded investor back to Contacted (or Researched if never sent)",
+    '"Contacted" if row.get("outreach_sent_at") else "Researched"' in ooo_src)
+chk("the sync no longer skips investor autoresponders", 'if e.get("entity_type") not in ("company", "investor"):' in main_src)
+fu_src = main_src.split('if entity == "investor":')[1].split("else:")[0]
+chk("the investor follow-up SQL defers on ooo_until exactly like companies", "NULLIF(t.ooo_until, '')" in fu_src)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

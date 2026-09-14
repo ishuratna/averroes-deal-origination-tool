@@ -214,8 +214,20 @@ export const dealApi = {
   //
   // Defaults to a preview so a caller can show the user what would change
   // before anything moves. `confirm` carries the names the user has agreed to.
-  async reconcileReplyRule(apply = false, confirm: string[] = []): Promise<ReplyRuleResult> {
+  async reconcileReplyRule(apply = false, confirm: string[] = [], entity: 'company' | 'investor' = 'company'): Promise<ReplyRuleResult> {
     const qs = new URLSearchParams({ dry_run: apply ? '0' : '1' });
+    if (entity === 'investor') {
+      // Same rule, the investors table. Confirmed names travel in the body.
+      const response = await apiFetch(`${API_BASE_URL}/investors/reply-rule/reconcile?${qs}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm }),
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail || 'Failed to reconcile the investor reply rule');
+      }
+      return await response.json();
+    }
     if (confirm.length) qs.set('confirm', confirm.join(','));
     const response = await apiFetch(`${API_BASE_URL}/reply-rule/reconcile?${qs}`, { method: 'POST' });
     if (!response.ok) {
@@ -469,6 +481,19 @@ export const dealApi = {
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || 'Investor upload failed');
+    }
+    return await response.json();
+  },
+
+  // Out of the working pipeline and back to the universe (Researched or
+  // Identified). Send stamps reset; history kept.
+  async retireInvestor(name: string): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/investors/${encodeURIComponent(name)}/retire`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not return the investor to the universe');
     }
     return await response.json();
   },

@@ -502,13 +502,15 @@ class BigQueryHandler:
     # Responded on the strength of a mailer-daemon message.
     NON_REPLY_CLASSES = ("out_of_office", "bounce")
 
-    def _genuine_reply_sql(self) -> str:
-        """The one definition of 'this company replied'. Returns a subquery
-        yielding one row per company that has at least one real inbound message.
+    def _genuine_reply_sql(self, entity_type: str = "company") -> str:
+        """The one definition of 'they replied'. Returns a subquery yielding one
+        row per entity that has at least one real inbound message.
 
         Kept as a single fragment rather than repeated inline so a change to the
-        rule cannot land on one page and miss another.
+        rule cannot land on one page and miss another. `entity_type` lets the
+        investor loop use the SAME predicate (14 Sep 2026) instead of a copy.
         """
+        assert entity_type in ("company", "investor")
         log = f"{self.project_id}.{self.dataset_id}.email_log"
         excluded = ", ".join(f"'{c}'" for c in self.NON_REPLY_CLASSES)
         return f"""
@@ -522,7 +524,7 @@ class BigQueryHandler:
                           sent_at, NULL)) AS last_reply_at,
                    ARRAY_AGG(direction ORDER BY sent_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS last_direction
             FROM `{log}`
-            WHERE entity_type = 'company'
+            WHERE entity_type = '{entity_type}'
             GROUP BY entity_name
         """
 

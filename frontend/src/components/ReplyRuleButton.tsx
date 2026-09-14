@@ -25,7 +25,12 @@ import { useState } from 'react';
 import { dealApi } from '../services/api';
 import { ReplyRuleResult } from '../types';
 
-export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Promise<void> }) {
+export default function ReplyRuleButton({ onDone, entity = 'company' }: { onDone?: () => void | Promise<void>; entity?: 'company' | 'investor' }) {
+  // ONE component, two tables (14 Sep 2026). For investors "Keep" simply
+  // leaves the row alone (no reply-exempt column there yet), so the rule
+  // will ask again next time.
+  const isInv = entity === 'investor';
+  const who = isInv ? 'investor' : 'company';
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<ReplyRuleResult | null>(null);
   // Per-company answers for the ambiguous rows. Absent = not yet answered.
@@ -36,7 +41,7 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
     setBusy(true);
     setError('');
     try {
-      const r = await dealApi.reconcileReplyRule(false);
+      const r = await dealApi.reconcileReplyRule(false, [], entity);
       setAnswers({});
       setPreview(r);
     } catch (e: any) {
@@ -56,11 +61,11 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
       // the demotion and could move a company the user chose to keep.
       const keep = preview.needs_confirmation
         .filter(m => answers[m.name] === 'keep').map(m => m.name);
-      for (const name of keep) await dealApi.setReplyExempt(name, true);
+      if (!isInv) for (const name of keep) await dealApi.setReplyExempt(name, true);
 
       const move = preview.needs_confirmation
         .filter(m => answers[m.name] === 'move').map(m => m.name);
-      const r = await dealApi.reconcileReplyRule(true, move);
+      const r = await dealApi.reconcileReplyRule(true, move, entity);
 
       setPreview(null);
       setAnswers({});
@@ -83,7 +88,7 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
       <button
         className="rr-btn"
         disabled={busy}
-        title="Check that every company's stage matches the reply rule: Contacted = emailed with no reply yet, Responded = they replied"
+        title={`Check that every ${who}'s stage matches the reply rule: Contacted = emailed with no reply yet, Responded = they replied`}
         onClick={ask}
       >
         {busy && !preview ? 'Checking…' : '⚖ Check stages'}
@@ -145,7 +150,7 @@ export default function ReplyRuleButton({ onDone }: { onDone?: () => void | Prom
                   <p className="why">
                     These sit in Responded with no reply from them in the email log.
                     If they replied by phone, or from an address we do not track, keep
-                    them and the rule will not ask again.
+                    them{isInv ? ' (the rule will ask again next time)' : ' and the rule will not ask again'}.
                   </p>
                   {/* Answering one at a time is right when the cases differ, but a
                       value-rename migration mislabels whole batches identically, so

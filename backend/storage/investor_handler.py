@@ -122,6 +122,9 @@ class InvestorBQHandler:
         ("last_reply_at", "TIMESTAMP"), ("reply_classification", "STRING"),
         ("park_reason", "STRING"), ("park_reason_detail", "STRING"),
         ("bounced_email", "STRING"),         # dead address preserved after a bounce
+        # Out-of-office, same columns as targets (14 Sep 2026): the reminder
+        # waits for their stated return date. An autoresponder is never a reply.
+        ("ooo_until", "STRING"), ("ooo_note", "STRING"),
         # ── Prioritisation for the co-investment raise (ai/lp_priority.py) ──
         ("network_tags", "STRING"),          # comma list: GCC, Bea, Partner, Co-investor, ...
         ("priority_score", "FLOAT64"),       # 0-100, recomputed on every write that changes an input
@@ -505,6 +508,83 @@ class InvestorBQHandler:
             logger.error(f"Failed to update investor status: {e}")
             return False
 
+    def reconcile_reply_stages(self, bq, dry_run: bool = True, confirm: Optional[List[str]] = None) -> Dict:
+        """THE REPLY RULE for investors, on the company machinery (14 Sep 2026).
+
+        Uses bq_handler's ONE genuine-reply predicate (entity_type='investor')
+        and the PURE classify_reply_stage decision. Contacted with a real reply
+        -> Responded (promote). Responded with no real reply -> Contacted, or
+        Researched if nothing was ever sent, but ONLY when confirmed by name:
+        investors carry no `moved_by` trail, so every demotion is asked first.
+        Meeting / Committed / parked are never touched. Dry run by default.
+        """
+        from storage.bq_handler import classify_reply_stage
+        if not self.client:
+            return {"error": "BigQuery unavailable"}
+        confirm = set(confirm or [])
+        rows = self.client.query(f"""
+            WITH g AS ({bq._genuine_reply_sql('investor')})
+            SELECT t.name, t.status, CAST(t.outreach_sent_at AS STRING) AS outreach_sent_at,
+                   IFNULL(g.recv_count, 0) AS recv_count, IFNULL(g.sent_count, 0) AS sent_count,
+                   CAST(g.last_reply_at AS STRING) AS last_reply_at
+            FROM `{self.table_id}` t LEFT JOIN g ON g.entity_name = t.name
+            WHERE t.status IN ('Contacted', 'Responded') AND IFNULL(t.source, '') != 'Internal Test'
+        """).result()
+        promote, demote, ask = [], [], []
+        for r in rows:
+            r = dict(r)
+            has_reply = (r["recv_count"] or 0) > 0
+            emailed = bool(r["outreach_sent_at"]) or (r["sent_count"] or 0) > 0
+            action, target = classify_reply_stage(r["status"], has_reply, emailed,
+                                                  moved_by="", confirmed=r["name"] in confirm)
+            if not action:
+                continue
+            if target == "Qualified":
+                target = "Researched"           # the investor loop's pre-outreach stage
+            item = {"name": r["name"], "from": r["status"], "to": target, "last_reply_at": r["last_reply_at"],
+                    "moved_by": "unknown (investor moves are not attributed)",
+                    "reason": ("genuine reply on record" if action == "promote" else "no genuine reply in the email log")}
+            {"promote": promote, "demote": demote, "ask": ask}[action].append(item)
+        applied = []
+        if not dry_run:
+            for item in promote + demote:
+                if self.update_status(item["name"], item["to"], created_by="reply-rule"):
+                    applied.append(item["name"])
+        # SAME SHAPE as the company reconcile, so ReplyRuleButton renders both.
+        return {"status": "Preview" if dry_run else "Success", "dry_run": dry_run,
+                "counts": {"promote": len(promote), "demote": len(demote), "needs_confirmation": len(ask)},
+                "promote": promote, "demote": demote, "needs_confirmation": ask, "applied": applied,
+                "message": (f"Would move {len(promote)} forward and {len(demote)} back; {len(ask)} need an answer."
+                            if dry_run else f"Moved {len(applied)} investor(s). {len(ask)} still need an answer.")}
+
+    def retire_to_universe(self, name: str, created_by: str = "Ishu Ratna") -> bool:
+        """Take an investor OUT of the working pipeline and back to the universe
+        (Ishu, 14 Sep 2026: "demote or remove... it retires to master").
+        Status returns to Researched if InvestorFill has run, else Identified;
+        the send stamps are cleared so the Outreach button resets; the notes
+        trail, the email log and any bounced address are KEPT, because history
+        is not undone by a change of mind."""
+        if not self.client:
+            return False
+        cur = self.get_by_name(name) or {}
+        if not cur:
+            return False
+        # InvestorFill leaves fit_details / lp_fit_score behind; that is what "Researched" means.
+        target = "Researched" if cur.get("fit_details") or cur.get("lp_fit_score") is not None else "Identified"
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}`
+                    SET outreach_sent_at = NULL, contacted_at = NULL, outreach_drafted_at = NULL,
+                        outreach_draft_to = NULL, outreach_draft_subject = NULL, outreach_draft_body = NULL,
+                        park_reason = NULL, park_reason_detail = NULL, updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("name", "STRING", name)])).result()
+        except Exception as e:
+            logger.error(f"retire_to_universe reset failed for '{name}': {e}")
+            return False
+        return self.update_status(name, target, created_by=created_by, reason="", reason_detail="") \
+            if cur.get("status") != target else bool(self.add_note(name, f"Returned to the universe at {target} [{created_by}]"))
+
     # Stages the bulk park must never touch. A gate verdict is not allowed to
     # undo work done or to re-park the parked (same rule as the company-side
     # stage guard, doctrine 3a).
@@ -584,7 +664,8 @@ class InvestorBQHandler:
                               job_config=bigquery.QueryJobConfig(query_parameters=[
                                   bigquery.ScalarQueryParameter("dead", "STRING", dead_address or ""),
                                   bigquery.ScalarQueryParameter("name", "STRING", name)])).result()
-            self.add_note(name, f"Stage Contacted -> Researched: email bounced ({reason})"
+            what = "email bounced" if dead_address or "bounce" in (reason or "").lower() else "email never left the mailbox"
+            self.add_note(name, f"Stage Contacted -> Researched: {what} ({reason})"
                                 + (f", dead address {dead_address} kept aside" if dead_address else "") + " [delivery-check]")
             return True
         except Exception as e:
@@ -689,6 +770,60 @@ class InvestorBQHandler:
             return True
         except Exception as e:
             logger.error(f"stamp_reply failed for investor '{name}': {e}")
+            return False
+
+    def unverified_sends(self, window_days: int = 30, grace_hours: int = 12) -> List[Dict]:
+        """Investors in Contacted whose outbound email is NOWHERE in the mailbox.
+        Twin of bq_handler.unverified_sends (14 Sep 2026): the sync reads All
+        Mail including Sent, so a send with no direction='sent' row was never
+        filed and nobody received it. Same two guards, window and grace."""
+        if not self.client:
+            return []
+        log = self.table_id.rsplit(".", 1)[0] + ".email_log"
+        try:
+            rows = self.client.query(f"""
+                WITH sent AS (
+                    SELECT DISTINCT entity_name FROM `{log}`
+                    WHERE entity_type = 'investor' AND direction = 'sent'
+                )
+                SELECT t.name, CAST(t.outreach_sent_at AS STRING) AS outreach_sent_at,
+                       IFNULL(t.contact_email, '') AS contact_email
+                FROM `{self.table_id}` t
+                LEFT JOIN sent s ON s.entity_name = t.name
+                WHERE t.status = 'Contacted'
+                  AND t.outreach_sent_at IS NOT NULL
+                  AND s.entity_name IS NULL
+                  AND IFNULL(t.source, '') != 'Internal Test'
+                  AND t.outreach_sent_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(window_days)} DAY)
+                  AND t.outreach_sent_at <= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(grace_hours)} HOUR)
+                ORDER BY t.outreach_sent_at
+            """).result()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"investor unverified_sends failed: {e}")
+            return []
+
+    def stamp_ooo(self, name: str, until: str, note: str) -> bool:
+        """The out-of-office stamp, mirror of the company UPDATE in _apply_ooo:
+        record the return date for the follow-up SQL and CLEAR any reply state,
+        because an autoresponder is not a reply and must not leave a reply
+        chip behind."""
+        if not self.client:
+            return False
+        try:
+            self.client.query(f"""UPDATE `{self.table_id}`
+                    SET ooo_until = @until, ooo_note = @note,
+                        last_reply_at = NULL, reply_classification = NULL,
+                        updated_at = CURRENT_TIMESTAMP()
+                    WHERE LOWER(name) = LOWER(@name)""",
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("until", "STRING", until or ""),
+                    bigquery.ScalarQueryParameter("note", "STRING", note or ""),
+                    bigquery.ScalarQueryParameter("name", "STRING", name),
+                ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"stamp_ooo failed for investor '{name}': {e}")
             return False
 
     def save_outreach_draft(self, name: str, to: str, subject: str, body: str) -> bool:

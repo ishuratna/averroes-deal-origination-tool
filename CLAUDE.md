@@ -165,6 +165,32 @@ mistake is both visible and correctable. This one logged nothing, which is why
   8 Sep 2026, so the loop can be exercised now. `sync_mailbox` reads every
   configured mailbox once (deduped by address); direction is detected per
   mailbox.
+- TWO INVESTOR DESKS, ROUTED BY REGION (Ishu, 14 Sep 2026, "rule number
+  one"): Ellie runs the Middle East pipeline from `INVESTOR_*`; Bea runs UK,
+  Europe and everyone else from her SECONDARY mailbox, `INVESTOR_INTL_*`.
+  `outreach_service.investor_sender_kind(investor)` is the ONE decision
+  (region rollup == Middle East, or a GCC tag -> "investor"; everything else,
+  INCLUDING unknown, -> "investor_intl"): unknown goes to Bea because a wrong
+  guess there costs a forwarded email while the other way invites a Zurich
+  office to Riyadh. The draft, follow-up, compose, the send path (which
+  derives the desk from the ROW, never from the caller), the sync mailbox
+  list and the bounce pass all go through it. `bounced_address(exclude=...)`
+  takes every one of our addresses, because a bounce report quotes the
+  sender and the sender must never be read as the dead address.
+- THE INVESTOR LOOP HAS THE WHOLE LIFECYCLE (14 Sep 2026), mirrored from 2b:
+  OOO stamps `ooo_until/ooo_note` on `investors` via `stamp_ooo` (same
+  columns, same clearing of reply state), `_apply_ooo` handles both entity
+  types and pulls a wrongly-Responded investor back to Contacted (Researched
+  if never sent); the follow-up SQL defers on `ooo_until` for both tables.
+  `_investor_delivery_pass` applies BOUNCE and NEVER SENT
+  (`investor_handler.unverified_sends`, twin of the company query, same
+  window and grace guards) and is included in the dry-run preview. The reply
+  rule runs on the investors table through `_genuine_reply_sql('investor')`
+  (the one predicate, parameterised, never copied) and the same PURE
+  `classify_reply_stage`; every demotion is ASKED because investor moves are
+  not attributed. `ReplyRuleButton entity="investor"` on the Investor
+  Pipeline. `retire_to_universe` is the investor "remove": back to Researched
+  or Identified, send stamps reset, notes and email log kept.
 - The Internal Test INVESTOR (`INVESTOR_TEST_NAME`, source = 'Internal Test',
   created/reset via POST /admin/investors/test-seed) has its recipient forced
   to `INVESTOR_TEST_RECIPIENT` (Ishu) on draft, follow-up, compose and send,

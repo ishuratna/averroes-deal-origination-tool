@@ -19,6 +19,7 @@ import SideNav from '../../../components/SideNav';
 import MultiSelect from '../../../components/MultiSelect';
 import OutreachModal from '../../../components/OutreachModal';
 import SyncEmailsButton from '../../../components/SyncEmailsButton';
+import ReplyRuleButton from '../../../components/ReplyRuleButton';
 import InvestorStageControl, { INVESTOR_STAGE_COLORS } from '../../../components/InvestorStageControl';
 import InvestorProfile from '../../../components/InvestorProfile';
 import { PriorityChip, TagChips } from '../../../components/InvestorPriority';
@@ -139,6 +140,7 @@ function InvestorPipelineInner() {
                 ⏰ Follow up <span className="followup-count">{followups.length}</span>
               </button>
             )}
+            <ReplyRuleButton entity="investor" onDone={load} />
             <SyncEmailsButton onSynced={load} />
           </div>
         </div>

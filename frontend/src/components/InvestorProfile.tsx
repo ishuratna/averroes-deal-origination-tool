@@ -84,6 +84,17 @@ export default function InvestorProfile({ investor, onClose, onChanged }: {
             <button className="cp-chip-btn" disabled={filling} onClick={runFill}>{filling ? 'Working…' : 'InvestorFill'}</button>
             <button className={`cp-chip-btn primary ${ob.cls}`} title={ob.title} onClick={() => setOutreachOpen(true)}>{ob.label}</button>
             <InvestorStageControl name={inv.name} status={inv.status} className="ip-stage" onChanged={onChanged} />
+            {/* Out of the working pipeline and back to the universe (Ishu, 14 Sep 2026).
+                Only offered once outreach has started; before that the stage control
+                already covers every move. History (notes, emails, bounces) is kept. */}
+            {['Contacted', 'Responded', 'Meeting', 'Passed', 'Talk Later'].includes(inv.status || '') && (
+              <button className="cp-chip-btn" title="Take this investor out of the working pipeline and back to the universe (Researched or Identified). Notes and the email thread are kept; the Outreach button resets."
+                      onClick={async () => {
+                        if (!confirm(`Return ${inv.name} to the universe? It leaves the pipeline; notes and emails are kept.`)) return;
+                        try { await dealApi.retireInvestor(inv.name); await onChanged(); }
+                        catch (e: any) { alert(e?.message || 'Could not return to the universe'); }
+                      }}>↩ Return to universe</button>
+            )}
           </div>
           <button className="cp-close" onClick={onClose}>✕</button>
         </div>

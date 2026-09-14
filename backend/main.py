@@ -1606,8 +1606,8 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
         table = investor_handler.table_id
         fit_col = "t.lp_fit_score AS averroes_fit_score"
         extra_cols = ("CAST(NULL AS STRING) AS action_bucket, CAST(NULL AS STRING) AS track, "
-                      "CAST(NULL AS STRING) AS ooo_until, CAST(NULL AS STRING) AS ooo_note")
-        ooo_expr = "CAST(NULL AS STRING)"          # investors carry no OOO stamps yet
+                      "NULLIF(t.ooo_until, '') AS ooo_until, t.ooo_note")
+        ooo_expr = "NULLIF(t.ooo_until, '')"       # same deferral rule as companies (14 Sep 2026)
         stage_filter = "t.status IN ('Contacted', 'Responded', 'Meeting')"
     else:
         entity_type = "company"
@@ -5434,19 +5434,24 @@ def _as_date(ts) -> "date_cls":
 
 
 def _apply_ooo(entry: dict) -> dict:
-    """Record an out-of-office autoresponder against its company.
+    """Record an out-of-office autoresponder against its company OR investor.
 
     Three things happen, and NOT the fourth:
       * ooo_until / ooo_note are stamped so /followups can push the reminder
         out past their return date.
       * Any reply-derived state is cleared, because an autoresponder is not a
         reply and must not leave a reply chip or an action bucket behind.
-      * If a previous sync had advanced this company to Responded off the back
+      * If a previous sync had advanced this row to Responded off the back
         of this autoresponder, it is pulled straight back to Contacted.
       * We do NOT advance the stage and do NOT spend an action-bucket call.
+
+    ONE rule, two tables (Ishu, 14 Sep 2026: "out of office, let's build it
+    out for investors too"). The investor branch writes through
+    investor_handler so the two never drift on which columns an OOO touches.
     """
     from google.cloud import bigquery as bq_lib
     name = entry["entity_name"]
+    is_investor = entry.get("entity_type") == "investor"
     got = entry.get("_ooo") or {}
     until = got.get("until")
     until_s = until.isoformat() if until else ""
@@ -5462,41 +5467,55 @@ def _apply_ooo(entry: dict) -> dict:
         note = ("Out of office, no return date stated in the autoresponder. "
                 "Follow-up reminder stays at 14 days.")
 
-    bq_handler.client.query(
-        f"""UPDATE `{bq_handler.table_id}` SET
-                ooo_until = @until, ooo_note = @note,
-                last_reply_at = NULL, reply_classification = NULL,
-                action_bucket = NULL, action_rationale = NULL,
-                action_follow_up_date = NULL, action_set_at = NULL,
-                action_reply_subject = NULL, action_reply_body = NULL
-            WHERE name = @name""",
-        job_config=bq_lib.QueryJobConfig(query_parameters=[
-            bq_lib.ScalarQueryParameter("until", "STRING", until_s),
-            bq_lib.ScalarQueryParameter("note", "STRING", note),
-            bq_lib.ScalarQueryParameter("name", "STRING", name),
-        ])).result()
+    if is_investor:
+        investor_handler.stamp_ooo(name, until_s, note)
+    else:
+        bq_handler.client.query(
+            f"""UPDATE `{bq_handler.table_id}` SET
+                    ooo_until = @until, ooo_note = @note,
+                    last_reply_at = NULL, reply_classification = NULL,
+                    action_bucket = NULL, action_rationale = NULL,
+                    action_follow_up_date = NULL, action_set_at = NULL,
+                    action_reply_subject = NULL, action_reply_body = NULL
+                WHERE name = @name""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("until", "STRING", until_s),
+                bq_lib.ScalarQueryParameter("note", "STRING", note),
+                bq_lib.ScalarQueryParameter("name", "STRING", name),
+            ])).result()
 
-    # An autoresponder must never leave a company sitting in Responded. If an
+    # An autoresponder must never leave a row sitting in Responded. If an
     # earlier sync advanced it (before OOO was understood), pull it back now.
     pulled = False
     try:
-        rows = list(bq_handler.client.query(
-            f"SELECT status, outreach_sent_at FROM `{bq_handler.table_id}` WHERE name = @name LIMIT 1",
-            job_config=bq_lib.QueryJobConfig(query_parameters=[
-                bq_lib.ScalarQueryParameter("name", "STRING", name)])).result())
-        if rows and rows[0].status == "Responded":
-            target = "Contacted" if rows[0].outreach_sent_at else "Qualified"
-            bq_handler.update_company_status(name, target, created_by="email-sync")
-            pulled = True
-            note += f" Pulled back to {target}: an out-of-office is not a reply."
+        if is_investor:
+            row = investor_handler.get_by_name(name) or {}
+            if row.get("status") == "Responded":
+                target = "Contacted" if row.get("outreach_sent_at") else "Researched"
+                investor_handler.update_status(name, target, created_by="email-sync")
+                pulled = True
+                note += f" Pulled back to {target}: an out-of-office is not a reply."
+        else:
+            rows = list(bq_handler.client.query(
+                f"SELECT status, outreach_sent_at FROM `{bq_handler.table_id}` WHERE name = @name LIMIT 1",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("name", "STRING", name)])).result())
+            if rows and rows[0].status == "Responded":
+                target = "Contacted" if rows[0].outreach_sent_at else "Qualified"
+                bq_handler.update_company_status(name, target, created_by="email-sync")
+                pulled = True
+                note += f" Pulled back to {target}: an out-of-office is not a reply."
     except Exception as e:
         logger.warning(f"OOO pull-back check failed for {name}: {e}")
 
-    bq_handler._log_activity(name, "note", "email-sync", note_text=note,
-                             event_time=entry.get("sent_at"))
+    if is_investor:
+        investor_handler.add_note(name, note + " [email-sync]")
+    else:
+        bq_handler._log_activity(name, "note", "email-sync", note_text=note,
+                                 event_time=entry.get("sent_at"))
     logger.info(f"[OOO] {name}: until={until_s or 'unknown'} pulled_back={pulled}")
     return {"name": name, "until": until_s, "date_source": got.get("date_source", ""),
-            "pulled_back": pulled}
+            "pulled_back": pulled, "entity_type": "investor" if is_investor else "company"}
 
 
 # ── Delivery verification ────────────────────────────────────────────────────
@@ -5511,6 +5530,69 @@ def _apply_ooo(entry: dict) -> dict:
 #
 # Runs inside the email sync, which has already read the mailbox, so this costs
 # no extra IMAP work and no AI.
+
+def _investor_delivery_pass(dry_run: bool, window_days: int, grace_hours: int, limit: int) -> dict:
+    """THE INVESTOR LOOP, same two rules as companies (14 Sep 2026, Ishu: "if
+    an email actually pushes successfully only then it remains Contacted"):
+      BOUNCE     the investor's newest inbound is a bounce not superseded by a
+                 later send -> back to Researched, dead address retired.
+      NEVER SENT no direction='sent' row inside the scanned window, past the
+                 grace period -> back to Researched.
+    Only Contacted investors are touched; Responded and later carry real work.
+    """
+    from services.delivery_check import classify_delivery, bounce_superseded as _sup
+    from services.outreach_service import sender_profile
+    our_address = os.getenv("OUTREACH_EMAIL", "beatrice@averroescapital.com")
+    plan, marks = [], []
+    try:
+        inv_rows = bq_handler.get_received_log(limit=limit, entity_type="investor")
+        # Both investor desks plus the founder mailbox: a bounce report quotes
+        # the sender, and the sender must never be read as the dead address.
+        inv_addr = [a for a in (our_address, sender_profile("investor").get("email"),
+                                sender_profile("investor_intl").get("email")) if a]
+        inv_newest: Dict[str, dict] = {}
+        for r in inv_rows:
+            n = r.get("entity_name") or ""
+            if n and (n not in inv_newest or str(r.get("sent_at") or "") > str(inv_newest[n].get("sent_at") or "")):
+                inv_newest[n] = r
+        for r in inv_rows:
+            got = classify_delivery(r.get("subject", ""), r.get("snippet", ""),
+                                    from_addr=r.get("counterparty_email", ""), our_address=inv_addr)
+            if not got["is_bounce"]:
+                continue
+            if r.get("classification") != "bounce":
+                marks.append(r["message_id"])
+            name = r.get("entity_name") or ""
+            if inv_newest.get(name, {}).get("message_id") != r.get("message_id"):
+                continue
+            inv = investor_handler.get_by_name(name) or {}
+            if inv.get("status") != "Contacted" or inv.get("source") == "Internal Test":
+                continue
+            if _sup(r.get("sent_at"), inv.get("outreach_sent_at")):
+                continue
+            plan.append({"name": name, "kind": "bounced", "reason": got["reason"], "address": got["address"] or ""})
+        planned = {p["name"] for p in plan}
+        for m in investor_handler.unverified_sends(window_days=window_days, grace_hours=grace_hours):
+            if m["name"] not in planned:
+                plan.append({"name": m["name"], "kind": "not_sent", "address": "",
+                             "reason": "no outbound message for this investor exists in the mailbox"})
+    except Exception as e:
+        logger.warning(f"[Delivery] investor pass failed: {e}")
+        return {"would_pull_back": [], "pulled_back": [], "error": str(e)}
+
+    if dry_run:
+        return {"would_pull_back": plan, "pulled_back": []}
+    pulled = []
+    for p in plan:
+        if investor_handler.pull_back_undelivered(p["name"], p["reason"], p["address"]):
+            pulled.append(f"{p['name']} ({p['kind']})")
+    if marks:
+        try:
+            bq_handler.mark_emails_classification(marks, "bounce")
+        except Exception as e:
+            logger.warning(f"[Delivery] marking investor bounces failed: {e}")
+    return {"would_pull_back": plan, "pulled_back": pulled}
+
 
 def _verify_delivery(dry_run: bool = False, window_days: int = 30,
                      grace_hours: int = 12, limit: int = 5000) -> dict:
@@ -5584,6 +5666,8 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
                for m in missing if _eligible(m["name"])])
 
     if dry_run:
+        inv_preview = _investor_delivery_pass(dry_run=True, window_days=window_days,
+                                              grace_hours=grace_hours, limit=limit)["would_pull_back"]
         return {
             "status": "Preview", "dry_run": True,
             "scanned_messages": len(rows),
@@ -5592,6 +5676,7 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
             "sends_missing_from_mailbox": len(missing),
             "would_pull_back": len(plan),
             "companies": sorted(plan, key=lambda p: (p["kind"], p["name"])),
+            "investors": sorted(inv_preview, key=lambda p: (p["kind"], p["name"])),
             "message": "Nothing was changed. Re-run with dry_run=0 to apply.",
         }
 
@@ -5607,47 +5692,8 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
         if bq_handler.pull_back_undelivered(p["name"], p["reason"], p["address"], p["kind"]):
             applied.append(f"{p['name']} ({p['kind']})")
 
-    # THE INVESTOR LOOP, same rule: a bounce that is the investor's newest inbound
-    # and not superseded by a later send pulls a Contacted investor back to
-    # Researched and retires the dead address. Never touches later stages.
-    inv_pulled: List[str] = []
-    try:
-        from services.outreach_service import sender_profile
-        inv_rows = bq_handler.get_received_log(limit=limit, entity_type="investor")
-        # Both investor desks plus the founder mailbox: a bounce report quotes
-        # the sender, and the sender must never be read as the dead address.
-        inv_addr = [a for a in (our_address, sender_profile("investor").get("email"),
-                                sender_profile("investor_intl").get("email")) if a]
-        inv_newest: Dict[str, dict] = {}
-        for r in inv_rows:
-            n = r.get("entity_name") or ""
-            if n and (n not in inv_newest or str(r.get("sent_at") or "") > str(inv_newest[n].get("sent_at") or "")):
-                inv_newest[n] = r
-        inv_marks = []
-        for r in inv_rows:
-            got = classify_delivery(r.get("subject", ""), r.get("snippet", ""),
-                                    from_addr=r.get("counterparty_email", ""), our_address=inv_addr)
-            if not got["is_bounce"]:
-                continue
-            if r.get("classification") != "bounce":
-                inv_marks.append(r["message_id"])
-            name = r.get("entity_name") or ""
-            if inv_newest.get(name, {}).get("message_id") != r.get("message_id"):
-                continue
-            inv = investor_handler.get_by_name(name) or {}
-            if inv.get("status") != "Contacted":
-                continue
-            from services.delivery_check import bounce_superseded as _sup
-            if _sup(r.get("sent_at"), inv.get("outreach_sent_at")):
-                continue
-            if not dry_run and investor_handler.pull_back_undelivered(name, got["reason"], got["address"] or ""):
-                inv_pulled.append(name)
-            elif dry_run:
-                inv_pulled.append(name)
-        if inv_marks and not dry_run:
-            bq_handler.mark_emails_classification(inv_marks, "bounce")
-    except Exception as e:
-        logger.warning(f"[Delivery] investor bounce pass failed: {e}")
+    inv_pulled = _investor_delivery_pass(dry_run=False, window_days=window_days,
+                                         grace_hours=grace_hours, limit=limit)["pulled_back"]
 
     # Positive evidence for everyone else, so the check is cheap next time.
     verified = [c["name"] for c in live.values()
@@ -6370,7 +6416,7 @@ async def _sync_emails_impl(days: int, deep: bool):
     advanced, classified = [], 0
     ooo_applied = []
     for e in ooo_hits:
-        if e.get("entity_type") != "company":
+        if e.get("entity_type") not in ("company", "investor"):
             continue
         try:
             ooo_applied.append(_apply_ooo(e))
@@ -7225,6 +7271,42 @@ async def send_investor_outreach(req: InvestorOutreachSendRequest):
         investor_handler.add_note(req.investor_name, note)
         result["new_status"] = after
     return result
+
+
+class InvestorRetireRequest(BaseModel):
+    created_by: Optional[str] = "Ishu Ratna"
+
+
+@app.post("/investors/{investor_name}/retire")
+async def retire_investor(investor_name: str, req: InvestorRetireRequest):
+    """Take an investor out of the working pipeline and back to the universe
+    (Researched if researched, else Identified). Send stamps reset so Outreach
+    starts clean; notes, email log and bounced address are kept."""
+    if not investor_handler.get_by_name(investor_name):
+        raise HTTPException(status_code=404, detail=f"Investor '{investor_name}' not found")
+    if not investor_handler.retire_to_universe(investor_name, created_by=req.created_by or "Ishu Ratna"):
+        raise HTTPException(status_code=500, detail="Retire failed")
+    row = investor_handler.get_by_name(investor_name) or {}
+    return {"status": "Success", "investor": investor_name, "new_status": row.get("status")}
+
+
+class InvestorReplyRuleRequest(BaseModel):
+    confirm: Optional[List[str]] = None      # names whose demotion the user has approved
+
+
+@app.post("/investors/reply-rule/reconcile")          # browser (session)
+@app.post("/admin/investors/reply-rule/reconcile")    # terminal (token), sign-in exempt
+async def investors_reply_rule_reconcile(request: Request,
+                                         dry_run: int = Query(1, description="1 = preview only (default), 0 = apply"),
+                                         req: Optional[InvestorReplyRuleRequest] = None):
+    """THE REPLY RULE for investors: Contacted with a genuine reply -> Responded;
+    Responded with none -> asked, then Contacted (or Researched if never sent)
+    once confirmed by name. Same predicate and same decision function as the
+    company rule. Dry run by default."""
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
+    confirm = (req.confirm if req else None) or []
+    return investor_handler.reconcile_reply_stages(bq_handler, dry_run=bool(dry_run), confirm=confirm)
 
 
 @app.put("/investors/{investor_name}/status")
