@@ -167,7 +167,12 @@ mistake is both visible and correctable. This one logged nothing, which is why
   mailbox.
 - TWO INVESTOR DESKS, ROUTED BY REGION (Ishu, 14 Sep 2026, "rule number
   one"): Ellie runs the Middle East pipeline from `INVESTOR_*`; Bea runs UK,
-  Europe and everyone else from her SECONDARY mailbox, `INVESTOR_INTL_*`.
+  Europe and everyone else. Her desk IS the founder outreach mailbox BY
+  DESIGN (Ishu, same day: "Bea's secondary email is the same I use for
+  companies, so use the same"), so `sender_profile("investor_intl")` returns
+  the founder mailbox with `fallback=False`; `INVESTOR_INTL_*` exists only to
+  split it later without a code change. Bea's signature is used whenever the
+  message leaves Bea's address, whichever desk asked.
   `outreach_service.investor_sender_kind(investor)` is the ONE decision
   (region rollup == Middle East, or a GCC tag -> "investor"; everything else,
   INCLUDING unknown, -> "investor_intl"): unknown goes to Bea because a wrong

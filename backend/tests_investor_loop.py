@@ -50,9 +50,9 @@ chk("founder profile untouched", osvc.sender_profile("founder")["email"], osvc.S
 print()
 print("── Two investor desks, routed by region (Ishu, 14 Sep 2026) ──")
 intl = osvc.sender_profile("investor_intl")
-chk("the UK/Europe/global desk borrows the founder mailbox until INVESTOR_INTL_* is set",
-    (intl["email"], intl["fallback"]), (osvc.SENDER_EMAIL, True))
-chk("...and its label names the desk", "UK, Europe and global desk" in osvc.sender_label("investor_intl")
+chk("the UK/Europe/global desk IS the founder mailbox by design (Ishu: 'use the same'), not a fallback",
+    (intl["email"], intl["fallback"], intl["kind"]), (osvc.SENDER_EMAIL, False, "investor_intl"))
+chk("...so its label never says 'not configured yet'", "not configured yet" not in osvc.sender_label("investor_intl")
     if osvc.sender_profile("founder")["configured"] else True)
 os.environ["INVESTOR_INTL_OUTREACH_EMAIL"] = "bea2@averroescapital.com"
 os.environ["INVESTOR_INTL_SMTP_PASSWORD"] = "app-pass-2"

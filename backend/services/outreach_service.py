@@ -771,6 +771,12 @@ def sender_profile(kind: str = "founder") -> Dict[str, str]:
             "sig_phone": os.getenv(f"{px}SIGNATURE_PHONE", ""),
             "configured": True, "fallback": False, "desk": _INVESTOR_DESK[kind],
         }
+    if kind == "investor_intl":
+        # BY DESIGN, not a fallback (Ishu, 14 Sep 2026: "Bea's secondary email
+        # is the same I use for companies, so use the same"). The UK, Europe
+        # and global desk IS the founder mailbox unless INVESTOR_INTL_* says
+        # otherwise. Same address, same signature, read once by the sync.
+        return {**founder, "kind": kind, "fallback": False, "desk": _INVESTOR_DESK[kind]}
     return {**founder, "kind": kind, "fallback": True, "desk": _INVESTOR_DESK[kind]}
 
 
@@ -840,7 +846,8 @@ def send_email(to: str, subject: str, body: str,
     if not to:
         return {"status": "error", "detail": "No recipient email address provided."}
 
-    sig = _founder_sig if prof["kind"] == "founder" or prof.get("fallback") else build_signature(
+    # Bea's signature whenever the message leaves Bea's mailbox, whichever desk asked.
+    sig = _founder_sig if (prof["email"] or "").lower() == (SENDER_EMAIL or "").lower() or prof.get("fallback") else build_signature(
         prof["sig_name"] or prof["name"], prof["sig_title"], prof["email"], prof["sig_phone"])
     try:
         # multipart/related wraps the alternative (text + html) AND the inline
