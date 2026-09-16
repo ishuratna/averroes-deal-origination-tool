@@ -22,6 +22,9 @@ PROJECT="${PROJECT:-averroes-deal-origination}"
 SERVICE="${SERVICE:-averroes-deal-backend}"
 REGION="${REGION:-europe-west1}"
 TZ_NAME="${TZ_NAME:-Europe/London}"
+# Cron for the export. Nightly by default (storage is pennies); Ishu asked for
+# monthly on 16 Sep 2026, so: EXPORT_SCHEDULE="0 3 1 * *" bash .../setup_backup_schedule.sh
+EXPORT_SCHEDULE="${EXPORT_SCHEDULE:-30 2 * * *}"
 
 echo "Project : $PROJECT"
 echo "Service : $SERVICE ($REGION)"
@@ -105,7 +108,7 @@ make_job "averroes-archive-nightly" "0 2 * * *" \
   "${BASE}/admin/archive/run?token=${TOKEN}&note=nightly" \
   "Append every changed company to targets_archive (append-only history)"
 
-make_job "averroes-backup-export-nightly" "30 2 * * *" \
+make_job "averroes-backup-export-nightly" "$EXPORT_SCHEDULE" \
   "${BASE}/admin/backup/export?token=${TOKEN}" \
   "Export all BigQuery tables to the backup bucket (runs after the archive)"
 

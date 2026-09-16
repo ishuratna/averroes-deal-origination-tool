@@ -292,8 +292,21 @@ def export_tables_to_gcs(bq, bucket: str, prefix: str = "") -> Dict:
         compression=bigquery.Compression.GZIP,
     )
 
+    # EVERY table in the dataset, discovered at run time (16 Sep 2026). The
+    # fixed EXPORT_TABLES list silently missed every table added after it was
+    # written (company_financials, email documents, ...), and a backup that
+    # omits the newest tables is the one that fails on the day it is needed.
+    # Each run is a COMPLETE snapshot of every table into its own dated
+    # folder, never a delta: January's folder is January, February's is
+    # February, and nothing in one is ever mixed into the other.
+    try:
+        tables = sorted(t.table_id for t in bq.client.list_tables(f"{bq.project_id}.{bq.dataset_id}")
+                        if t.table_type == "TABLE")
+    except Exception as e:
+        logger.warning(f"[Backup] could not list tables ({e}); falling back to the fixed list")
+        tables = list(EXPORT_TABLES)
     exported, failed = [], []
-    for t in EXPORT_TABLES:
+    for t in tables:
         src = f"{bq.project_id}.{bq.dataset_id}.{t}"
         # Wildcard so BigQuery can shard large tables itself.
         dest = f"{base}/{t}/{t}-*.json.gz"
