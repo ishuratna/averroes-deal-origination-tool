@@ -4443,48 +4443,83 @@ async def contacts_placeholder_audit(request: Request,
     address (the bounce pass owns that case).
     """
     _require_token(request)
-    from services.contact_finder import is_placeholder_email
+    from services.contact_finder import normalise_email
     from google.cloud import bigquery as bq_lib
+
+    def _judge(raw: str) -> tuple:
+        """('ok' | 'repair' | 'clear', decoded). A stored value that decodes to
+        a different, real address is REPAIRED (entity/percent obfuscation on
+        the company's own site); one that decodes to nothing is CLEARED."""
+        fixed = normalise_email(raw)
+        if fixed and fixed == raw.strip().lower():
+            return "ok", fixed
+        return ("repair", fixed) if fixed else ("clear", "")
+
     hits = {"companies": [], "investors": []}
     for c in bq_handler.get_universe():
         e = (c.get("contact_email") or "").strip()
-        if e and is_placeholder_email(e):
-            hits["companies"].append({"name": c.get("name"), "email": e, "status": c.get("status"),
-                                      "source": c.get("contact_email_source") or "",
+        if not e:
+            continue
+        verdict, fixed = _judge(e)
+        if verdict != "ok":
+            hits["companies"].append({"name": c.get("name"), "email": e, "action": verdict, "repaired_to": fixed,
+                                      "status": c.get("status"), "source": c.get("contact_email_source") or "",
                                       "emailed_here": bool(c.get("outreach_sent_at")) and c.get("status") in ("Contacted", "Responded")})
     for i in investor_handler.get_all():
         e = (i.get("contact_email") or "").strip()
-        if e and is_placeholder_email(e):
-            hits["investors"].append({"name": i.get("name"), "email": e, "status": i.get("status"),
-                                      "emailed_here": bool(i.get("outreach_sent_at"))})
-    cleared = {"companies": 0, "investors": 0}
+        if not e:
+            continue
+        verdict, fixed = _judge(e)
+        if verdict != "ok":
+            hits["investors"].append({"name": i.get("name"), "email": e, "action": verdict, "repaired_to": fixed,
+                                      "status": i.get("status"), "emailed_here": bool(i.get("outreach_sent_at"))})
+    done = {"companies_cleared": 0, "companies_repaired": 0, "investors_cleared": 0, "investors_repaired": 0}
     if not dry_run:
         for h in hits["companies"]:
             if h["emailed_here"]:
                 continue
+            if h["action"] == "repair":
+                bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET contact_email = @fixed,
+                            contact_email_source = CONCAT(IFNULL(contact_email_source, ''), ' | decoded from an obfuscated address')
+                        WHERE name = @name AND contact_email = @email""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("fixed", "STRING", h["repaired_to"]),
+                        bq_lib.ScalarQueryParameter("name", "STRING", h["name"]),
+                        bq_lib.ScalarQueryParameter("email", "STRING", h["email"])])).result()
+                bq_handler.add_activity_note(h["name"], f"Contact email decoded: the site had obfuscated it as {h['email']}; stored as {h['repaired_to']}.", "placeholder-audit")
+                done["companies_repaired"] += 1
+                continue
             bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET contact_email = NULL,
                         contact_email_kind = NULL, contact_email_name = NULL,
-                        contact_email_source = 'cleared: placeholder address, not a mailbox'
+                        contact_email_source = 'cleared: placeholder or junk, not a mailbox'
                     WHERE name = @name AND contact_email = @email""",
                 job_config=bq_lib.QueryJobConfig(query_parameters=[
                     bq_lib.ScalarQueryParameter("name", "STRING", h["name"]),
                     bq_lib.ScalarQueryParameter("email", "STRING", h["email"])])).result()
-            bq_handler.add_activity_note(h["name"], f"Contact email {h['email']} cleared: a form placeholder or template, not a mailbox. Re-run SmartFill to find the real address.", "placeholder-audit")
-            cleared["companies"] += 1
+            bq_handler.add_activity_note(h["name"], f"Contact email {h['email']!r} cleared: a form placeholder, template or junk, not a mailbox. Re-run SmartFill to find the real address.", "placeholder-audit")
+            done["companies_cleared"] += 1
         for h in hits["investors"]:
             if h["emailed_here"]:
                 continue
-            investor_handler.client.query(f"""UPDATE `{investor_handler.table_id}` SET contact_email = NULL,
+            new_val = h["repaired_to"] if h["action"] == "repair" else None
+            investor_handler.client.query(f"""UPDATE `{investor_handler.table_id}` SET contact_email = @fixed,
                         updated_at = CURRENT_TIMESTAMP()
                     WHERE name = @name AND contact_email = @email""",
                 job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("fixed", "STRING", new_val),
                     bq_lib.ScalarQueryParameter("name", "STRING", h["name"]),
                     bq_lib.ScalarQueryParameter("email", "STRING", h["email"])])).result()
-            investor_handler.add_note(h["name"], f"Contact email {h['email']} cleared: a placeholder, not a mailbox [placeholder-audit]")
-            cleared["investors"] += 1
+            if new_val:
+                investor_handler.add_note(h["name"], f"Contact email decoded from {h['email']} to {new_val} [placeholder-audit]")
+                done["investors_repaired"] += 1
+            else:
+                investor_handler.add_note(h["name"], f"Contact email {h['email']!r} cleared: a placeholder or junk, not a mailbox [placeholder-audit]")
+                done["investors_cleared"] += 1
     return {"dry_run": bool(dry_run), "found": {k: len(v) for k, v in hits.items()},
-            "cleared": cleared, "companies": hits["companies"][:200], "investors": hits["investors"][:200],
-            "message": "Nothing changed. Re-run with dry_run=0 to clear." if dry_run else "Cleared."}
+            "by_action": {k: {"repair": sum(1 for h in v if h["action"] == "repair"),
+                              "clear": sum(1 for h in v if h["action"] == "clear")} for k, v in hits.items()},
+            "done": done, "companies": hits["companies"][:300], "investors": hits["investors"][:300],
+            "message": "Nothing changed. Re-run with dry_run=0 to apply." if dry_run else "Applied."}
 
 
 @app.post("/admin/contacts/sync-from-sends")

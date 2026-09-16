@@ -83,22 +83,27 @@ _PLACEHOLDER_TLDS = (".test", ".invalid", ".localhost", ".example", ".local")
 # Domains that show up in page source (scripts, CSS, CMS boilerplate, tracking)
 # and never belong to the company being crawled.
 _SERVICE_DOMAINS = {
-    "sentry.io", "wixpress.com", "wix.com", "squarespace.com", "shopify.com", "godaddy.com",
-    "schema.org", "w3.org", "googleapis.com", "google.com", "gstatic.com", "cloudflare.com",
-    "hubspot.com", "hsforms.com", "mailchimp.com", "list-manage.com", "wordpress.com",
-    "wordpress.org", "wp.com", "jquery.com", "facebook.com", "twitter.com", "linkedin.com",
-    "instagram.com", "youtube.com", "apple.com", "microsoft.com", "adobe.com", "typeform.com",
-    "intercom.io", "zendesk.com", "cookiebot.com", "onetrust.com", "hotjar.com",
+    "sentry.io", "sentry-next.wixpress.com", "wixpress.com", "wix.com", "squarespace.com",
+    "shopify.com", "godaddy.com", "schema.org", "w3.org", "googleapis.com", "gstatic.com",
+    "cloudflare.com", "hsforms.com", "list-manage.com", "wp.com", "jquery.com", "typeform.com",
+    "cookiebot.com", "onetrust.com", "hotjar.com",
 }
+# NOT in that set on purpose: microsoft.com, google.com, apple.com, linkedin.com.
+# amyhood@microsoft.com is a real person; the audit (16 Sep 2026) flagged her
+# because I had listed big-tech domains as "page-source junk". Templates that
+# borrow those domains (john.smith@google.com) are caught by the local part.
+# Template LOCAL PARTS only. Deliberately NOT here: mail@, email@, me@, single
+# letters and two-letter initials. mail@shawmeters.com, me@kirstys.co.uk and
+# h@theoriginalh.com are all real inboxes the audit nearly cleared (16 Sep
+# 2026); a generic inbox at the company's own domain is a legitimate rung 7.
 _PLACEHOLDER_LOCALS = {
     "you", "your", "yourname", "your.name", "your-name", "your_name", "yourmail", "youremail",
     "your.email", "name", "firstname", "lastname", "first.last", "first_last", "firstname.lastname",
     "firstname_lastname", "first.lastname", "fname.lname", "john.doe", "jane.doe",
     "johndoe", "janedoe", "john_doe", "jane_doe", "john.smith", "jane.smith", "johnsmith", "janesmith",
-    "joe.bloggs", "joebloggs", "j.bloggs", "user", "username", "email", "e-mail", "emailaddress",
-    "email.address", "mail", "someone", "somebody", "anyone", "test", "testing", "tester", "sample",
-    "example", "xyz", "abc", "foo", "bar", "foobar", "demo", "placeholder", "enter", "type",
-    "yourusername", "me", "myname", "my.name", "address", "yourid", "id", "customer", "client",
+    "joe.bloggs", "joebloggs", "j.bloggs", "user", "username", "emailaddress", "email.address",
+    "test", "testing", "tester", "sample", "example", "xyz", "abc", "foo", "bar", "foobar", "demo",
+    "placeholder", "yourusername", "yourid", "filler", "beta", "affiliate",
 }
 _OBFUSCATED_RE = re.compile(
     r"([a-zA-Z0-9._%+-]+)\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\{\s*at\s*\})\s*"
@@ -128,7 +133,9 @@ def is_placeholder_email(email: str, company_domain: str = "") -> bool:
         return True
     if local in _PLACEHOLDER_LOCALS or local.rstrip("0123456789") in _PLACEHOLDER_LOCALS:
         return True
-    if len(local) == 1 or local.isdigit():                  # a@, 1@, 12345@
+    if local.isdigit():                                     # 1@, 12345@
+        return True
+    if re.fullmatch(r"[0-9a-f]{32}", local):                # a tracking hash (sentry, wix)
         return True
     # Filler: one letter repeated (aaa@, xxx@) or a keyboard run. NOT two
     # different letters: "ab@" is a principal's initials as often as not
@@ -142,6 +149,32 @@ def is_placeholder_email(email: str, company_domain: str = "") -> bool:
     # is still a template; the local part decides, handled above. Nothing else
     # is refused on domain alone: small firms really do use gmail.
     return False
+
+
+def decode_obfuscated(raw: str) -> str:
+    """Undo the two encodings sites use to hide an address from crawlers:
+    HTML entities (&#64; / &#x40; / &commat;) and percent escapes (%40).
+    Both are how a REAL address gets published while looking like junk to a
+    regex; the audit found six such stored contacts (16 Sep 2026). Idempotent
+    on plain text."""
+    import html as _html
+    from urllib.parse import unquote as _unquote
+    t = _html.unescape(raw or "")
+    t = _html.unescape(t)                     # double-encoded &amp;#64; happens
+    t = re.sub(r"%[0-9a-fA-F]{2}", lambda m: _unquote(m.group(0)), t)
+    return t.strip().lower()
+
+
+def normalise_email(raw: str) -> str:
+    """A stored or scraped candidate -> the address it actually denotes, or ''
+    when it is not a mailbox at all (junk like '\\', ',', '#', a bare word, a URL,
+    or a template). This is what the placeholder audit uses to decide between
+    REPAIR (decoded to a real address) and CLEAR."""
+    t = decode_obfuscated(raw).strip(".,;:<>()[]\"'")
+    m = _EMAIL_RE.search(t)
+    if not m or m.group(0).lower() != t:
+        return ""
+    return "" if is_placeholder_email(t) else t
 
 
 def _harvest_ld_json_emails(html: str) -> List[str]:
@@ -164,9 +197,7 @@ def _visible_text(html: str) -> str:
     t = re.sub(r"<(input|textarea|select|option|button|form|label)[^>]*>", " ", t, flags=re.I)
     t = re.sub(r"<!--.*?-->", " ", t, flags=re.S)
     t = re.sub(r"<[^>]+>", " ", t)
-    t = (t.replace("&#64;", "@").replace("&commat;", "@").replace("&#46;", ".")
-          .replace("&period;", ".").replace("&nbsp;", " ").replace("&amp;", "&"))
-    return t
+    return decode_obfuscated(t)
 
 
 def _extract_emails(html: str, company_domain: str = "") -> List[str]:

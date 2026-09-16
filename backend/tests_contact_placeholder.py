@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("GCP_PROJECT_ID", "averroes-deal-origination")
 
 from services.contact_finder import (_extract_emails, choose_best_email,  # noqa: E402
-                                     is_placeholder_email)
+                                     is_placeholder_email, normalise_email)
 
 fails = 0
 
@@ -33,11 +33,13 @@ def chk(label, got, want=True):
 print("── What we accept ──")
 for e in ("xyz@example.com", "you@yourdomain.com", "name@company.com", "john.doe@acme.co.uk",
           "firstname.lastname@acme.co.uk", "email@email.com", "user1@acme.co.uk", "a@acme.co.uk",
-          "xxx@acme.co.uk", "aaa@shaker.com.sa", "bob@test.invalid", "hi@acme.test", "info@sentry.io", "img@logo.png",
+          "xxx@acme.co.uk", "aaa@shaker.com.sa", "filler@godaddy.com", "you@charity.org", "beta@example.com",
+          "605a7baede844d278b89dc95ae0a9123@sentry-next.wixpress.com", "john.smith@google.com", "bob@test.invalid", "hi@acme.test", "info@sentry.io", "img@logo.png",
           "someone@somewhere.com", "test@testing.com", "jane.doe@acme.co.uk", "me@mydomain.com"):
     chk(f"refused: {e}", is_placeholder_email(e))
 for e in ("jane@acme.co.uk", "john@acme.co.uk", "hello@acme.co.uk", "warren.cowan@foundit.co.uk",
-          "ab@dawiafo.com", "jc@acme.co.uk", "cb@acme.co.uk",
+          "ab@dawiafo.com", "jc@acme.co.uk", "cb@acme.co.uk", "az@14w.com", "caz@cazinvestments.com",
+          "mail@shawmeters.com", "me@kirstys.co.uk", "h@theoriginalh.com", "amyhood@microsoft.com",
           "tom.brown@gmail.com", "founders@acme.co.uk", "s.patel@acme-labs.io", "ceo@plastometrex.com"):
     chk(f"accepted: {e}", is_placeholder_email(e), False)
 
@@ -67,6 +69,17 @@ chk("visible text IS extracted, entity-encoded @ included", "support@acme.co.uk"
 chk("schema.org JSON-LD email IS extracted (a deliberate publication)", "hello@acme.co.uk" in got)
 chk("an obfuscated 'name [at] domain [dot] co [dot] uk' is decoded", "founders@acme.co.uk" in got)
 chk("and nothing else slipped through", got, {"jane@acme.co.uk", "support@acme.co.uk", "hello@acme.co.uk", "founders@acme.co.uk"})
+
+print()
+print("── Stored values from the 16 Sep 2026 audit: repair the obfuscated, clear the junk ──")
+for raw, want in (("dataprotection&#64;buhlergroup.com", "dataprotection@buhlergroup.com"),
+                  ("&#104;e&#108;&#108;&#x6f;&#x40;&#115;&#107;r&#x61;&#x74;&#99;&#x68;t&#101;&#99;&#x68;&#46;&#99;om", "hello@skratchtech.com"),
+                  ("%69%6e&#102;&#111;&#64;&#97;e%72%6fnox.&#99;o.&#117;&#107;", "info@aeronox.co.uk"),
+                  ("%73%61les%40comp%69o.c%6f.uk", "sales@compio.co.uk"),
+                  ("mail@shawmeters.com", "mail@shawmeters.com")):
+    chk(f"repair/keep: {raw[:40]} -> {want}", normalise_email(raw), want)
+for raw in ("\\", ",", "#", "jono", "https://www.inspiredtech.co.uk", "aaa@shaker.com.sa", "thomas.doyle@example.com"):
+    chk(f"clear: {raw!r}", normalise_email(raw), "")
 
 print()
 print("── Every rung is guarded, not just the site ──")
