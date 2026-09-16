@@ -106,6 +106,22 @@ chk("an exhausted budget stops the profile pass before the first batch", calls["
 chk("...and reports everything as pending", res["profile_pending"], 40)
 
 print()
+print("── An empty or partial list is a FAILURE, never a finished directory ──")
+with mock.patch.object(ei, "_get", return_value=None):
+    try:
+        ei.list_vendors(); chk("a page that fails twice raises ListError", False)
+    except ei.ListError:
+        chk("a page that fails twice raises ListError", True)
+pages = iter([{"count": 4, "results": [dict(LIST_ITEM, slug="a")]}, {"count": 4, "results": []}])
+with mock.patch.object(ei, "_get", side_effect=lambda *a, **k: next(pages)):
+    try:
+        ei.list_vendors(); chk("fewer vendors than the directory's count raises ListError", False)
+    except ei.ListError:
+        chk("fewer vendors than the directory's count raises ListError", True)
+chk("page size is small enough for the server to answer in time", ei._PAGE <= 50)
+chk("list timeout is generous", ei._LIST_TIMEOUT >= 60)
+
+print()
 print("── Registered as a directory source ──")
 ds = DirectoryScraper()
 chk("EnterpriseIreland is a supported source", "EnterpriseIreland" in ds.get_supported_sources())

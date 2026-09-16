@@ -465,8 +465,15 @@ def _ingest_enterprise_ireland(time_budget_s: int = 220) -> dict:
     the budget, newest-unprofiled first. Re-runnable: save_targets merges,
     so each run fills websites for the next few hundred companies."""
     from scrapers import enterprise_ireland_scraper as ei
-    res = ei.scrape(time_budget_s=time_budget_s, skip_names=_ei_names_with_website())
+    try:
+        res = ei.scrape(time_budget_s=time_budget_s, skip_names=_ei_names_with_website())
+    except ei.ListError as e:
+        return {"status": "Error", "source": ei.SOURCE_NAME, "listed": 0,
+                "message": f"Could not list the directory: {e}. Nothing was written."}
     raw = res["companies"]
+    if not raw:
+        return {"status": "Error", "source": ei.SOURCE_NAME, "listed": 0,
+                "message": "The directory returned no vendors. Nothing was written."}
     for c in raw:
         c["status"] = "Scraped"
         c["match_score"] = 0.0

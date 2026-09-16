@@ -38,8 +38,13 @@ BASE = "https://directory.enterprise-ireland.com"
 SOURCE_NAME = "Enterprise Ireland Directory"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AverroesIntel/1.0; +https://averroescapital.com)",
             "Accept": "application/json"}
-_PAGE = 200
-_TIMEOUT = 15
+# 50 per page, not 200: each list row carries nested clients and services,
+# and a 200-row page took the server longer than our timeout to build, so the
+# first Cloud Run ingest listed 0 vendors in exactly 15 seconds (16 Sep 2026;
+# a 2-row probe answered in 0.5s). 84 pages of 50 is still under a minute.
+_PAGE = 50
+_TIMEOUT = 45
+_LIST_TIMEOUT = 90
 
 
 def _strip_html(s: str) -> str:
@@ -50,14 +55,20 @@ def _strip_html(s: str) -> str:
     return re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n", t)).strip()
 
 
-def _get(url: str, session: Optional[requests.Session] = None) -> Optional[dict]:
+class ListError(RuntimeError):
+    """The list pass could not be completed. Raised, never swallowed: an
+    empty list must read as a failure, not as a finished directory."""
+
+
+def _get(url: str, session: Optional[requests.Session] = None, timeout: int = _TIMEOUT) -> Optional[dict]:
     try:
-        r = (session or requests).get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        r = (session or requests).get(url, headers=_HEADERS, timeout=timeout)
         if r.status_code != 200:
+            logger.warning(f"[EI] {r.status_code} for {url}: {r.text[:200]}")
             return None
         return r.json()
     except Exception as e:
-        logger.debug(f"[EI] {url}: {e}")
+        logger.warning(f"[EI] {url}: {type(e).__name__}: {e}")
         return None
 
 
@@ -91,18 +102,27 @@ def probe() -> Dict:
 
 
 def list_vendors(max_pages: Optional[int] = None, session: Optional[requests.Session] = None) -> List[Dict]:
-    """Every vendor summary, in directory order. ~21 pages, a few seconds."""
-    out, offset, pages = [], 0, 0
+    """Every vendor summary, in directory order. Raises ListError if a page
+    cannot be fetched (after one retry), so a partial list is never mistaken
+    for the whole directory."""
+    out, offset, pages, expected = [], 0, 0, None
     while True:
-        data = _get(f"{BASE}/api/v1/homepage/vendors/?limit={_PAGE}&offset={offset}", session)
-        results = (data or {}).get("results") or []
+        url = f"{BASE}/api/v1/homepage/vendors/?limit={_PAGE}&offset={offset}"
+        data = _get(url, session, timeout=_LIST_TIMEOUT) or _get(url, session, timeout=_LIST_TIMEOUT)
+        if data is None:
+            raise ListError(f"list page at offset {offset} failed twice ({len(out)} vendors so far)")
+        if expected is None:
+            expected = int(data.get("count") or 0)
+        results = data.get("results") or []
         if not results:
             break
         out.extend(results)
         pages += 1
         offset += _PAGE
-        if (max_pages and pages >= max_pages) or offset >= int((data or {}).get("count") or 0):
+        if (max_pages and pages >= max_pages) or offset >= expected:
             break
+    if expected and not max_pages and len(out) < expected:
+        raise ListError(f"directory reports {expected} vendors but only {len(out)} were listed")
     return out
 
 
