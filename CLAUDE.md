@@ -764,3 +764,20 @@ mistake is both visible and correctable. This one logged nothing, which is why
   only will push to `averroescapital` and fail on the mirror.
 - Pushes now come from Ishu's terminal, not the sandbox: the keychain is not
   reachable from the Linux sandbox, so Claude commits and Ishu pushes.
+- EVERY COMMAND BLOCK FOR ISHU STARTS WITH `avr` (16 Sep 2026). He runs two
+  projects in two terminals, and a terminal restart flips gcloud back to the
+  other account; three separate errors that day ("does not have permission",
+  "not a git repository", "no matches found") were the environment, not the
+  task. THE DIRECTORY DECIDES THE ACCOUNT: a `chpwd` hook in his ~/.zshrc
+  sets `CLOUDSDK_CONFIG` to `~/.gcloud/dealsmart` under ~/Projects/dealsmart
+  and `~/.gcloud/averroes` everywhere else, each dir signed in once to its
+  own account. `avr` is a zsh function that cds to the repo (firing the
+  hook) and exports `$T` (ops token) and `$B` (backend URL). Never give a
+  command that assumes the folder, the account or the variables; never use
+  a bare glob that may not match (zsh aborts the whole line), use
+  `find ... -delete`.
+- The `~/Projects` mount lets the sandbox create files but not delete them,
+  so every commit from the sandbox leaves `.git/HEAD.lock` and `tmp_obj_*`
+  behind, and the NEXT commit fails until Ishu clears them. The cleanup is
+  part of every push block: `rm -f .git/HEAD.lock .git/index.lock; find
+  .git/objects -name 'tmp_obj_*' -delete`.
