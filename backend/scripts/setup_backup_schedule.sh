@@ -8,7 +8,7 @@
 #
 #   02:00 Europe/London  archive  -> appends every CHANGED company to
 #                                    targets_archive (append-only history)
-#   02:30 Europe/London  export   -> copies every table into the backup bucket
+#   02:30 Sunday Europe/London  export -> full copy of every table into the backup bucket
 #
 # ORDER MATTERS. The export runs AFTER the archive on purpose, so each night's
 # export contains that night's archive rows too. Reverse them and the off-site
@@ -22,9 +22,11 @@ PROJECT="${PROJECT:-averroes-deal-origination}"
 SERVICE="${SERVICE:-averroes-deal-backend}"
 REGION="${REGION:-europe-west1}"
 TZ_NAME="${TZ_NAME:-Europe/London}"
-# Cron for the export. Nightly by default (storage is pennies); Ishu asked for
-# monthly on 16 Sep 2026, so: EXPORT_SCHEDULE="0 3 1 * *" bash .../setup_backup_schedule.sh
-EXPORT_SCHEDULE="${EXPORT_SCHEDULE:-30 2 * * *}"
+# Cron for the full export. WEEKLY, Sunday 02:30, by Ishu's decision (16 Sep
+# 2026): nightly was running unnoticed since 1 Sep and cost pennies, but a
+# weekly full snapshot is granular enough beside the nightly row-level
+# archive. Override for one run: EXPORT_SCHEDULE="30 2 * * *" bash ...
+EXPORT_SCHEDULE="${EXPORT_SCHEDULE:-30 2 * * 0}"
 
 echo "Project : $PROJECT"
 echo "Service : $SERVICE ($REGION)"
