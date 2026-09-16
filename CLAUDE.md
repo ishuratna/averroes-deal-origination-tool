@@ -554,6 +554,39 @@ mistake is both visible and correctable. This one logged nothing, which is why
   Sanity-check any derived figure against what a human reading the document
   would see. `tests_ixbrl_headcount.py` pins this against the real filing.
 
+## 4ac. An address must be a mailbox, not a template
+
+- The crawler stored xyz@example.com as a company's contact (Ishu, 16 Sep
+  2026). Cause: `_extract_emails` ran a regex over RAW HTML, and a contact
+  form's `placeholder=` attribute matched. Nothing then asked whether the
+  address was real, and a template address is a guaranteed bounce.
+- WHERE WE LOOK (`_visible_text`, `_harvest_ld_json_emails`): mailto: hrefs,
+  the page's visible text, and schema.org JSON-LD `email`. Form fields
+  (`<input>`, `<textarea>`, `<select>`, `<option>`, `<button>`, `<label>`) are
+  removed as whole tags so their placeholder/value attributes go with them;
+  scripts, styles, comments and every other tag's attributes are dropped.
+  Obfuscated "name [at] domain [dot] com" is decoded: that is a deliberate
+  publication aimed at exactly this crawler.
+- WHAT WE ACCEPT (`is_placeholder_email`, PURE): refuses RFC 2606 reserved
+  domains (example.*, .test, .invalid, .localhost), template domains
+  (yourdomain.com, company.com, email.com ...), template local parts (you,
+  name, firstname.lastname, john.doe, user, test ...), third-party service
+  domains that appear in page source (sentry.io, wixpress.com, schema.org
+  ...), IPs, one-letter and digit-only locals. It does NOT refuse a real
+  first name (jane@, john@) or a personal-provider domain: small firms use
+  gmail. Errs towards refusing: a lost address costs one more rung of the
+  waterfall, a template costs the one approach we get.
+- THE GUARD RUNS ON EVERY RUNG. The AI search reads the same site and can
+  echo the same template; Hunter can index one. `resolve_contact_email`
+  drops a placeholder `ai_email` before the waterfall starts,
+  `find_email_by_name` results are checked, `choose_best_email` checks both
+  sides. `tests_contact_placeholder.py` pins the exact HTML that caused the
+  bug.
+- RETRO: `POST /admin/contacts/placeholder-audit` (dry run by default,
+  companies and investors) lists stored template addresses; `dry_run=0`
+  clears them with a note on the card, never touching a row already
+  emailed at that address (the bounce pass owns that case).
+
 ## 4a. Identity guard (same-named companies must never mix)
 
 - Every grounded enrichment call receives the row's SEED ANCHORS as identity

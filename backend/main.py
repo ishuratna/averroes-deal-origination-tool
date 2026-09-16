@@ -4428,6 +4428,65 @@ async def email_docs_backfill(request: Request,
     return _stream_json(_run)
 
 
+@app.post("/admin/contacts/placeholder-audit")
+async def contacts_placeholder_audit(request: Request,
+                                     dry_run: int = Query(1, description="1 = preview only (default), 0 = clear them")):
+    """Find stored contact addresses that are templates, not mailboxes
+    (xyz@example.com, you@yourdomain.com, firstname.lastname@...). ZERO AI.
+
+    The crawler once lifted a greyed-out form placeholder off a company's site
+    and stored it as the contact (16 Sep 2026). Extraction now refuses those,
+    but rows written before the fix still hold them, and each one is a bounce
+    waiting to happen. Companies AND investors. Dry run by default; apply
+    clears the address (kind, name and source with it), keeps the old value in
+    the activity trail, and never touches a row that has been emailed at that
+    address (the bounce pass owns that case).
+    """
+    _require_token(request)
+    from services.contact_finder import is_placeholder_email
+    from google.cloud import bigquery as bq_lib
+    hits = {"companies": [], "investors": []}
+    for c in bq_handler.get_universe():
+        e = (c.get("contact_email") or "").strip()
+        if e and is_placeholder_email(e):
+            hits["companies"].append({"name": c.get("name"), "email": e, "status": c.get("status"),
+                                      "source": c.get("contact_email_source") or "",
+                                      "emailed_here": bool(c.get("outreach_sent_at")) and c.get("status") in ("Contacted", "Responded")})
+    for i in investor_handler.get_all():
+        e = (i.get("contact_email") or "").strip()
+        if e and is_placeholder_email(e):
+            hits["investors"].append({"name": i.get("name"), "email": e, "status": i.get("status"),
+                                      "emailed_here": bool(i.get("outreach_sent_at"))})
+    cleared = {"companies": 0, "investors": 0}
+    if not dry_run:
+        for h in hits["companies"]:
+            if h["emailed_here"]:
+                continue
+            bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET contact_email = NULL,
+                        contact_email_kind = NULL, contact_email_name = NULL,
+                        contact_email_source = 'cleared: placeholder address, not a mailbox'
+                    WHERE name = @name AND contact_email = @email""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("name", "STRING", h["name"]),
+                    bq_lib.ScalarQueryParameter("email", "STRING", h["email"])])).result()
+            bq_handler.add_activity_note(h["name"], f"Contact email {h['email']} cleared: a form placeholder or template, not a mailbox. Re-run SmartFill to find the real address.", "placeholder-audit")
+            cleared["companies"] += 1
+        for h in hits["investors"]:
+            if h["emailed_here"]:
+                continue
+            investor_handler.client.query(f"""UPDATE `{investor_handler.table_id}` SET contact_email = NULL,
+                        updated_at = CURRENT_TIMESTAMP()
+                    WHERE name = @name AND contact_email = @email""",
+                job_config=bq_lib.QueryJobConfig(query_parameters=[
+                    bq_lib.ScalarQueryParameter("name", "STRING", h["name"]),
+                    bq_lib.ScalarQueryParameter("email", "STRING", h["email"])])).result()
+            investor_handler.add_note(h["name"], f"Contact email {h['email']} cleared: a placeholder, not a mailbox [placeholder-audit]")
+            cleared["investors"] += 1
+    return {"dry_run": bool(dry_run), "found": {k: len(v) for k, v in hits.items()},
+            "cleared": cleared, "companies": hits["companies"][:200], "investors": hits["investors"][:200],
+            "message": "Nothing changed. Re-run with dry_run=0 to clear." if dry_run else "Cleared."}
+
+
 @app.post("/admin/contacts/sync-from-sends")
 async def contacts_sync_from_sends(request: Request,
                                    dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):

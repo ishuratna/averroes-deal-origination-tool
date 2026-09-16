@@ -52,29 +52,136 @@ _JUNK_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js
 _GENERIC_PREFIXES = ("hello", "info", "contact", "team", "enquiries", "inquiries",
                      "office", "admin", "support", "sales", "press", "hi")
 
+# ── Is this an address anyone actually reads? ────────────────────────────────
+# The crawler once returned xyz@example.com for a real company (Ishu, 16 Sep
+# 2026): the string sat in a contact form's greyed-out placeholder, the regex
+# ran over raw HTML, and nothing asked whether the address was real. Two
+# defences now, and BOTH are needed:
+#   1. WHERE we look: mailto: links, the page's VISIBLE text and schema.org
+#      JSON-LD. Never inside form fields, tag attributes, scripts or styles,
+#      which is where placeholders, validation examples and analytics live.
+#   2. WHAT we accept: `is_placeholder_email` refuses reserved documentation
+#      domains (RFC 2606: example.*, .test, .invalid, .localhost), template
+#      domains (yourdomain.com, company.com, ...), template local parts
+#      (you@, name@, john.doe@, firstname.lastname@, ...), and third-party
+#      service domains that appear in page source but belong to nobody here.
+# The second check runs on EVERY candidate, whichever rung produced it: site,
+# AI search or Hunter. A guessed or template address bounces, and a bounce
+# burns the one approach we get.
+_PLACEHOLDER_DOMAINS = {
+    "example.com", "example.org", "example.net", "example.co.uk", "example.io",
+    "domain.com", "yourdomain.com", "your-domain.com", "mydomain.com", "yourcompany.com",
+    "your-company.com", "company.com", "companyname.com", "yourbusiness.com", "business.com",
+    "email.com", "youremail.com", "your-email.com", "myemail.com", "emailaddress.com",
+    "address.com", "mail.example.com", "website.com", "yourwebsite.com", "yoursite.com",
+    "site.com", "mysite.com", "test.com", "testing.com",
+    "sample.com", "placeholder.com", "abc.com", "xyz.com", "foo.com", "bar.com",
+    "foobar.com", "domain.co.uk", "yourdomain.co.uk", "company.co.uk", "email.co.uk",
+    "name.com", "server.com", "host.com", "provider.com", "mailinator.com", "somewhere.com",
+}
+_PLACEHOLDER_TLDS = (".test", ".invalid", ".localhost", ".example", ".local")
+# Domains that show up in page source (scripts, CSS, CMS boilerplate, tracking)
+# and never belong to the company being crawled.
+_SERVICE_DOMAINS = {
+    "sentry.io", "wixpress.com", "wix.com", "squarespace.com", "shopify.com", "godaddy.com",
+    "schema.org", "w3.org", "googleapis.com", "google.com", "gstatic.com", "cloudflare.com",
+    "hubspot.com", "hsforms.com", "mailchimp.com", "list-manage.com", "wordpress.com",
+    "wordpress.org", "wp.com", "jquery.com", "facebook.com", "twitter.com", "linkedin.com",
+    "instagram.com", "youtube.com", "apple.com", "microsoft.com", "adobe.com", "typeform.com",
+    "intercom.io", "zendesk.com", "cookiebot.com", "onetrust.com", "hotjar.com",
+}
+_PLACEHOLDER_LOCALS = {
+    "you", "your", "yourname", "your.name", "your-name", "your_name", "yourmail", "youremail",
+    "your.email", "name", "firstname", "lastname", "first.last", "first_last", "firstname.lastname",
+    "firstname_lastname", "first.lastname", "fname.lname", "john.doe", "jane.doe",
+    "johndoe", "janedoe", "john_doe", "jane_doe", "john.smith", "jane.smith", "johnsmith", "janesmith",
+    "joe.bloggs", "joebloggs", "j.bloggs", "user", "username", "email", "e-mail", "emailaddress",
+    "email.address", "mail", "someone", "somebody", "anyone", "test", "testing", "tester", "sample",
+    "example", "xyz", "abc", "foo", "bar", "foobar", "demo", "placeholder", "enter", "type",
+    "yourusername", "me", "myname", "my.name", "address", "yourid", "id", "customer", "client",
+}
+_OBFUSCATED_RE = re.compile(
+    r"([a-zA-Z0-9._%+-]+)\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\{\s*at\s*\})\s*"
+    r"([a-zA-Z0-9-]+(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\{\s*dot\s*\}|\.)\s*[a-zA-Z0-9-]+)+)", re.I)
 
-def _clean_domain(website: str) -> Optional[str]:
-    if not website:
-        return None
-    host = urlparse(website if website.startswith("http") else f"https://{website}").netloc
-    return host.replace("www.", "").lower() or None
+
+def is_placeholder_email(email: str, company_domain: str = "") -> bool:
+    """True when this string is a template, a documentation example or a
+    third-party service address rather than a mailbox someone reads.
+    PURE. Errs towards refusing: a lost real address costs one more rung of
+    the waterfall, a template address costs a bounce."""
+    e = (email or "").strip().lower().strip(".,;:<>()[]\"'")
+    if "@" not in e or e.count("@") != 1:
+        return True
+    local, _, dom = e.partition("@")
+    if not local or not dom or "." not in dom:
+        return True
+    if any(e.startswith(p) for p in _JUNK_PREFIXES) or any(e.endswith(sfx) for sfx in _JUNK_SUFFIXES):
+        return True
+    if dom in _PLACEHOLDER_DOMAINS or any(dom.endswith(t) for t in _PLACEHOLDER_TLDS):
+        return True
+    if dom.startswith("example.") or ".example." in dom:
+        return True
+    if dom in _SERVICE_DOMAINS or any(dom.endswith("." + sd) for sd in _SERVICE_DOMAINS):
+        return True
+    if re.fullmatch(r"[\d.]+", dom):                       # an IP, not a mail domain
+        return True
+    if local in _PLACEHOLDER_LOCALS or local.rstrip("0123456789") in _PLACEHOLDER_LOCALS:
+        return True
+    if len(local) == 1 or local.isdigit():                  # a@, 1@, 12345@
+        return True
+    if re.fullmatch(r"(x|y|z|a|b|c)+", local):             # xxx@, abc@ style fillers
+        return True
+    # A template that names the COMPANY's own domain generically ("name@theirdomain")
+    # is still a template; the local part decides, handled above. Nothing else
+    # is refused on domain alone: small firms really do use gmail.
+    return False
 
 
-def _extract_emails(html: str) -> List[str]:
+def _harvest_ld_json_emails(html: str) -> List[str]:
+    """schema.org JSON-LD blocks carry a deliberate, machine-readable `email`
+    (Organization / LocalBusiness / Person). That is a publication, so it
+    counts, even though it lives inside a <script> tag."""
+    out = []
+    for m in re.finditer(r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>", html, re.I | re.S):
+        for em in re.finditer(r"[\"']email[\"']\s*:\s*[\"'](?:mailto:)?([^\"']+@[^\"']+)[\"']", m.group(1), re.I):
+            out.append(em.group(1).strip().lower())
+    return out
+
+
+def _visible_text(html: str) -> str:
+    """What a reader sees. Scripts, styles, templates and FORM FIELDS are cut
+    out whole (a placeholder attribute is inside the <input> tag, so removing
+    the tag removes the example address with it); every other tag is dropped
+    so attribute values (title=, alt=, data-*=) never reach the regex."""
+    t = re.sub(r"<(script|style|noscript|template|svg|iframe)[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
+    t = re.sub(r"<(input|textarea|select|option|button|form|label)[^>]*>", " ", t, flags=re.I)
+    t = re.sub(r"<!--.*?-->", " ", t, flags=re.S)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = (t.replace("&#64;", "@").replace("&commat;", "@").replace("&#46;", ".")
+          .replace("&period;", ".").replace("&nbsp;", " ").replace("&amp;", "&"))
+    return t
+
+
+def _extract_emails(html: str, company_domain: str = "") -> List[str]:
+    """Addresses a person could actually write to, from the places a company
+    publishes them: mailto: links, visible text, JSON-LD. See the note above
+    `_PLACEHOLDER_DOMAINS` for why the raw-HTML regex was retired."""
     emails = set()
     # mailto: links first — the strongest signal a site publishes an address
     for m in re.finditer(r'mailto:([^"\'>?\s]+)', html, re.I):
         emails.add(m.group(1).strip().lower())
-    for m in _EMAIL_RE.finditer(html):
+    emails.update(_harvest_ld_json_emails(html))
+    text = _visible_text(html)
+    for m in _EMAIL_RE.finditer(text):
         emails.add(m.group(0).strip().lower())
-    out = []
-    for e in emails:
-        if any(e.startswith(p) for p in _JUNK_PREFIXES):
-            continue
-        if any(e.endswith(s) for s in _JUNK_SUFFIXES):
-            continue
-        out.append(e)
-    return out
+    # "name [at] domain [dot] com": a deliberate publication, obfuscated against
+    # exactly the kind of crawler we are. Decode it.
+    for m in _OBFUSCATED_RE.finditer(text):
+        dom = re.sub(r"\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\{\s*dot\s*\})\s*", ".", m.group(2))
+        dom = re.sub(r"\s+", "", dom)
+        emails.add(f"{m.group(1).lower()}@{dom.lower()}")
+    return [e.strip(".,;:") for e in emails if not is_placeholder_email(e, company_domain)]
 
 
 def find_site_emails(website: str, contact_name: str = "") -> Dict:
@@ -101,7 +208,7 @@ def find_site_emails(website: str, contact_name: str = "") -> Dict:
             if resp.status_code != 200 or "text/html" not in resp.headers.get("content-type", ""):
                 continue
             page_text = resp.text[:400_000]
-            for e in _extract_emails(page_text):
+            for e in _extract_emails(page_text, domain):
                 found.setdefault(e, url)
             if not company_number:
                 num = _extract_company_number(page_text)
@@ -454,6 +561,10 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
     ('' for a shared inbox). Both drive the greeting in outreach_service.
     """
     ai_email = (ai_email or "").strip().lower()
+    if ai_email and is_placeholder_email(ai_email):
+        # The grounded search can echo a template it read on the site too.
+        logger.info(f"[ContactFinder] dropping placeholder address from search: {ai_email}")
+        ai_email, ai_source = "", ""
     site = find_site_emails(website, contact_name)
     pages = site.get("pages", {}) or {}
     domain = _clean_domain(website) or (ai_email.split("@")[-1] if "@" in ai_email else "")
@@ -540,6 +651,8 @@ def resolve_contact_email(website: str, contact_name: str, ai_email: str, ai_sou
     finder = {"email": "", "score": 0, "sources": 0, "url": "", "error": ""}
     if verifier_on and founder_named and domain:
         finder = find_email_by_name(domain, contact_name)
+        if finder.get("email") and is_placeholder_email(finder["email"]):
+            finder = {**finder, "email": "", "sources": 0}
         if finder["email"] and finder["sources"] > 0:
             return _out(finder["email"], finder["url"] or "Hunter email-finder",
                         f"published in {finder['sources']} public source(s) Hunter has crawled (confidence {finder['score']}%)",
@@ -629,6 +742,10 @@ def choose_best_email(site: Dict, ai_email: str, ai_source: str) -> tuple:
     site_email = (site or {}).get("email", "")
     site_src = f"company website ({(site or {}).get('source', '')})"
     ai_email = (ai_email or "").strip()
+    if ai_email and is_placeholder_email(ai_email):
+        ai_email = ""
+    if site_email and is_placeholder_email(site_email):
+        site_email = ""
     if site_email and not ai_email:
         return site_email, site_src
     if not site_email:
