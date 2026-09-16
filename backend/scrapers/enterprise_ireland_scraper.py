@@ -61,6 +61,35 @@ def _get(url: str, session: Optional[requests.Session] = None) -> Optional[dict]
         return None
 
 
+_BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "Referer": f"{BASE}/vendors",
+    "Origin": BASE,
+}
+
+
+def probe() -> Dict:
+    """What does the directory answer to a SERVER? Status, elapsed, body head,
+    for our identifying UA and for a browser-shaped header set. Zero writes.
+    Added 16 Sep 2026 when the first Cloud Run ingest listed 0 vendors in
+    exactly one request timeout."""
+    out = {}
+    url = f"{BASE}/api/v1/homepage/vendors/?limit=2&offset=0"
+    for label, hdrs in (("identifying", _HEADERS), ("browser", _BROWSER_HEADERS)):
+        t0 = time.time()
+        try:
+            r = requests.get(url, headers=hdrs, timeout=_TIMEOUT, allow_redirects=True)
+            out[label] = {"status": r.status_code, "elapsed_s": round(time.time() - t0, 1),
+                          "final_url": r.url, "content_type": r.headers.get("content-type", ""),
+                          "server": r.headers.get("server", ""), "body_head": r.text[:300]}
+        except Exception as e:
+            out[label] = {"error": f"{type(e).__name__}: {e}", "elapsed_s": round(time.time() - t0, 1)}
+    return out
+
+
 def list_vendors(max_pages: Optional[int] = None, session: Optional[requests.Session] = None) -> List[Dict]:
     """Every vendor summary, in directory order. ~21 pages, a few seconds."""
     out, offset, pages = [], 0, 0

@@ -493,9 +493,13 @@ def _ingest_enterprise_ireland(time_budget_s: int = 220) -> dict:
 
 
 @app.post("/admin/ingest/enterprise-ireland")
-async def ingest_enterprise_ireland_admin(request: Request, budget: int = Query(220, description="seconds for the profile pass, max 240")):
+async def ingest_enterprise_ireland_admin(request: Request, budget: int = Query(220, description="seconds for the profile pass, max 240"),
+                                          probe: int = Query(0, description="1 = only report what the directory answers to this server")):
     """Token alias for the terminal: loop it until profiles_still_pending is 0."""
     _require_token(request)
+    if probe:
+        from scrapers.enterprise_ireland_scraper import probe as _probe
+        return _probe()
     return _stream_json(lambda: _ingest_enterprise_ireland(time_budget_s=min(240, max(20, budget))))
 
 
