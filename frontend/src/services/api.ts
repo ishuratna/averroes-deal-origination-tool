@@ -335,8 +335,17 @@ export const dealApi = {
 
   async ingestDirectory(sourceName: string, maxPages: number = 20): Promise<any> {
     const response = await apiFetch(`${API_BASE_URL}/ingest/directory?source_name=${encodeURIComponent(sourceName)}&max_pages=${maxPages}`, { method: 'POST' });
-    if (!response.ok) throw new Error('Directory ingestion failed');
-    return await response.json();
+    // Enterprise Ireland streams heartbeats (thousands of profile calls,
+    // time-boxed under Cloud Run's limit); the last line is the JSON result.
+    // The other directories answer with plain JSON, which is also "last line".
+    const text = await response.text();
+    if (!response.ok) { try { throw new Error(JSON.parse(text).detail); } catch (e: any) { throw new Error(e?.message || 'Directory ingestion failed'); } }
+    const lines = text.trim().split('\n');
+    const last = (lines[lines.length - 1] || '').trim();
+    if (!last.startsWith('{')) throw new Error('The server was still working when the connection closed. Reload to check, or run it again.');
+    const data = JSON.parse(last);
+    if (data.status === 'Error') throw new Error(data.message || 'Directory ingestion failed');
+    return data;
   },
 
   // Companies House SIC-code registry search — streamed like /sources/refresh

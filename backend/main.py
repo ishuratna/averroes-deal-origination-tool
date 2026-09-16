@@ -445,11 +445,60 @@ async def ingest_network(source_name: str = Query(..., description="Network sour
     }
 
 
+def _ei_names_with_website() -> set:
+    """Enterprise Ireland rows we already hold WITH a website: their profile
+    pass is done and need not be repeated. Read once per run."""
+    try:
+        from scrapers.enterprise_ireland_scraper import SOURCE_NAME as _EI
+        return {(c.get("name") or "").strip().lower() for c in bq_handler.get_universe()
+                if (c.get("source") or "").startswith(_EI) and (c.get("website") or "").strip()}
+    except Exception as e:
+        logger.warning(f"[EI] could not read known websites: {e}")
+        return set()
+
+
+directory_scraper.skip_names_provider = _ei_names_with_website
+
+
+def _ingest_enterprise_ireland(time_budget_s: int = 220) -> dict:
+    """List every vendor (fast, complete), then profiles for as many as fit
+    the budget, newest-unprofiled first. Re-runnable: save_targets merges,
+    so each run fills websites for the next few hundred companies."""
+    from scrapers import enterprise_ireland_scraper as ei
+    res = ei.scrape(time_budget_s=time_budget_s, skip_names=_ei_names_with_website())
+    raw = res["companies"]
+    for c in raw:
+        c["status"] = "Scraped"
+        c["match_score"] = 0.0
+    ok = bq_handler.save_targets(raw) if raw else True
+    try:
+        gcs_handler.save_companies(raw, "enterprise_ireland")
+    except Exception as e:
+        logger.warning(f"[EI] GCS copy failed: {e}")
+    return {"status": "Success" if ok else "Error", "source": ei.SOURCE_NAME,
+            "listed": res["listed"], "profiled_this_run": res["profiled"],
+            "profiles_still_pending": res["profile_pending"], "seconds": res["seconds"],
+            "message": (f"{res['listed']} Enterprise Ireland companies listed; websites and descriptions "
+                        f"fetched for {res['profiled']} this run, {res['profile_pending']} still to fill. "
+                        + ("Run again to continue." if res["profile_pending"] else "Complete."))}
+
+
+@app.post("/admin/ingest/enterprise-ireland")
+async def ingest_enterprise_ireland_admin(request: Request, budget: int = Query(220, description="seconds for the profile pass, max 240")):
+    """Token alias for the terminal: loop it until profiles_still_pending is 0."""
+    _require_token(request)
+    return _stream_json(lambda: _ingest_enterprise_ireland(time_budget_s=min(240, max(20, budget))))
+
+
 @app.post("/ingest/directory")
 async def ingest_directory(source_name: str = Query("TheSaaSDirectory", description="Directory source to scrape"), max_pages: int = Query(20, description="Max pages to scrape")):
     """Scrape SaaS directory → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
     if source_name not in directory_scraper.get_supported_sources():
         raise HTTPException(status_code=404, detail=f"Directory '{source_name}' not supported.")
+    if source_name == directory_scraper.EI:
+        # 4,176 companies and ~8,000 profile calls: streamed with heartbeats,
+        # time-boxed under Cloud Run's 300s, resumable by running again.
+        return _stream_json(_ingest_enterprise_ireland)
     raw_companies = directory_scraper.scrape_source(source_name, max_pages)
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": f"No companies found from {source_name}."}

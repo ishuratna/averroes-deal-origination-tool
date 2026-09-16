@@ -52,6 +52,10 @@ const ALL_SOURCES: SourceDef[] = [
   { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'UK\'s 50 fastest-growing tech companies. Not scrapeable — JS-rendered page.', icon: '📊', canRefresh: false, familyPrefixes: ['Deloitte Fast 50'] },
   // Directories
   { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
+  // Enterprise Ireland's client directory: ~4,200 Irish exporters over a
+  // public JSON API. The list lands in one go; websites and descriptions are
+  // fetched in time-boxed passes, so Refresh may say "run again to continue".
+  { name: 'EnterpriseIreland', type: 'directory', label: 'Enterprise Ireland Directory', description: 'Every Enterprise Ireland client company (~4,200 Irish exporters, all sectors) from directory.enterprise-ireland.com. Names, sector, size, founded year in one pass; websites, LinkedIn and descriptions filled in over a few refreshes (each run is time-boxed). Hard filters and SmartFill sort fit afterwards, as with every source.', icon: '🇮🇪', canRefresh: true, refreshType: 'directory', familyPrefixes: ['Enterprise Ireland'] },
   // Founder networks / alumni — Tech Nation's stamped source has "Future
   // Fifty" between the name and the year, so the generic suffix rule alone
   // does not reach it; the extra family prefix does.
@@ -353,7 +357,7 @@ function UniverseInner() {
     setIngesting(sourceName);
     try {
       const res = await dealApi.ingestDirectory(sourceName);
-      alert(`Found ${res.count} companies from ${sourceName}. ${res.total_in_universe || ''} total in universe.`);
+      alert(res.message || `Found ${res.count} companies from ${sourceName}. ${res.total_in_universe || ''} total in universe.`);
       await loadData();
     } catch (error) { alert(`Scraping failed for ${sourceName}`); }
     finally { setIngesting(null); }

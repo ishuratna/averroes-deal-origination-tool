@@ -23,12 +23,31 @@ class DirectoryScraper:
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
-    def scrape_source(self, source_name: str, max_pages: int = 20) -> List[Dict]:
-        """Scrapes a directory source. Default limit: 20 pages (~200 companies)."""
+    # Enterprise Ireland (16 Sep 2026): a JSON API, not HTML, so it has its
+    # own module; it is registered here so /ingest/directory, the Sources
+    # panel and the Friday refresh all reach it through the same door.
+    # skip_names_provider is set by main.py: names we already hold with a
+    # website, whose profiles need not be fetched again.
+    EI = "EnterpriseIreland"
+    skip_names_provider = None
+
+    def scrape_source(self, source_name: str, max_pages: int = 20, time_budget_s: int = 60) -> List[Dict]:
+        """Scrapes a directory source. Default limit: 20 pages (~200 companies).
+        For Enterprise Ireland `max_pages` is list pages of 200 (None = all) and
+        `time_budget_s` bounds the profile pass (see enterprise_ireland_scraper)."""
+        if source_name == self.EI:
+            from scrapers import enterprise_ireland_scraper as ei
+            skip = None
+            if callable(self.skip_names_provider):
+                try:
+                    skip = self.skip_names_provider()
+                except Exception as e:
+                    logger.warning(f"[EI] skip-names provider failed: {e}")
+            return ei.scrape(max_pages=None if max_pages in (None, 0, 20) else max_pages,
+                             time_budget_s=time_budget_s, skip_names=skip)["companies"]
         if source_name not in self.sources:
             logger.error(f"Unknown directory source: {source_name}")
             return []
-        
         if source_name == "TheSaaSDirectory":
             return self._scrape_saas_directory(max_pages)
         return []
@@ -153,4 +172,4 @@ class DirectoryScraper:
         return address.split(",")[-1].strip() if address else "Unknown"
 
     def get_supported_sources(self) -> List[str]:
-        return list(self.sources.keys())
+        return list(self.sources.keys()) + [self.EI]

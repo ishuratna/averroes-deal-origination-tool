@@ -554,6 +554,27 @@ mistake is both visible and correctable. This one logged nothing, which is why
   Sanity-check any derived figure against what a human reading the document
   would see. `tests_ixbrl_headcount.py` pins this against the real filing.
 
+## 4ad. Sources with a JSON API: list fast, profile within a time box
+
+- Enterprise Ireland's directory (`scrapers/enterprise_ireland_scraper.py`,
+  16 Sep 2026) is an Angular shell over a public API; the HTML has nothing
+  in it, and WebFetch sees only a GTM iframe. Find the API in the page's
+  `performance` resource entries, not by guessing paths: the detail call was
+  `/api/v1/vendors/profile/{slug}/` after a dozen guesses returned 404.
+- ~4,200 companies at two or three calls each is ~8,000 HTTP requests, and
+  Cloud Run cuts a request at 300 seconds. So the LIST pass (21 pages) is
+  always complete and saved, and the PROFILE pass (website, LinkedIn,
+  description, city) is TIME-BOXED, chunked so the deadline is checked before
+  each batch is submitted, and skips names we already hold WITH a website
+  (`DirectoryScraper.skip_names_provider`, set by main.py from BigQuery).
+  Each run fills the next few hundred; `save_targets` is merge-only, so
+  re-running is free of side effects. The Friday refresh reaches it through
+  `DirectoryScraper.scrape_source("EnterpriseIreland")` with a 60s budget and
+  finishes the job over a few weeks. `POST /admin/ingest/enterprise-ireland`
+  (token) is the terminal loop; the Sources panel card is the same door.
+- The whole directory goes in, all sectors. Fit is decided afterwards by the
+  hard filters and SmartFill, as with every source (doctrine 4).
+
 ## 4ac. An address must be a mailbox, not a template
 
 - The crawler stored xyz@example.com as a company's contact (Ishu, 16 Sep
