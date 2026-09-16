@@ -122,7 +122,11 @@ def to_target(v: Dict, profile: Optional[Dict] = None) -> Dict:
         "name": (v.get("name") or "").strip(),
         "website": (profile or {}).get("website") or "",
         "linkedin_url": (profile or {}).get("linkedin_url") or "",
-        "sector": primary or (services[0] if services else "Irish exporter"),
+        # The directory's primary service is the sector. When it has none, the
+        # sector stays EMPTY for SmartFill to classify: a filler label
+        # ("Irish exporter", briefly, 16 Sep 2026) is not a sector and only
+        # pollutes the filter.
+        "sector": primary or (services[0] if services else ""),
         "verticals": ", ".join(services[:8]),
         "region": "Ireland" if country.lower() == "ireland" else country,
         "hq_country": country,

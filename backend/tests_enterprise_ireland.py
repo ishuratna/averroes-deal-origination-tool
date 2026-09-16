@@ -49,6 +49,8 @@ chk("employees is the midpoint of the band", r["employees"], 12)
 chk("founded", r["year_founded"], 2021)
 chk("website empty until the profile pass", r["website"], "")
 chk("description falls back to the summary", r["description"].startswith("Zero-trust"))
+chk("no service tags at all -> sector left EMPTY for SmartFill, never a filler label",
+    ei.to_target({"name": "Bare Ltd", "slug": "bare", "pk": 1})["sector"], "")
 
 print()
 print("── With the profile ──")
