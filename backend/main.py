@@ -471,6 +471,15 @@ def _ingest_enterprise_ireland(time_budget_s: int = 220) -> dict:
         c["status"] = "Scraped"
         c["match_score"] = 0.0
     ok = bq_handler.save_targets(raw) if raw else True
+    # One-off tidy for rows the first run stamped "Irish exporter" (a filler,
+    # not a sector; Ishu, 16 Sep 2026). Scoped to THIS source and THAT value,
+    # idempotent, and gone as soon as no row carries it.
+    try:
+        bq_handler.client.query(
+            f"UPDATE `{bq_handler.table_id}` SET sector = '' "
+            f"WHERE source = '{ei.SOURCE_NAME}' AND sector = 'Irish exporter'").result()
+    except Exception as e:
+        logger.warning(f"[EI] filler-sector tidy skipped: {e}")
     try:
         gcs_handler.save_companies(raw, "enterprise_ireland")
     except Exception as e:
