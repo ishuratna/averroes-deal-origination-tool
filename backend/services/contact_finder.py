@@ -92,18 +92,16 @@ _SERVICE_DOMAINS = {
 # amyhood@microsoft.com is a real person; the audit (16 Sep 2026) flagged her
 # because I had listed big-tech domains as "page-source junk". Templates that
 # borrow those domains (john.smith@google.com) are caught by the local part.
-# Template LOCAL PARTS only. Deliberately NOT here: mail@, email@, me@, single
-# letters and two-letter initials. mail@shawmeters.com, me@kirstys.co.uk and
-# h@theoriginalh.com are all real inboxes the audit nearly cleared (16 Sep
-# 2026); a generic inbox at the company's own domain is a legitimate rung 7.
+# Template LOCAL PARTS: ONLY the unambiguous ones. Ishu, 16 Sep 2026: "loosen
+# the rule max, I'd rather have false positives than false negatives", so a
+# doubtful address is KEPT and the bounce pass judges it later; a real one
+# refused here is gone for good. Not here on purpose: you@, name@, user@,
+# test@, mail@, me@, initials, single letters, repeated letters.
 _PLACEHOLDER_LOCALS = {
-    "you", "your", "yourname", "your.name", "your-name", "your_name", "yourmail", "youremail",
-    "your.email", "name", "firstname", "lastname", "first.last", "first_last", "firstname.lastname",
-    "firstname_lastname", "first.lastname", "fname.lname", "john.doe", "jane.doe",
-    "johndoe", "janedoe", "john_doe", "jane_doe", "john.smith", "jane.smith", "johnsmith", "janesmith",
-    "joe.bloggs", "joebloggs", "j.bloggs", "user", "username", "emailaddress", "email.address",
-    "test", "testing", "tester", "sample", "example", "xyz", "abc", "foo", "bar", "foobar", "demo",
-    "placeholder", "yourusername", "yourid", "filler", "beta", "affiliate",
+    "firstname", "lastname", "first.last", "first_last", "firstname.lastname", "firstname_lastname",
+    "first.lastname", "fname.lname", "yourname", "your.name", "your-name", "your_name", "youremail",
+    "your.email", "yourmail", "john.doe", "jane.doe", "johndoe", "janedoe", "john_doe", "jane_doe",
+    "joe.bloggs", "joebloggs", "example", "placeholder", "xyz", "abc", "filler",
 }
 _OBFUSCATED_RE = re.compile(
     r"([a-zA-Z0-9._%+-]+)\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\{\s*at\s*\})\s*"
@@ -131,19 +129,9 @@ def is_placeholder_email(email: str, company_domain: str = "") -> bool:
         return True
     if re.fullmatch(r"[\d.]+", dom):                       # an IP, not a mail domain
         return True
-    if local in _PLACEHOLDER_LOCALS or local.rstrip("0123456789") in _PLACEHOLDER_LOCALS:
-        return True
-    if local.isdigit():                                     # 1@, 12345@
+    if local in _PLACEHOLDER_LOCALS:
         return True
     if re.fullmatch(r"[0-9a-f]{32}", local):                # a tracking hash (sentry, wix)
-        return True
-    # Filler: one letter repeated (aaa@, xxx@) or a keyboard run. NOT two
-    # different letters: "ab@" is a principal's initials as often as not
-    # (Dawia Family Office, 16 Sep 2026), and initials are how small offices
-    # publish a partner's address.
-    if len(local) >= 2 and len(set(local)) == 1:
-        return True
-    if local in ("abc", "abcd", "xyz", "qwerty", "asdf", "asdfgh"):
         return True
     # A template that names the COMPANY's own domain generically ("name@theirdomain")
     # is still a template; the local part decides, handled above. Nothing else

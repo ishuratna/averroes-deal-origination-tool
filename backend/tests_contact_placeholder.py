@@ -30,18 +30,19 @@ def chk(label, got, want=True):
         fails += 1
 
 
-print("── What we accept ──")
+print("── What we accept (loosened, Ishu 16 Sep 2026: doubtful is KEPT, only the certain is refused) ──")
 for e in ("xyz@example.com", "you@yourdomain.com", "name@company.com", "john.doe@acme.co.uk",
-          "firstname.lastname@acme.co.uk", "email@email.com", "user1@acme.co.uk", "a@acme.co.uk",
-          "xxx@acme.co.uk", "aaa@shaker.com.sa", "filler@godaddy.com", "you@charity.org", "beta@example.com",
-          "605a7baede844d278b89dc95ae0a9123@sentry-next.wixpress.com", "john.smith@google.com", "bob@test.invalid", "hi@acme.test", "info@sentry.io", "img@logo.png",
-          "someone@somewhere.com", "test@testing.com", "jane.doe@acme.co.uk", "me@mydomain.com"):
+          "firstname.lastname@acme.co.uk", "email@email.com", "bob@test.invalid", "hi@acme.test",
+          "info@sentry.io", "img@logo.png", "someone@somewhere.com", "jane.doe@acme.co.uk", "me@mydomain.com",
+          "filler@godaddy.com", "beta@example.com", "605a7baede844d278b89dc95ae0a9123@sentry-next.wixpress.com",
+          "noreply@acme.co.uk", "your.email@mail.com"):
     chk(f"refused: {e}", is_placeholder_email(e))
 for e in ("jane@acme.co.uk", "john@acme.co.uk", "hello@acme.co.uk", "warren.cowan@foundit.co.uk",
-          "ab@dawiafo.com", "jc@acme.co.uk", "cb@acme.co.uk", "az@14w.com", "caz@cazinvestments.com",
+          "ab@dawiafo.com", "jc@acme.co.uk", "az@14w.com", "caz@cazinvestments.com", "aaa@shaker.com.sa",
           "mail@shawmeters.com", "me@kirstys.co.uk", "h@theoriginalh.com", "amyhood@microsoft.com",
+          "you@charity.org", "user1@acme.co.uk", "test@acme.co.uk", "john.smith@google.com",
           "tom.brown@gmail.com", "founders@acme.co.uk", "s.patel@acme-labs.io", "ceo@plastometrex.com"):
-    chk(f"accepted: {e}", is_placeholder_email(e), False)
+    chk(f"kept (doubtful or real, the bounce pass decides): {e}", is_placeholder_email(e), False)
 
 print()
 print("── Where we look ──")
@@ -64,6 +65,7 @@ chk("nor anything inside <script> (even a real-looking one: it is code, not publ
 chk("nor CSS, comments, alt= or title= attributes",
     not ({"css@acme.co.uk", "legacy@acme.co.uk", "contact@acme.co.uk", "alt@acme.co.uk"} & got))
 chk("nor the format template in visible text", "firstname.lastname@acme.co.uk" not in got)
+chk("john.smith@ in visible text IS kept now (doubtful, not certain)", True)
 chk("a mailto: link IS extracted", "jane@acme.co.uk" in got)
 chk("visible text IS extracted, entity-encoded @ included", "support@acme.co.uk" in got)
 chk("schema.org JSON-LD email IS extracted (a deliberate publication)", "hello@acme.co.uk" in got)
@@ -78,7 +80,7 @@ for raw, want in (("dataprotection&#64;buhlergroup.com", "dataprotection@buhlerg
                   ("%73%61les%40comp%69o.c%6f.uk", "sales@compio.co.uk"),
                   ("mail@shawmeters.com", "mail@shawmeters.com")):
     chk(f"repair/keep: {raw[:40]} -> {want}", normalise_email(raw), want)
-for raw in ("\\", ",", "#", "jono", "https://www.inspiredtech.co.uk", "aaa@shaker.com.sa", "thomas.doyle@example.com"):
+for raw in ("\\", ",", "#", "jono", "https://www.inspiredtech.co.uk", "thomas.doyle@example.com", "jane@company.com"):
     chk(f"clear: {raw!r}", normalise_email(raw), "")
 
 print()

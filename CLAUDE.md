@@ -567,15 +567,26 @@ mistake is both visible and correctable. This one logged nothing, which is why
   scripts, styles, comments and every other tag's attributes are dropped.
   Obfuscated "name [at] domain [dot] com" is decoded: that is a deliberate
   publication aimed at exactly this crawler.
-- WHAT WE ACCEPT (`is_placeholder_email`, PURE): refuses RFC 2606 reserved
+- WHAT WE ACCEPT (`is_placeholder_email`, PURE) refuses ONLY THE CERTAIN.
+  Ishu, 16 Sep 2026, after reading the audit: "loosen the rule max, I'd
+  rather have false positives than false negatives." So: RFC 2606 reserved
   domains (example.*, .test, .invalid, .localhost), template domains
-  (yourdomain.com, company.com, email.com ...), template local parts (you,
-  name, firstname.lastname, john.doe, user, test ...), third-party service
-  domains that appear in page source (sentry.io, wixpress.com, schema.org
-  ...), IPs, one-letter and digit-only locals. It does NOT refuse a real
-  first name (jane@, john@) or a personal-provider domain: small firms use
-  gmail. Errs towards refusing: a lost address costs one more rung of the
-  waterfall, a template costs the one approach we get.
+  (yourdomain.com, company.com, email.com ...), infrastructure domains that
+  appear in page source (sentry.io, wixpress.com, godaddy.com ...), 32-hex
+  tracking hashes, file suffixes, noreply@, and a SHORT list of unambiguous
+  template locals (firstname.lastname, your.name, john.doe, joe.bloggs, xyz,
+  abc, placeholder). NOT refused: you@, name@, user@, test@, mail@, me@,
+  initials (ab@, az@, caz@), single or repeated letters (h@, aaa@), big-tech
+  corporate domains (amyhood@microsoft.com is a person). The first audit
+  nearly cleared mail@shawmeters.com, me@kirstys.co.uk, h@theoriginalh.com
+  and four investors' initials: a doubtful address is KEPT and the bounce
+  pass judges it; a real one refused here is gone for good.
+- OBFUSCATION IS PUBLICATION. `decode_obfuscated` undoes HTML entities
+  (&#64;, &#x40;, double-encoded) and percent escapes (%40) before the regex
+  runs; six stored contacts were real addresses wearing that disguise
+  (hello@skratchtech.com, sales@compio.co.uk ...). `normalise_email` is the
+  audit's judge: decodes to a real address -> REPAIR; decodes to nothing
+  (`\`, `,`, `#`, a bare word, a URL) -> CLEAR.
 - THE GUARD RUNS ON EVERY RUNG. The AI search reads the same site and can
   echo the same template; Hunter can index one. `resolve_contact_email`
   drops a placeholder `ai_email` before the waterfall starts,
@@ -583,9 +594,9 @@ mistake is both visible and correctable. This one logged nothing, which is why
   sides. `tests_contact_placeholder.py` pins the exact HTML that caused the
   bug.
 - RETRO: `POST /admin/contacts/placeholder-audit` (dry run by default,
-  companies and investors) lists stored template addresses; `dry_run=0`
-  clears them with a note on the card, never touching a row already
-  emailed at that address (the bounce pass owns that case).
+  companies and investors) lists stored values with an `action` of repair
+  or clear; `dry_run=0` applies both with a note on the card, never touching
+  a row already emailed at that address (the bounce pass owns that case).
 
 ## 4a. Identity guard (same-named companies must never mix)
 
