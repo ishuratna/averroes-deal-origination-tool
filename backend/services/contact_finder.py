@@ -130,7 +130,13 @@ def is_placeholder_email(email: str, company_domain: str = "") -> bool:
         return True
     if len(local) == 1 or local.isdigit():                  # a@, 1@, 12345@
         return True
-    if re.fullmatch(r"(x|y|z|a|b|c)+", local):             # xxx@, abc@ style fillers
+    # Filler: one letter repeated (aaa@, xxx@) or a keyboard run. NOT two
+    # different letters: "ab@" is a principal's initials as often as not
+    # (Dawia Family Office, 16 Sep 2026), and initials are how small offices
+    # publish a partner's address.
+    if len(local) >= 2 and len(set(local)) == 1:
+        return True
+    if local in ("abc", "abcd", "xyz", "qwerty", "asdf", "asdfgh"):
         return True
     # A template that names the COMPANY's own domain generically ("name@theirdomain")
     # is still a template; the local part decides, handled above. Nothing else

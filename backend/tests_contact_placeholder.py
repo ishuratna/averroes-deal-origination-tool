@@ -33,10 +33,11 @@ def chk(label, got, want=True):
 print("── What we accept ──")
 for e in ("xyz@example.com", "you@yourdomain.com", "name@company.com", "john.doe@acme.co.uk",
           "firstname.lastname@acme.co.uk", "email@email.com", "user1@acme.co.uk", "a@acme.co.uk",
-          "xxx@acme.co.uk", "bob@test.invalid", "hi@acme.test", "info@sentry.io", "img@logo.png",
+          "xxx@acme.co.uk", "aaa@shaker.com.sa", "bob@test.invalid", "hi@acme.test", "info@sentry.io", "img@logo.png",
           "someone@somewhere.com", "test@testing.com", "jane.doe@acme.co.uk", "me@mydomain.com"):
     chk(f"refused: {e}", is_placeholder_email(e))
 for e in ("jane@acme.co.uk", "john@acme.co.uk", "hello@acme.co.uk", "warren.cowan@foundit.co.uk",
+          "ab@dawiafo.com", "jc@acme.co.uk", "cb@acme.co.uk",
           "tom.brown@gmail.com", "founders@acme.co.uk", "s.patel@acme-labs.io", "ceo@plastometrex.com"):
     chk(f"accepted: {e}", is_placeholder_email(e), False)
 
