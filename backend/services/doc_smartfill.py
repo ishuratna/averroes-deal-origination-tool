@@ -132,26 +132,93 @@ _YEAR_SIGNED = _METRIC_SIGNED
 def cells_from_columns(row: Dict, source: str) -> List[Dict]:
     """Seed cells from the legacy y1..y3 columns (Companies House / imports),
     so a company's existing figures appear in the store before a document
-    adds to them. Only slots with a period date can be placed."""
+    adds to them.
+
+    A slot is placed in a year by `fiscal_year.place_label`: an ISO date is
+    itself; an import label naming a year ("FY2025 (Gain, reported)",
+    "FY2024") is placed at the company's Companies House year end, or 31 Dec
+    when we have none, and the cell's evidence says so; a label with no year
+    ("latest (Inven)") is NOT placed (Ishu, 17 Sep 2026: every figure in the
+    correct year, so a figure we cannot date stays out of the year columns).
+    The EBITDA column (`estimated_ebitda`, GBP M) is placed only for a Gain
+    row, the one import that states the year it reports: the same column
+    holds a REVENUE estimate for the old Excel uploads, and an unlabelled
+    slot-0 date could come from Companies House while the EBITDA came from
+    somewhere else.
+    """
+    from services.fiscal_year import place_label
     cells: List[Dict] = []
     for slot in range(3):
-        d = _period(row.get(YEAR_DATE_COLS[slot])) or (
-            _period(row.get("profit_y1_date")) if slot == 0 else None)
+        label = row.get(YEAR_DATE_COLS[slot]) or (row.get("profit_y1_date") if slot == 0 else None)
+        d, note = place_label(label, row)
         if not d:
             continue
+        ev = note
         for m, cols in YEAR_METRICS.items():
             col = cols[slot]
             if col and row.get(col) is not None:
                 v = _num(row.get(col), signed=True)
                 if v is not None and (v != 0 or m in ("profit_before_tax", "net_assets")):
                     cells.append({"period_end": d, "metric": m, "segment": "", "value": v,
-                                  "unit": "GBP", "basis": "actual", "source": source, "evidence": ""})
+                                  "unit": "GBP", "basis": "actual", "source": source, "evidence": ev})
         if slot == 0 and row.get("employees_ch") is not None:
             v = _num(row.get("employees_ch"))
             if v:
                 cells.append({"period_end": d, "metric": "employees", "segment": "", "value": v,
-                              "unit": "count", "basis": "actual", "source": source, "evidence": ""})
+                              "unit": "count", "basis": "actual", "source": source, "evidence": ev})
+        if slot == 0 and "(gain" in str(label or "").lower() and row.get("estimated_ebitda") is not None:
+            e = _num(row.get("estimated_ebitda"), signed=True)
+            if e is not None and e != 0:
+                cells.append({"period_end": d, "metric": "ebitda", "segment": "", "value": e * 1e6,
+                              "unit": "GBP", "basis": "actual", "source": source,
+                              "evidence": f"Gain reported EBITDA GBP {e:g}M, same year as the revenue"})
     return cells
+
+
+# ch_history keys -> store metrics. `profit` in the history is profit before tax.
+_HISTORY_METRICS = {"revenue": "revenue", "gross_profit": "gross_profit", "profit": "profit_before_tax",
+                    "total_assets": "total_assets", "net_assets": "net_assets", "cash": "cash",
+                    "employees": "employees"}
+
+
+def cells_from_history(row: Dict, source: str = "Companies House") -> List[Dict]:
+    """Every Companies House period we parsed (`ch_history.years`, up to
+    eight), as cells. The y1..y3 columns hold only the newest three, so before
+    this the five-year view lost FY22 for a company whose filings went back
+    six years (17 Sep 2026)."""
+    h = row.get("ch_history")
+    if not h:
+        return []
+    try:
+        data = json.loads(h) if isinstance(h, str) else h
+    except Exception:
+        return []
+    cells: List[Dict] = []
+    for y in (data or {}).get("years") or []:
+        d = _period(y.get("period_end"))
+        if not d:
+            continue
+        for k, m in _HISTORY_METRICS.items():
+            if y.get(k) is None:
+                continue
+            v = _num(y.get(k), signed=True)
+            if v is None or (v == 0 and m not in ("profit_before_tax", "net_assets")):
+                continue
+            cells.append({"period_end": d, "metric": m, "segment": "", "value": v,
+                          "unit": "count" if m == "employees" else "GBP", "basis": "actual",
+                          "source": source, "evidence": f"filed accounts, period to {d}"})
+    return cells
+
+
+def cells_from_record(row: Dict, source: str) -> List[Dict]:
+    """History cells plus column cells, one per (period, metric); the history
+    wins a clash because it is the same filing read in full."""
+    out: Dict[Tuple[str, str], Dict] = {}
+    for c in cells_from_columns(row, source):
+        out[(c["period_end"], c["metric"])] = c
+    for c in cells_from_history(row, "Companies House" if row.get("ch_company_number") else source):
+        out[(c["period_end"], c["metric"])] = c
+    return list(out.values())
 
 
 def project_to_columns(cells: List[Dict]) -> Dict:

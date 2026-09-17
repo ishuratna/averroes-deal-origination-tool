@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, FinCell, FIN_METRIC_LABELS, FIN_METRIC_ORDER, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, FinCell, FinancialsResponse, FinYear, EMPTY_FINANCIALS, FIN_METRIC_LABELS, FIN_METRIC_ORDER, fiscalYearOf, fyLabel, periodEndShort, yearEndShort, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -66,68 +66,110 @@ export function chHistory(company: CompanyTarget): Array<any> {
   return [];
 }
 
-// ── Revenue + EBITDA grouped bar chart (pure SVG) ───────────────────────────
-function FinChart({ company }: { company: CompanyTarget }) {
+// ── Fiscal-year columns shared by the chart and the grid ────────────────────
+// The window (FY22..FY26 in 2026) comes from the backend; a later year is
+// appended only when the store holds figures for it (a founder's FY27 budget).
+// Per (year, metric) ONE cell is shown: actual before budget before forecast,
+// Companies House before a document before an import, latest period end last.
+// A year with two period ends (a changed year end, or a Gain "FY2025" placed
+// beside the filing) therefore shows the filing and keeps the rest on hover.
+const BASIS_RANK: Record<string, number> = { actual: 0, budget: 1, forecast: 2 };
+function sourceRank(src: string): number {
+  const s = (src || '').toLowerCase();
+  if (s.startsWith('companies house')) return 0;
+  if (s.startsWith('document')) return 1;
+  return 2;
+}
+function pickCell(cells: FinCell[], fy: number, metric: string, seg = ''): FinCell | undefined {
+  const cands = cells.filter(c => c.metric === metric && (c.segment || '') === seg && fiscalYearOf(c.period_end) === fy);
+  if (!cands.length) return undefined;
+  cands.sort((x, y) => (BASIS_RANK[x.basis] ?? 3) - (BASIS_RANK[y.basis] ?? 3)
+    || sourceRank(x.source) - sourceRank(y.source)
+    || y.period_end.localeCompare(x.period_end));
+  return cands[0];
+}
+function finColumns(fin: FinancialsResponse): FinYear[] {
+  const cols: FinYear[] = [...(fin.window || [])];
+  const last = cols.length ? cols[cols.length - 1].fy : 0;
+  const later = Array.from(new Set(fin.cells.map(c => fiscalYearOf(c.period_end)).filter((y): y is number => !!y && y > last))).sort();
+  later.forEach(fy => cols.push({ fy, period_end: `${fy}-12-31`, status: 'running' }));
+  return cols;
+}
+function cellTitle(c: FinCell): string {
+  return `${c.source} · period to ${c.period_end}${c.basis !== 'actual' ? ` · ${c.basis}` : ''}${c.evidence ? ` — ${c.evidence}` : ''}`;
+}
+
+// ── Revenue + EBITDA grouped bar chart (pure SVG), one group per fiscal year ─
+// Draws the SAME columns as the grid, from the SAME store. An empty year (the
+// running FY26, or a year with no filing) is drawn as a placeholder so the
+// five-year look-back always reads FY22..FY26 (Ishu, 17 Sep 2026).
+function FinChart({ fin, company }: { fin: FinancialsResponse; company: CompanyTarget }) {
   const years = useMemo(() => {
-    // Prefer the full CH history (up to 6 periods); fall back to y1-y3 columns
-    const hist = chHistory(company).filter(y => y.revenue != null);
-    if (hist.length >= 2) {
-      return hist.map((y, i) => ({
-        label: (y.period_end || '').slice(0, 10),
-        rev: y.revenue as number,
-        ebitda: (i === hist.length - 1 && company.estimated_ebitda) ? company.estimated_ebitda * 1e6 : null,
-      }));
-    }
-    const ys: Array<{ label: string; rev: number | null; ebitda: number | null }> = [];
-    if (company.revenue_y3) ys.push({ label: (company.revenue_y3_date || 'Y-2').slice(0, 10), rev: company.revenue_y3, ebitda: null });
-    if (company.revenue_y2) ys.push({ label: (company.revenue_y2_date || 'Y-1').slice(0, 10), rev: company.revenue_y2, ebitda: null });
-    if (company.revenue_y1 || company.revenue_m) {
-      ys.push({
-        label: (company.revenue_y1_date || 'Latest').slice(0, 10),
-        rev: company.revenue_y1 || (company.revenue_m ? company.revenue_m * 1e6 : null),
-        ebitda: company.estimated_ebitda ? company.estimated_ebitda * 1e6 : null,
-      });
-    }
-    return ys;
-  }, [company]);
+    const cols = finColumns(fin);
+    if (!cols.length) return [];
+    return cols.map(col => {
+      const rev = pickCell(fin.cells, col.fy, 'revenue');
+      const ebitda = pickCell(fin.cells, col.fy, 'ebitda');
+      return { fy: col.fy, label: fyLabel(col.fy), status: col.status, period_end: col.period_end,
+               rev: rev ? rev.value : null, revBasis: rev?.basis, ebitda: ebitda ? ebitda.value : null, ebitdaBasis: ebitda?.basis,
+               title: [rev && `Revenue: ${cellTitle(rev)}`, ebitda && `EBITDA: ${cellTitle(ebitda)}`].filter(Boolean).join('\n') };
+    });
+  }, [fin]);
 
   if (!years.length) return <p className="cp-empty">No revenue history held for this company yet.</p>;
+  const any = years.some(y => y.rev != null || y.ebitda != null);
   const maxAbs = Math.max(...years.flatMap(y => [Math.abs(y.rev || 0), Math.abs(y.ebitda || 0)]), 1);
-  const W = 640, H = 220, padL = 8, padB = 24, zero = (H - padB) * 0.82;
+  const W = 640, H = 230, padL = 8, padB = 34, zero = (H - padB) * 0.82;
   const groupW = (W - padL * 2) / years.length;
-  const scale = (v: number) => (v / maxAbs) * (zero - 12);
+  const scale = (v: number) => (v / maxAbs) * (zero - 14);
+  const money = (v: number) => `${v < 0 ? '(' : ''}${(Math.abs(v) / 1e6).toFixed(1)}M${v < 0 ? ')' : ''}`;
 
   return (
     <div>
-      <div className="cp-legend"><span className="lg-rev">Revenue</span><span className="lg-ebitda">EBITDA</span></div>
+      <div className="cp-legend"><span className="lg-rev">Revenue</span><span className="lg-ebitda">EBITDA</span>
+        <span className="lg-note">Fiscal year = year the period ends in{fin.year_end ? ` · year end ${yearEndShort(fin.year_end)}` : ''}</span></div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }}>
         <line x1={padL} y1={zero} x2={W - padL} y2={zero} stroke="#e2e8f0" strokeWidth="1" />
         {years.map((y, i) => {
           const cx = padL + groupW * i + groupW / 2;
           const bw = Math.min(34, groupW / 4);
+          const empty = y.rev == null && y.ebitda == null;
           const bars = [];
           if (y.rev != null) {
             const h = Math.abs(scale(y.rev));
-            bars.push(<rect key="r" x={cx - bw - 3} y={y.rev >= 0 ? zero - h : zero} width={bw} height={Math.max(h, 2)} rx="3" fill="#1e40af" />);
+            bars.push(<rect key="r" x={cx - bw - 3} y={y.rev >= 0 ? zero - h : zero} width={bw} height={Math.max(h, 2)} rx="3"
+              fill="#1e40af" opacity={y.revBasis && y.revBasis !== 'actual' ? 0.45 : 1} />);
           }
           if (y.ebitda != null) {
             const h = Math.abs(scale(y.ebitda));
-            bars.push(<rect key="e" x={cx + 3} y={y.ebitda >= 0 ? zero - h : zero} width={bw} height={Math.max(h, 2)} rx="3" fill="#60a5fa" />);
+            bars.push(<rect key="e" x={cx + 3} y={y.ebitda >= 0 ? zero - h : zero} width={bw} height={Math.max(h, 2)} rx="3"
+              fill="#60a5fa" opacity={y.ebitdaBasis && y.ebitdaBasis !== 'actual' ? 0.45 : 1} />);
           }
           return (
-            <g key={i}>
+            <g key={y.fy}>
+              <title>{y.title || `${y.label}: ${y.status === 'running' ? 'year in progress' : 'no figures held'}`}</title>
+              {empty && any && (
+                <rect x={cx - bw - 3} y={zero - 46} width={bw * 2 + 6} height={46} rx="4" fill="none" stroke="#cbd5e1" strokeDasharray="3 3" />
+              )}
+              {empty && any && (
+                <text x={cx} y={zero - 20} textAnchor="middle" fontSize="9" fill="#94a3b8">{y.status === 'running' ? 'in progress' : 'no figures'}</text>
+              )}
               {bars}
               {y.rev != null && (
                 <text x={cx - 3 - bw / 2} y={(y.rev >= 0 ? zero - Math.abs(scale(y.rev)) - 5 : zero + Math.abs(scale(y.rev)) + 12)}
-                  textAnchor="middle" fontSize="10" fontWeight="700" fill="#334155">
-                  {(y.rev / 1e6).toFixed(1)}M
-                </text>
+                  textAnchor="middle" fontSize="10" fontWeight="700" fill="#334155">{money(y.rev)}</text>
               )}
-              <text x={cx} y={H - 6} textAnchor="middle" fontSize="10.5" fill="#94a3b8" fontWeight="600">{y.label}</text>
+              {y.ebitda != null && (
+                <text x={cx + 3 + bw / 2} y={(y.ebitda >= 0 ? zero - Math.abs(scale(y.ebitda)) - 5 : zero + Math.abs(scale(y.ebitda)) + 12)}
+                  textAnchor="middle" fontSize="9" fontWeight="600" fill={y.ebitda < 0 ? '#dc2626' : '#475569'}>{money(y.ebitda)}</text>
+              )}
+              <text x={cx} y={H - 18} textAnchor="middle" fontSize="11" fill="#334155" fontWeight="700">{y.label}</text>
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize="8.5" fill="#94a3b8" fontWeight="500">{periodEndShort(y.period_end)}</text>
             </g>
           );
         })}
       </svg>
+      {!any && <p className="cp-empty" style={{ marginTop: '0.4rem' }}>No revenue or EBITDA figures held yet for {years[0].label}–{years[years.length - 1].label}.{company.revenue_y1 ? ' The revenue on the record has no fiscal year stated by its source.' : ''}</p>}
     </div>
   );
 }
@@ -164,7 +206,7 @@ function EmpChart({ company }: { company: CompanyTarget }) {
 function HistoryTable({ company }: { company: CompanyTarget }) {
   const years = chHistory(company);
   if (years.length < 2) return null;
-  const cols = years.slice(-4); // up to 4 most recent, oldest → newest
+  const cols = years.slice(-5); // up to 5 most recent filed periods, oldest → newest (the five-year look-back)
   const rows: Array<{ label: string; key: string; margin?: boolean }> = [
     { label: 'Revenue', key: 'revenue' },
     { label: 'Gross profit', key: 'gross_profit' },
@@ -186,7 +228,7 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
       <div className="cp-section-title">Multi-year financials (filed accounts)</div>
       <div className="cp-card">
         <table className="cp-table">
-          <thead><tr><th></th>{cols.map((c, i) => <th key={i}>{(c.period_end || '').slice(0, 10)}</th>)}</tr></thead>
+          <thead><tr><th></th>{cols.map((c, i) => <th key={i}>{fyLabel(fiscalYearOf(c.period_end))}<div className="fy-sub">{periodEndShort(c.period_end)}</div></th>)}</tr></thead>
           <tbody>
             {present.map(r => (
               <React.Fragment key={r.key}>
@@ -209,21 +251,27 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
   );
 }
 
-// ── Financials by year: metrics x periods from company_financials ──────────
+// ── Financials by year: metrics x FISCAL YEARS from company_financials ─────
 // Every figure we hold, whatever the source (Companies House filings, founder
-// documents, imports), one column per period, forecast columns flagged, a
-// revenue split by segment under the revenue row. Hover a cell for its source
-// and evidence. This is the VIEW of the store; nothing here is computed.
-function FinGrid({ cells }: { cells: FinCell[] }) {
-  if (!cells.length) return <p className="cp-empty">No year-by-year figures held yet. Companies House filings and uploaded documents fill this in.</p>;
-  const periods = Array.from(new Set(cells.map(c => c.period_end))).sort();
-  const basisOf: Record<string, string> = {};
-  cells.forEach(c => { if (c.basis && c.basis !== 'actual') basisOf[c.period_end] = c.basis; });
+// documents, imports), one column per fiscal year in the five-year window
+// (FY22..FY26 in 2026), the running year shown as a placeholder, forecast
+// years appended and flagged, a revenue split by segment under the revenue
+// row. Hover a cell for its source, period end and evidence. This is the VIEW
+// of the store; nothing here is computed.
+function FinGrid({ fin }: { fin: FinancialsResponse }) {
+  const cells = fin.cells;
+  const cols = finColumns(fin);
+  if (!cells.length && !cols.length) return <p className="cp-empty">No year-by-year figures held yet. Companies House filings and uploaded documents fill this in.</p>;
   const whole = cells.filter(c => !c.segment);
   const segs = cells.filter(c => c.segment && c.metric === 'revenue');
   const metrics = FIN_METRIC_ORDER.filter(m => whole.some(c => c.metric === m));
   const segNames = Array.from(new Set(segs.map(c => c.segment))).sort();
-  const cell = (m: string, p: string, seg = '') => cells.find(c => c.metric === m && c.period_end === p && (c.segment || '') === seg);
+  const yearHas = (fy: number) => cells.some(c => fiscalYearOf(c.period_end) === fy);
+  const basisOf = (fy: number) => {
+    const ys = cells.filter(c => fiscalYearOf(c.period_end) === fy);
+    if (!ys.length || ys.some(c => c.basis === 'actual')) return '';
+    return ys.some(c => c.basis === 'budget') ? 'budget' : 'forecast';
+  };
   const fmt = (c?: FinCell) => {
     if (!c) return '';
     if (c.unit === 'pct') return `${c.value.toFixed(1)}%`;
@@ -232,30 +280,49 @@ function FinGrid({ cells }: { cells: FinCell[] }) {
     const s = a >= 1e6 ? `£${(a / 1e6).toFixed(2)}m` : a >= 1e3 ? `£${Math.round(a / 1e3)}k` : `£${Math.round(a)}`;
     return c.value < 0 ? `(${s})` : s;
   };
-  const fy = (p: string) => { const [y, m] = p.split('-'); return m === '12' ? `FY${y}` : `FY${y} (${m}/${y})`; };
   const row = (label: string, m: string, seg = '', sub = false) => (
     <tr key={`${m}:${seg}`} className={sub ? 'sub' : ''}>
       <td className="lbl">{label}</td>
-      {periods.map(p => { const c = cell(m, p, seg); return (
-        <td key={p} className={`num${c && c.value < 0 ? ' neg' : ''}${c && c.basis !== 'actual' ? ' fc' : ''}`}
-            title={c ? `${c.source}${c.evidence ? ` — ${c.evidence}` : ''}` : ''}>{fmt(c) || '·'}</td>
+      {cols.map(col => { const c = pickCell(cells, col.fy, m, seg); return (
+        <td key={col.fy} className={`num${c && c.value < 0 ? ' neg' : ''}${c && c.basis !== 'actual' ? ' fc' : ''}${!yearHas(col.fy) ? ' ph' : ''}`}
+            title={c ? cellTitle(c) : ''}>{fmt(c) || '·'}</td>
       ); })}
     </tr>
   );
+  const first = cols.length ? cols[0].fy : 0;
+  const earlier = Array.from(new Set(cells.map(c => fiscalYearOf(c.period_end)).filter((y): y is number => !!y && y < first))).sort();
+  const sources = Array.from(new Set(cells.map(c => c.source)));
   return (
     <div className="cp-fin-wrap">
       <table className="cp-fin">
-        <thead><tr><th></th>{periods.map(p => (
-          <th key={p}>{fy(p)}{basisOf[p] ? <span className="fc-tag">{basisOf[p]}</span> : null}</th>))}</tr></thead>
+        <thead><tr><th></th>{cols.map(col => {
+          const has = yearHas(col.fy); const b = basisOf(col.fy);
+          return (
+            <th key={col.fy} className={has ? '' : 'ph'}>
+              {fyLabel(col.fy)}
+              {b ? <span className="fc-tag">{b}</span> : null}
+              {!has ? <span className="fc-tag">{col.status === 'running' ? 'in progress' : 'no accounts yet'}</span> : null}
+              <div className="fy-sub">{periodEndShort(col.period_end)}</div>
+            </th>
+          );
+        })}</tr></thead>
         <tbody>
-          {metrics.flatMap(m => [
+          {metrics.length ? metrics.flatMap(m => [
             row(FIN_METRIC_LABELS[m] || m, m),
             ...(m === 'revenue' ? segNames.map(sn => row(`· ${sn}`, 'revenue', sn, true)) : []),
-          ])}
+          ]) : (
+            <tr><td className="lbl">Revenue</td>{cols.map(col => <td key={col.fy} className="num ph">·</td>)}</tr>
+          )}
         </tbody>
       </table>
       <div className="cp-fin-foot">
-        Sources: {Array.from(new Set(cells.map(c => c.source))).join(' · ')}. Hover a figure for its evidence. Greyed columns are budget/forecast.
+        Fiscal year = the calendar year the accounting period ends in (a year to 31 Mar 2026 is FY26).
+        {fin.year_end ? ` Year end ${yearEndShort(fin.year_end)} from Companies House filings.` : ' Year end not yet known from Companies House; import years placed at 31 December.'}
+        {sources.length ? ` Sources: ${sources.join(' · ')}.` : ''} Hover a figure for its evidence. Greyed columns are budget/forecast.
+        {earlier.length ? ` Earlier years held: ${earlier.map(fyLabel).join(', ')}.` : ''}
+        {fin.unplaced.map((u, i) => (
+          <span key={i}> Not placed in a year: {FIN_METRIC_LABELS[u.metric] || u.metric} £{(u.value / 1e6).toFixed(2)}m ({u.label || 'no date'}; {u.reason}).</span>
+        ))}
       </div>
     </div>
   );
@@ -280,7 +347,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
-  const [finCells, setFinCells] = useState<FinCell[]>([]);
+  const [fin, setFin] = useState<FinancialsResponse>(EMPTY_FINANCIALS);
   // Document SmartFill review: the document disagreed with stored values and
   // Ishu decides, per field, which to keep. Opens right after an upload or
   // from the "Review" button on a filed document.
@@ -299,7 +366,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
       setDocReview(null);
       const docs = await dealApi.getEmailDocs(docReview.company);
       setEmailDocs(docs.documents || []);
-      dealApi.getFinancials(docReview.company).then(r => setFinCells(r.cells || [])).catch(() => {});
+      dealApi.getFinancials(docReview.company).then(setFin).catch(() => {});
       await onChanged();
       if (r?.rescore && r.rescore.old !== r.rescore.new)
         alert(`Applied ${r.accepted} change(s). Fit score ${r.rescore.old == null ? 'unscored' : Number(r.rescore.old).toFixed(2)} → ${r.rescore.new == null ? 'unscored' : Number(r.rescore.new).toFixed(2)}.`);
@@ -319,7 +386,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
   useEffect(() => {
     if (!baseCompany) return;
-    setActivity([]); setEmails([]); setEmailDocs([]); setFinCells([]); setConnections({ investors: [], siblings: [] });
+    setActivity([]); setEmails([]); setEmailDocs([]); setFin(EMPTY_FINANCIALS); setConnections({ investors: [], siblings: [] });
     setFullCompany(null);
     dealApi.getCompanyFull(baseCompany.name).then(r => {
       if (r && r.name) {
@@ -331,7 +398,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
     dealApi.getEmailDocs(baseCompany.name).then(r => setEmailDocs(r.documents || [])).catch(() => {});
-    dealApi.getFinancials(baseCompany.name).then(r => setFinCells(r.cells || [])).catch(() => {});
+    dealApi.getFinancials(baseCompany.name).then(setFin).catch(() => {});
     dealApi.getCompanyConnections(baseCompany.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
   }, [baseCompany?.name]);
 
@@ -591,7 +658,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                       // drop the socket while the backend finishes regardless).
                       const settle = async (r: { gcs_path: string; pending: DocReviewItem[]; fills_applied: number; filled?: DocReviewItem[]; summary?: string; read_error?: string }) => {
                         await onChanged();
-                        dealApi.getFinancials(baseCompany.name).then(x => setFinCells(x.cells || [])).catch(() => {});
+                        dealApi.getFinancials(baseCompany.name).then(setFin).catch(() => {});
                         if (r.pending?.length || r.filled?.length) openReview(r.gcs_path, f.name, r.pending || [], r.fills_applied || 0, r.filled || []);
                         else if (r.read_error) alert(`Filed, but the AI could not read it: ${r.read_error}`);
                         else alert(`Filed and read. Nothing in it differs from the record.${r.summary ? `\n\nWhat it says: ${r.summary}` : ''}`);
@@ -690,7 +757,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
           {tab === 'Financials' && (
             <>
               <div className="cp-section-title">Financials by year</div>
-              <div className="cp-card"><FinGrid cells={finCells} /></div>
+              <div className="cp-card"><FinGrid fin={fin} /></div>
 
               <div className="cp-stats">
                 <div className="cp-stat"><span className="cp-stat-label">Revenue {company.revenue_y1_date ? `(${company.revenue_y1_date})` : ''}</span><span className="cp-stat-value">{fmtRaw(company.revenue_y1) || fmtM(company.revenue_m) || '—'}</span></div>
@@ -701,7 +768,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
               </div>
 
               <div className="cp-section-title">Revenue &amp; EBITDA development</div>
-              <div className="cp-card"><FinChart company={company} /></div>
+              <div className="cp-card"><FinChart fin={fin} company={company} /></div>
 
               <HistoryTable company={company} />
               <EmpChart company={company} />

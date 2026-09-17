@@ -1022,6 +1022,11 @@ input::placeholder, textarea::placeholder { color: #a8b3c4; }
 .cp-fin th .fc-tag { display: inline-block; margin-left: 0.35rem; font-size: 0.6rem; padding: 0 0.3rem; border-radius: 4px; background: #f1f5f9; color: #64748b; text-transform: lowercase; letter-spacing: 0; }
 .cp-fin td { padding: 0.38rem 0.6rem; border-bottom: 1px solid #f1f5f9; }
 .cp-fin td.lbl { color: #0f172a; font-weight: 600; white-space: nowrap; }
+.cp-fin th .fy-sub { font-size: 0.6rem; font-weight: 500; color: #94a3b8; text-transform: none; letter-spacing: 0; margin-top: 0.1rem; }
+.cp-fin th.ph, .cp-fin td.ph { color: #cbd5e1; background: repeating-linear-gradient(135deg, #fafbfc 0 6px, #f8fafc 6px 12px); }
+.cp-table th .fy-sub { font-size: 0.6rem; font-weight: 500; color: #94a3b8; text-transform: none; letter-spacing: 0; }
+.cp-legend .lg-note { margin-left: auto; font-weight: 500; color: #94a3b8; }
+.cp-legend .lg-note::before { display: none; }
 .cp-fin tr.sub td.lbl { color: #64748b; font-weight: 500; padding-left: 1.2rem; }
 .cp-fin td.num { text-align: right; color: #0f172a; cursor: help; }
 .cp-fin td.num.neg { color: #dc2626; }

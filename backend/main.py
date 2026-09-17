@@ -2922,8 +2922,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # document - is never overwritten by an automated run (the same rule as
     # the IFNULL writes above; only a person confirms a replacement).
     try:
-        from services.doc_smartfill import cells_from_columns
-        ch_cells = cells_from_columns(ch_data, "Companies House")
+        from services.doc_smartfill import cells_from_record
+        # Every parsed period (ch_history), not only the three y-columns.
+        ch_cells = cells_from_record(ch_data, "Companies House")
         if ch_cells:
             held = {(c["period_end"], c["metric"], c.get("segment") or "")
                     for c in bq_handler.ensure_financials_seeded({"name": company_name, **ch_data})}
@@ -4360,10 +4361,28 @@ async def company_financials(company_name: str):
     """Every figure held for the company, by period and metric, with source and
     evidence (company_financials). Seeds the store from the legacy columns on
     first read so nothing already known disappears from the new view."""
+    from services.fiscal_year import fiscal_window, year_end_of, fy_status, period_end_for_fy, place_label
     company = bq_handler.get_company_full(company_name)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
-    return {"company": company_name, "cells": bq_handler.ensure_financials_seeded(company)}
+    cells = bq_handler.ensure_financials_seeded(company)
+    ye = year_end_of(company) or year_end_of({"ch_history": json.dumps(
+        {"years": [{"period_end": c["period_end"]} for c in cells if c.get("source") == "Companies House"]})})
+    # The five-year window the card draws (FY22..FY26 in 2026), each year with
+    # the period end it closes on and whether that period has ended yet, so
+    # the empty latest column can say "year in progress" or "accounts not yet
+    # filed" instead of nothing. ONE definition, here; the card only renders.
+    window = [{"fy": fy, "period_end": period_end_for_fy(fy, ye), "status": fy_status(fy, ye)}
+              for fy in fiscal_window()]
+    # Figures on the record that could not be placed in a year (a label with
+    # no year, e.g. "latest (Inven)"), so the card can say so honestly.
+    unplaced = []
+    for col, dcol in (("revenue_y1", "revenue_y1_date"),):
+        if company.get(col) is not None and not place_label(company.get(dcol), company)[0]:
+            unplaced.append({"metric": "revenue", "value": company.get(col), "label": company.get(dcol) or "",
+                             "reason": place_label(company.get(dcol), company)[1]})
+    return {"company": company_name, "cells": cells, "window": window,
+            "year_end": f"{ye[0]:02d}-{ye[1]:02d}" if ye else None, "unplaced": unplaced}
 
 
 @app.post("/admin/financials-backfill")
@@ -4371,7 +4390,7 @@ async def financials_backfill(request: Request, dry_run: int = Query(1), limit: 
     """Seed company_financials from the legacy y1..y3 columns for every company
     that has figures but no rows yet. Idempotent; defaults to a preview."""
     _require_token(request)
-    from services.doc_smartfill import cells_from_columns
+    from services.doc_smartfill import cells_from_record
     rows = bq_handler.get_universe_slim(include_hidden=True)
     have = set()
     try:
@@ -4383,7 +4402,7 @@ async def financials_backfill(request: Request, dry_run: int = Query(1), limit: 
     for c in rows:
         if c.get("name") in have:
             continue
-        cells = cells_from_columns(c, "Companies House" if c.get("ch_company_number") else "Record (import)")
+        cells = cells_from_record(c, "Companies House" if c.get("ch_company_number") else "Record (import)")
         if cells:
             todo.append((c["name"], cells))
     if dry_run:

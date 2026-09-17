@@ -1802,19 +1802,25 @@ class BigQueryHandler:
         store (source = Companies House when a CH number is on the row), so a
         document adds to what we hold instead of appearing to replace it.
         Returns the store's rows for the company afterwards."""
-        from services.doc_smartfill import cells_from_columns
+        from services.doc_smartfill import cells_from_record
         name = company_row.get("name")
         rows = self.get_financials(name)
-        if rows:
-            return rows
         src = "Companies House" if company_row.get("ch_company_number") else "Record (import)"
-        cells = cells_from_columns(company_row, src)
-        if cells:
+        cells = cells_from_record(company_row, src)
+        # FILL-ONLY top-up, every read: a (period, metric) the store already
+        # holds is never touched; only figures on the record with no cell yet
+        # are added. This is how an older Companies House year (ch_history
+        # goes back six years, the y-columns three) or a Gain "FY2025" revenue
+        # uploaded AFTER the first seed reaches the year columns (17 Sep 2026).
+        # Costs nothing when there is nothing to add: no write is issued.
+        held = {(r["period_end"], r["metric"], r.get("segment") or "") for r in rows}
+        new = [c for c in cells if (c["period_end"], c["metric"], "") not in held]
+        if new:
             try:
-                self.upsert_financials(name, cells, src, recorded_by="seed")
+                self.upsert_financials(name, new, src, recorded_by="seed")
+                rows = self.get_financials(name)
             except Exception as e:
                 logger.warning(f"financials seed failed for {name}: {e}")
-            rows = self.get_financials(name)
         return rows
 
     def project_financials(self, company_name: str) -> Dict:

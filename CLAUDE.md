@@ -554,6 +554,52 @@ mistake is both visible and correctable. This one logged nothing, which is why
   Sanity-check any derived figure against what a human reading the document
   would see. `tests_ixbrl_headcount.py` pins this against the real filing.
 
+## 4ae. Fiscal years: one convention, one window, and a figure with no year is not placed
+
+- THE CONVENTION (`services/fiscal_year.py`, PURE, and its mirror in
+  `types/index.ts`): a fiscal year is named after the CALENDAR YEAR THE
+  PERIOD ENDS IN. A year to 31 Mar 2026 is FY26; to 31 Dec 2025 is FY25.
+  It is the only rule under which a Gain row saying "FY2025" and a Companies
+  House period ending 2025-03-31 land in the same column (Ishu, 17 Sep 2026:
+  "correctly match it with the financial year with the Companies House
+  accounts"). Labels are `fy_label` / `fyLabel`, never a second format.
+- THE WINDOW is five years ending in the CURRENT calendar year (FY22..FY26 in
+  2026), served by `GET /company/{name}/financials` as `window` with each
+  year's period end and `running`/`closed` status. The card DRAWS it; it
+  does not decide it. The last column is nearly always empty, ON PURPOSE:
+  Ishu wants the running year visible as a placeholder so a table ending a
+  year early is never mistaken for one that is current. Later years are
+  appended only when the store holds figures for them (a founder's budget).
+- PLACING AN IMPORT LABEL (`place_label`): an ISO date is itself; a label
+  with a year and no day ("FY2025 (Gain, reported)", "FY2024") is placed at
+  the company's OWN year end when Companies House has told us what it is
+  (`year_end_of`: the most common month/day across filed periods, NEVER from
+  an import label), else 31 December, and the cell's evidence records the
+  assumption. A label with NO year ("latest (Inven)") is NOT placed. A
+  guessed year is a wrong year with a confident face; the figure stays on
+  the record, the endpoint lists it under `unplaced`, and the table says so.
+- ONE CELL PER (YEAR, METRIC) ON THE CARD (`pickCell`): actual before budget
+  before forecast, Companies House before a document before an import,
+  latest period end last. The store keeps every cell; the view chooses, and
+  the rest is on hover. This is why a Gain "FY2025" placed on a 31 March
+  year end beside the filing is harmless: the filing shows.
+- THE STORE HOLDS THE WHOLE HISTORY. `cells_from_history` writes every
+  `ch_history` period (up to six years, doctrine 4ab); `cells_from_columns`
+  alone lost FY22 for a company whose filings went back that far, because the
+  y-columns are a three-slot projection. `cells_from_record` = both. The
+  read path (`ensure_financials_seeded`) tops the store up FILL-ONLY on every
+  read: a (period, metric) already held is never touched, a figure on the
+  record with no cell is added, no write is issued when nothing is missing.
+- THE EBITDA COLUMN IS PLACED FOR GAIN ONLY. `estimated_ebitda` is a
+  misnamed grab-bag: Gain writes reported EBITDA into it, Inven "latest"
+  EBITDA with no year, and the old Excel upload a REVENUE estimate. Only the
+  Gain row states the year it reports, so only a "(Gain" label places it,
+  beside its revenue. Anything else would put a revenue estimate in an
+  EBITDA row of a Companies House year.
+- The chart and the grid read the SAME columns from the SAME store
+  (`finColumns`). The legacy `revenue_y1..y3` fallback in the chart is gone;
+  those columns are a projection of the store and cannot disagree with it.
+
 ## 4ad. Sources with a JSON API: list fast, profile within a time box
 
 - Enterprise Ireland's directory (`scrapers/enterprise_ireland_scraper.py`,

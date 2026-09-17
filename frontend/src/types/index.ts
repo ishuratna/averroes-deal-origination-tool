@@ -404,6 +404,49 @@ export const FIN_METRIC_LABELS: Record<string, string> = {
 };
 export const FIN_METRIC_ORDER = Object.keys(FIN_METRIC_LABELS);
 
+// ── Fiscal years (mirror of backend/services/fiscal_year.py) ─────────────────
+// ONE convention: a fiscal year is named after the calendar year the period
+// ENDS in. A year to 31 Mar 2026 is FY26; to 31 Dec 2025 is FY25. The window
+// (FY22..FY26 in 2026) is served by GET /company/{name}/financials so the card
+// never decides the years itself; these helpers only read and label.
+export function fiscalYearOf(periodEnd: string | null | undefined): number | null {
+  const m = /^(\d{4})-\d{2}/.exec((periodEnd || '').trim());
+  return m ? Number(m[1]) : null;
+}
+export function fyLabel(fy: number | null | undefined): string {
+  return fy ? `FY${String(fy % 100).padStart(2, '0')}` : '';
+}
+// "to 31 Mar 26" for a column sub-header.
+export function periodEndShort(periodEnd: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((periodEnd || '').trim());
+  if (!m) return '';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `to ${Number(m[3])} ${months[Number(m[2]) - 1]} ${m[1].slice(2)}`;
+}
+
+// "31 Mar" from the backend's "MM-DD" year end.
+export function yearEndShort(mmdd: string | null | undefined): string {
+  const m = /^(\d{2})-(\d{2})$/.exec((mmdd || '').trim());
+  if (!m) return '';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${Number(m[2])} ${months[Number(m[1]) - 1]}`;
+}
+
+// One column of the five-year window, as the backend defines it.
+export interface FinYear {
+  fy: number;
+  period_end: string;            // the day this company's FY closes (year end from Companies House, else 31 Dec)
+  status: 'running' | 'closed' | string;
+}
+export interface FinUnplaced { metric: string; value: number; label: string; reason: string }
+export interface FinancialsResponse {
+  cells: FinCell[];
+  window: FinYear[];
+  year_end: string | null;       // "MM-DD" when Companies House has told us, else null
+  unplaced: FinUnplaced[];
+}
+export const EMPTY_FINANCIALS: FinancialsResponse = { cells: [], window: [], year_end: null, unplaced: [] };
+
 export interface DocReviewItem {
   key: string;        // column, or 'financials' for the year table
   label: string;

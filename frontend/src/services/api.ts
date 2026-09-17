@@ -176,10 +176,13 @@ export const dealApi = {
   },
 
   // Every figure held for the company (company_financials), by period and metric.
-  async getFinancials(name: string): Promise<{ cells: import('../types').FinCell[] }> {
+  // Plus the five-year window (FY22..FY26 in 2026) and the company's year end,
+  // defined ONCE on the backend (services/fiscal_year.py); the card only draws.
+  async getFinancials(name: string): Promise<import('../types').FinancialsResponse> {
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/financials`);
-    if (!response.ok) return { cells: [] };
-    return await response.json();
+    if (!response.ok) return { cells: [], window: [], year_end: null, unplaced: [] };
+    const r = await response.json();
+    return { cells: r.cells || [], window: r.window || [], year_end: r.year_end || null, unplaced: r.unplaced || [] };
   },
 
   // Close a document's review: the ticked keys are written through the same
