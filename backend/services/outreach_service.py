@@ -263,19 +263,23 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        written from Averroes' point of view as an investor watching the
        space, never as someone explaining the company to its own founder.
        Sentence one, the discovery: "We came across {name} and were impressed
-       by <the specific thing that caught our eye: their approach, a product
-       choice, how they serve a market>." One concrete detail from the data,
-       framed as what impressed us, not as a description of their business.
+       by <something SPECIFIC to this company: their approach, a product
+       choice, how they serve a market, a customer they won>." Whenever the
+       company data or the recent signal holds ANY specific detail, you MUST
+       name it here; "impressed by what you are building" is allowed ONLY
+       when the record is genuinely empty. Frame it as what impressed us,
+       not as a description of their business back to its founder.
        NEVER claim to have been following, watching or tracking the company
        for weeks, months or "some time": we have not, and a founder can tell.
-       Sentence two, our conviction: "We believe <the problem> is a real pain
-       point for <who suffers it> and the potential in solving it is huge."
-       State it as our belief (we believe / we think), tied to why an
-       investor cares: big market, real pain, underserved.
+       Sentence two, our conviction, always in this shape: "We believe
+       <the problem they solve> is a big pain point for <who suffers it> and
+       the opportunity in solving it is huge." State it as our belief (we
+       believe / we think), tied to why an investor cares: big market, real
+       pain, underserved.
        Example of the move: "We came across BookingX and were impressed by
        the way you give hotels direct-channel pricing tools. We believe
-       hotels losing direct bookings to OTAs is a real pain point and the
-       potential in fixing it is huge."
+       hotels losing direct bookings to OTAs is a big pain point and the
+       opportunity in solving it is huge."
        Ground everything in the data or the recent signal. If the data is
        thin, keep this to one honest sentence.
     5. PORTFOLIO PROOF, own paragraph: "At Averroes, we have backed similar

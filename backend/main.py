@@ -3811,6 +3811,77 @@ async def draft_outreach(company_name: str):
     return result
 
 
+# The phrase the v10 wording retired (Ishu, 21 Sep 2026). A stored UNSENT draft
+# still carrying it is stale and is redrafted by the endpoint below.
+STALE_DRAFT_PHRASES = ("been following", "have been watching", "been tracking")
+
+
+@app.post("/admin/outreach/redraft-stale")
+async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limit: int = Query(25),
+                                 include_all: int = Query(0)):
+    """Regenerate every UNSENT founder draft written under the old wording.
+
+    Scope: companies holding a draft that was never sent (or redrafted after
+    the last send) whose body carries one of STALE_DRAFT_PHRASES;
+    `include_all=1` widens it to every unsent draft. Sent emails are history
+    and are never touched. ONE ungrounded Gemini call per company (news hook
+    from stored scoring signals only; no fresh web search, so zero grounding
+    spend), persisted exactly as the Draft button persists it, with an
+    activity note. Time-boxed by `limit` because Cloud Run cuts a request at
+    300s: run it in a loop until `remaining` is 0. Defaults to a PREVIEW.
+    """
+    _require_token(request)
+    import time as _time
+    from google.cloud import bigquery as bq_lib
+    phrase_sql = "" if include_all else (
+        " AND (" + " OR ".join(f"LOWER(outreach_draft_body) LIKE '%{p}%'" for p in STALE_DRAFT_PHRASES) + ")")
+    rows = bq_handler._run_query(f"""
+        SELECT name, status, outreach_draft_to, SUBSTR(outreach_draft_body, 1, 120) AS head
+        FROM `{bq_handler.table_id}`
+        WHERE outreach_draft_body IS NOT NULL
+          AND (outreach_sent_at IS NULL OR outreach_drafted_at > outreach_sent_at)
+          {phrase_sql}
+        ORDER BY outreach_drafted_at DESC
+    """)
+    if dry_run:
+        return {"status": "Preview", "stale_drafts": len(rows), "would_redraft": min(len(rows), limit),
+                "companies": [r["name"] for r in rows[:200]],
+                "note": "dry_run=0 redrafts up to `limit` per call; sent emails are never touched."}
+    full = {c.get("name"): c for c in bq_handler.get_universe()}
+    done, skipped, failed = [], [], []
+    t0 = _time.time()
+    for r in rows[:limit]:
+        if _time.time() - t0 > 240:
+            break
+        name = r["name"]
+        company_data = full.get(name) or {"name": name}
+        try:
+            news_hook = _stored_news_signal(company_data)
+            result = draft_outreach_email(company_data, news_hook=news_hook)
+            if result.get("is_fallback"):
+                skipped.append(f"{name}: AI unavailable, fallback not persisted")
+                continue
+            if company_data.get("source") == "Internal Test":
+                result["to"] = TEST_RECIPIENT
+            bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
+                    outreach_draft_subject = @s, outreach_draft_body = @b,
+                    outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                    WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
+                bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
+                bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
+                bq_lib.ScalarQueryParameter("name", "STRING", name),
+            ])).result()
+            bq_handler._log_activity(name, "note", "system",
+                                     note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
+            done.append(name)
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+    return {"status": "Success", "redrafted": len(done), "companies": done, "skipped": skipped,
+            "failed": failed[:20], "remaining": max(0, len(rows) - len(done) - len(skipped) - len(failed)),
+            "seconds": round(_time.time() - t0, 1)}
+
+
 # ── The send is the truth about the contact ──────────────────────────────────
 # Ishu double-checks every outreach before sending and sometimes corrects the
 # recipient address or the name in the greeting. Those corrections are the most

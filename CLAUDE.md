@@ -708,7 +708,22 @@ mistake is both visible and correctable. This one logged nothing, which is why
   example and the fallback template alike. We found the company through a
   directory, a filing or an upload, and a founder can tell when a claim of
   weeks of attention is a template. The prompt forbids following, watching
-  and tracking outright, so a rephrase cannot bring it back.
+  and tracking outright, so a rephrase cannot bring it back. The specific
+  detail is MANDATORY whenever the record holds one ("impressed by what you
+  are building" only on an empty record), and the conviction sentence has a
+  fixed shape: "We believe X is a big pain point for Y and the opportunity in
+  solving it is huge."
+- A WORDING CHANGE REACHES STORED DRAFTS BY REDRAFTING, NOT BY WAITING.
+  Drafts are persisted on the row (`outreach_draft_body`) so Review & Send
+  works without a call, which means old copy survives a deploy. `POST
+  /admin/outreach/redraft-stale` (token, dry run by default, `limit` per
+  call, 240s time box) regenerates every UNSENT draft carrying a
+  `STALE_DRAFT_PHRASES` string, one ungrounded call each, stored news hook
+  only (zero grounding spend), persisted exactly as the Draft button does,
+  with an activity note. Sent emails are history and are never touched. The
+  older pattern (`_clear_v7_drafts`, a boot-time wipe) is for a STRUCTURE
+  change where a click-per-company is acceptable; a wording change should
+  not cost the team a click each.
 
 ## 6a. Auth: EXEMPT_PATHS and the token check are a matched pair
 
