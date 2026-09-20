@@ -696,12 +696,19 @@ mistake is both visible and correctable. This one logged nothing, which is why
 ## 6. Outreach content
 
 - ZERO em dashes anywhere in `outreach_service.py` (instruction text included —
-  the model mimics instruction style). Founder email structure v9 (NO ask at
+  the model mimics instruction style). Founder email structure v10 (NO ask at
   all in the first email: no call, no meeting, no request for details or
   documents; just "would love to learn more" plus an open collaboration
   invitation. Details/overview requests happen only after the founder shows
   interest, likely under NDA) lives in
   `draft_outreach_email`; change structure only there.
+- NEVER CLAIM A HISTORY WE DO NOT HAVE (Ishu, 21 Sep 2026). Paragraph 4
+  opened "We have been following {name} for some time"; it now opens "We
+  came across {name} and were impressed by ..." in the prompt, its worked
+  example and the fallback template alike. We found the company through a
+  directory, a filing or an upload, and a founder can tell when a claim of
+  weeks of attention is a template. The prompt forbids following, watching
+  and tracking outright, so a rephrase cannot bring it back.
 
 ## 6a. Auth: EXEMPT_PATHS and the token check are a matched pair
 

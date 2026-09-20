@@ -259,22 +259,23 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
        investor focused on founder-led technology businesses. We typically
        get involved where a company has a proven product and is looking at
        the next stage of growth."
-    4. FOLLOW + CONVICTION, own paragraph, STRICTLY 2 sentences, both written
-       from Averroes' point of view as an investor watching the space, never
-       as someone explaining the company to its own founder.
-       Sentence one, the observer stance: "We have been following {name} for
-       some time and really like <the specific thing that caught our eye:
-       their approach, a product choice, how they serve a market>." One
-       concrete detail from the data, framed as what we like, not as a
-       description of their business.
+    4. DISCOVERY + CONVICTION, own paragraph, STRICTLY 2 sentences, both
+       written from Averroes' point of view as an investor watching the
+       space, never as someone explaining the company to its own founder.
+       Sentence one, the discovery: "We came across {name} and were impressed
+       by <the specific thing that caught our eye: their approach, a product
+       choice, how they serve a market>." One concrete detail from the data,
+       framed as what impressed us, not as a description of their business.
+       NEVER claim to have been following, watching or tracking the company
+       for weeks, months or "some time": we have not, and a founder can tell.
        Sentence two, our conviction: "We believe <the problem> is a real pain
        point for <who suffers it> and the potential in solving it is huge."
        State it as our belief (we believe / we think), tied to why an
        investor cares: big market, real pain, underserved.
-       Example of the move: "We have been following BookingX for some time
-       and really like the way you give hotels direct-channel pricing tools.
-       We believe hotels losing direct bookings to OTAs is a real pain point
-       and the potential in fixing it is huge."
+       Example of the move: "We came across BookingX and were impressed by
+       the way you give hotels direct-channel pricing tools. We believe
+       hotels losing direct bookings to OTAs is a real pain point and the
+       potential in fixing it is huge."
        Ground everything in the data or the recent signal. If the data is
        thin, keep this to one honest sentence.
     5. PORTFOLIO PROOF, own paragraph: "At Averroes, we have backed similar
@@ -902,7 +903,7 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
         f"I am a Partner at Averroes Capital, a London-based growth equity investor "
         f"focused on founder-led technology businesses. We typically get involved where "
         f"a company has a proven product and is looking at the next stage of growth.\n\n"
-        f"We have been following {name} for some time and like what you are building.\n\n"
+        f"We came across {name} and were impressed by what you are building.\n\n"
         f"At Averroes, we have backed similar companies such as Journey and Glowday, "
         f"and helped them scale with hands-on operational support alongside capital.\n\n"
         f"I appreciate this may not be a priority right now, but we would love to start "
