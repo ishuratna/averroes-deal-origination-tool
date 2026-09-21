@@ -3817,8 +3817,8 @@ STALE_DRAFT_PHRASES = ("been following", "have been watching", "been tracking")
 
 
 @app.post("/admin/outreach/redraft-stale")
-async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limit: int = Query(25),
-                                 include_all: int = Query(0)):
+async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limit: int = Query(80),
+                                 include_all: int = Query(0), workers: int = Query(8)):
     """Regenerate every UNSENT founder draft written under the old wording.
 
     Scope: companies holding a draft that was never sent (or redrafted after
@@ -3828,7 +3828,9 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
     from stored scoring signals only; no fresh web search, so zero grounding
     spend), persisted exactly as the Draft button persists it, with an
     activity note. Time-boxed by `limit` because Cloud Run cuts a request at
-    300s: run it in a loop until `remaining` is 0. Defaults to a PREVIEW.
+    300s: eight parallel workers, chunked against a 230s deadline, about 70
+    drafts per call; run it in a loop until `remaining` is 0. Defaults to a
+    PREVIEW.
     """
     _require_token(request)
     import time as _time
@@ -3850,33 +3852,47 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
     full = {c.get("name"): c for c in bq_handler.get_universe()}
     done, skipped, failed = [], [], []
     t0 = _time.time()
-    for r in rows[:limit]:
-        if _time.time() - t0 > 240:
-            break
+    deadline = t0 + 230
+
+    def _one(r):
         name = r["name"]
         company_data = full.get(name) or {"name": name}
-        try:
-            news_hook = _stored_news_signal(company_data)
-            result = draft_outreach_email(company_data, news_hook=news_hook)
-            if result.get("is_fallback"):
-                skipped.append(f"{name}: AI unavailable, fallback not persisted")
-                continue
-            if company_data.get("source") == "Internal Test":
-                result["to"] = TEST_RECIPIENT
-            bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
-                    outreach_draft_subject = @s, outreach_draft_body = @b,
-                    outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
-                    WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
-                bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
-                bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
-                bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
-                bq_lib.ScalarQueryParameter("name", "STRING", name),
-            ])).result()
-            bq_handler._log_activity(name, "note", "system",
-                                     note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
-            done.append(name)
-        except Exception as e:
-            failed.append(f"{name}: {e}")
+        news_hook = _stored_news_signal(company_data)
+        result = draft_outreach_email(company_data, news_hook=news_hook)
+        if result.get("is_fallback"):
+            return name, "skipped", "AI unavailable, fallback not persisted"
+        if company_data.get("source") == "Internal Test":
+            result["to"] = TEST_RECIPIENT
+        bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
+                outreach_draft_subject = @s, outreach_draft_body = @b,
+                outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
+            bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
+            bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
+            bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
+            bq_lib.ScalarQueryParameter("name", "STRING", name),
+        ])).result()
+        bq_handler._log_activity(name, "note", "system",
+                                 note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
+        return name, "done", ""
+
+    # PARALLEL, in chunks, deadline checked before each chunk is submitted:
+    # one draft is ~25s end to end (Gemini + two BigQuery writes), so a
+    # sequential loop managed 10 per call against 2,294 stale drafts (Ishu's
+    # first run, 21 Sep 2026). Eight workers make it ~70 per call.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    todo = rows[:limit]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i in range(0, len(todo), workers):
+            if _time.time() > deadline:
+                break
+            futs = {pool.submit(_one, r): r["name"] for r in todo[i:i + workers]}
+            for f in as_completed(futs):
+                try:
+                    name, outcome, why = f.result()
+                    (done if outcome == "done" else skipped).append(name if outcome == "done" else f"{name}: {why}")
+                except Exception as e:
+                    failed.append(f"{futs[f]}: {e}")
     return {"status": "Success", "redrafted": len(done), "companies": done, "skipped": skipped,
             "failed": failed[:20], "remaining": max(0, len(rows) - len(done) - len(skipped) - len(failed)),
             "seconds": round(_time.time() - t0, 1)}
