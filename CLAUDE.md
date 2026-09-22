@@ -448,6 +448,30 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - The email states NO cheque figure, deliberately: it is a door opener, and a
   number invites a decision before a conversation.
 
+## 2d. THE RESPONDED FLOW (one flow, two calls; the letters keep their values)
+
+- Ishu (Nurture) -> associates, THURSDAY call -> partners, MONDAY call (Ishu,
+  22 Sep 2026: "there's only two calls ... no high fit low fit bifurcation
+  now ... it should pass from me to associates to partners"). Every company
+  walks the same two steps; nothing forks on fit or size.
+- `_responded_group` in `main.py` is the ONE derivation of which list a
+  company sits in (nurture / assoc_review / assoc_pending / partner_review /
+  partner_assigned / progressed / talk_later / closed); the page, its header
+  stats and the weekly review all read it. `tests_responded_groups.py` pins
+  every branch.
+- STORED TRACK VALUES DID NOT CHANGE. `B` = with the associates, `A` = with
+  the partners; v3 read them as "good fit, still small" and "high fit, right
+  size". Renaming the letters to match the new words would have meant a
+  value migration while live code writes the old ones, which is exactly the
+  failure in 2a. Only the labels moved. `assignment_ready_at` is a retired
+  v3 staging stamp: still on the row, read by nothing.
+- A PASS CLEARS THE OWNER. The Thursday and Monday calls decide who takes a
+  company; a stale owner left on the row must never let it skip the
+  discussion and land as already taken. Owner is set only by the call's
+  decision (an associate from the Thursday list, Bea from the Monday list).
+- Talk later wakes back into Nurture (not into a routing list): what a
+  company needs after six months asleep is Ishu's fresh read.
+
 ## 3. Event truth
 
 - Timestamps record when the EVENT happened, not when we processed it

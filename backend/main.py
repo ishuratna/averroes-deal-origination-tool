@@ -4901,18 +4901,20 @@ class OwnerRequest(BaseModel):
 
 
 # ── Triage + ownership (the Responded page) ──────────────────────────────────
-# Process reference: docs/Averroes_Deal_Pipeline_Process.pdf.
-#   Track A = high fit, goes to Bea via the fortnightly Thursday session.
-#   Track B = low/moderate fit or too early, associate call agreed on Wednesday.
+# One flow, two calls (Ishu, 22 Sep 2026): Ishu -> associates -> partners.
+#   Track B = passed to the associates; discussed on the THURSDAY call.
+#   Track A = passed to the partners; discussed on the MONDAY call.
 #   kill    = closed out. Ishu can do this alone, no meeting required.
+# The letters kept their stored values across the change (doctrine 2a); the
+# v3 fit/size meaning is gone.
 # Both endpoints write through bq_handler so the Responded page, the Universe
 # table and the Pipeline board can never drift apart on who owns a company.
 
 _TRACK_LABELS = {
-    "A": "Passed to Bea (high fit, Thursday session)",
-    "B": "Passed to Issam/Marianna (associate call, allocated Wednesday)",
+    "A": "Passed to the partners (Monday call)",
+    "B": "Passed to the associates (Thursday call)",
     "kill": "Not interested (closed out)",
-    "later": "Talk later (parked, resurfaces for a decision in 6 months)",
+    "later": "Talk later (parked, back into Nurture in 6 months)",
 }
 
 
@@ -4978,19 +4980,28 @@ TALK_LATER_DAYS = int(os.getenv("TALK_LATER_DAYS", "180"))
 
 
 def _responded_group(r: dict) -> str:
-    """Which section of the Responded page a company belongs to. v3, per the
-    decision tree agreed with Ishu (21 Aug 2026):
+    """Which section of the Responded page a company belongs to. v4 (Ishu,
+    22 Sep 2026): ONE flow, two calls, no fit/size fork.
 
-      nurture           Ishu runs the conversation (no routing yet)
-      assignment_ready  Ishu clicked "Ready to assign" (or a Talk-later woke up)
-      bea_review        routed as a Bea candidate; discussed Thursday
-      assoc_review      routed for an associate call; allocated Wednesday
-      assoc_pending     allocated to Issam/Marianna; the call has not happened
-      bea_assigned      confirmed to Bea at the Thursday session (Section 3)
-      progressed        Meeting and beyond; the associates manage it on the
-                        Pipeline, this page only counts it
-      talk_later        asleep; wakes into assignment_ready after 6 months
+      Ishu (Nurture)  ->  associates, Thursday call  ->  partners, Monday call
+
+      nurture           Ishu runs the conversation; "Pass to associates" moves it on
+      assoc_review      on the associates' THURSDAY list, not yet taken by one
+      assoc_pending     an associate (Issam/Marianna) owns it; they pass it to
+                        the partners when it is ready
+      partner_review    on the partners' MONDAY list, not yet confirmed
+      partner_assigned  confirmed to Bea at the Monday call
+      progressed        Meeting and beyond; managed on the Pipeline, counted here
+      talk_later        asleep; wakes back into Nurture after 6 months
       closed            Not interested
+
+    STORED VALUES ARE UNCHANGED (doctrine 2a on renames): track 'B' still
+    means "with the associates" and 'A' "with the partners"; only what the
+    letters are FOR changed. v3 read A as "high fit, right size, straight to
+    Bea" and B as "good fit, still small, associates keep it warm"; Ishu
+    removed that fork: every company walks the same two steps. The
+    `assignment_ready_at` staging step is retired: Nurture passes straight to
+    the Thursday list, and a stale stamp on a row means nothing.
 
     ONE derivation feeds the header stats AND the section lists, so they can
     never disagree.
@@ -5010,29 +5021,29 @@ def _responded_group(r: dict) -> str:
         from datetime import date as _date
         if t and (_date.today() - t).days < TALK_LATER_DAYS:
             return "talk_later"
-        return "assignment_ready"   # woke up: what it needs is a routing decision
+        return "nurture"   # woke up: back to Ishu for a fresh decision
     if status in ("Meeting", "DD", "Offer", "Won"):
         return "progressed"
     if track == "A":
-        return "bea_assigned" if owner == "Bea" else "bea_review"
+        return "partner_assigned" if owner == "Bea" else "partner_review"
     if track == "B":
         return "assoc_pending" if owner in ("Issam", "Marianna") else "assoc_review"
-    return "assignment_ready" if r.get("assignment_ready_at") else "nurture"
+    return "nurture"
 
 
 @app.get("/responded")
 async def get_responded():
     """The Responded page: every company that has ever replied, grouped by what
-    it needs next, plus the per-associate open-call counts that decide the
-    Wednesday allocation."""
+    it needs next, plus the per-associate open-call counts that decide who
+    takes a company on the Thursday call."""
     rows = bq_handler.get_responded()
     for r in rows:
         r["queue"] = _responded_group(r)
         # Derived here so the rule lives once: resurfaced = a Talk-later that
-        # woke up (track still 'later', but grouped as assignment_ready).
+        # woke up (track still 'later', but grouped back into Nurture).
         # A "probably ready" hint used to be derived too and was removed on
         # Ishu's request (28 Aug 2026): maturity is HIS read, not a count.
-        r["resurfaced"] = (r.get("track") == "later" and r["queue"] == "assignment_ready")
+        r["resurfaced"] = (r.get("track") == "later" and r["queue"] == "nurture")
 
     groups: Dict[str, List[dict]] = {}
     for r in rows:

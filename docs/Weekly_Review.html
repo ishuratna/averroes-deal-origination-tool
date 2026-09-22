@@ -112,15 +112,14 @@ const B = 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
 // The Responded page's sections, in its order, in its words.
 const SECTIONS = [
-  ['nurture',          'Nurture (Ishu)',                   'plum'],
-  ['assignment_ready', 'Assignment ready',                 'plum'],
-  ['bea_review',       'To discuss for Bea — Thursday',    'teal'],
-  ['assoc_review',     'To discuss for calls — Wednesday', 'amber'],
-  ['assoc_pending',    'Allocated — call pending',         'amber'],
-  ['bea_assigned',     'With Bea',                         'teal'],
-  ['progressed',       'Progressed past first meeting',    'teal'],
-  ['talk_later',       'Talk later (parked)',              'greyb'],
-  ['closed',           'Not interested',                   'greyb'],
+  ['nurture',          'Nurture (Ishu)',                    'plum'],
+  ['assoc_review',     'Thursday list — associates',        'amber'],
+  ['assoc_pending',    'With Issam / Marianna',             'amber'],
+  ['partner_review',   'Monday list — partners',            'teal'],
+  ['partner_assigned', 'With Bea',                          'teal'],
+  ['progressed',       'Progressed past first meeting',     'teal'],
+  ['talk_later',       'Talk later (parked)',               'greyb'],
+  ['closed',           'Not interested',                    'greyb'],
 ];
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));

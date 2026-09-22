@@ -1,19 +1,21 @@
 'use client';
 
-// The Responded page, v3 (agreed with Ishu, 21 Aug 2026): a funnel of three
-// OWNED SECTIONS — Nurture (Ishu) -> Associates weekly list -> Qualified leads
-// (Bea) — plus the parked lists. Each section is a collapsed card that opens
-// on click, so a first-time reader sees the SHAPE of the process before any
-// detail. Companies move forward by explicit human clicks:
+// The Responded page, v4 (Ishu, 22 Sep 2026): ONE flow, two calls, no fork.
 //
-//   Ishu nurtures  ->  "Ready to assign"  ->  routed to Bea's Thursday list
-//   or the associates' Wednesday list  ->  confirmed  ->  a call books a
-//   Meeting, and the company leaves this page for the Pipeline.
+//   Ishu nurtures  ->  "Pass to associates"  ->  the associates' THURSDAY call
+//   (an associate takes it, or passes it up)  ->  the partners' MONDAY call
+//   (confirmed to Bea)  ->  a call books a Meeting and the company leaves this
+//   page for the Pipeline.
+//
+// v3 forked Assignment ready into "high fit, right size -> Bea" and "good fit,
+// still small -> associates"; Ishu removed the fork: every company walks the
+// same two steps, and the Ready-to-assign staging step went with it.
 //
 // Nothing here owns state: every list is DERIVED server-side in ONE function
 // (_responded_group) from track/owner/status, so this page, its header stats
 // and the Pipeline board can never disagree. All moves write through the
-// shared endpoints.
+// shared endpoints. Stored track values are unchanged: B = with the
+// associates, A = with the partners.
 
 import { useEffect, useMemo, useState } from 'react';
 import SideNav from '../../components/SideNav';
@@ -22,7 +24,7 @@ import OwnerTag from '../../components/OwnerTag';
 import ReplyRuleButton from '../../components/ReplyRuleButton';
 import { dealApi } from '../../services/api';
 import {
-  RESPONDED_SECTIONS, RESPONDED_PARKED, CALL_ASSOCIATES, PARK_REASONS,
+  RESPONDED_SECTIONS, RESPONDED_PARKED, CALL_ASSOCIATES, CALL_PARTNERS, PARK_REASONS,
   RespondedCompany, RespondedResponse, DealOwner, DealTrack,
   displayStatus,
 } from '../../types';
@@ -116,11 +118,10 @@ export default function RespondedPage() {
     }
   };
 
-  // Routing decisions. Track A no longer auto-assigns Bea: the Thursday
-  // session CONFIRMS a candidate (two-step), so routing CLEARS the owner —
-  // a stale owner left on the row must never let a company skip the weekly
-  // discussion and land as already confirmed. 'later' keeps its owner as
-  // history; the wake-up path clears it before any re-route.
+  // Moving a company between the steps. A pass CLEARS the owner: the Thursday
+  // and Monday calls decide who takes it, and a stale owner left on the row
+  // must never let a company skip the discussion and land as already taken.
+  // 'later' keeps its owner as history; the wake-up path clears it.
   const route = (c: RespondedCompany, track: DealTrack) =>
     act(() => dealApi.triageCompany(c.name, track, track === 'later' ? undefined : ''), c.name);
 
@@ -139,24 +140,9 @@ export default function RespondedPage() {
     }
   };
 
-  const ready = (c: RespondedCompany, on: boolean) =>
-    act(() => dealApi.setAssignmentReady(c.name, on), c.name);
-
-  // A woken Talk-later still carries track='later'; sending it back to Nurture
-  // must clear BOTH the track and any stale ready-stamp.
-  const backToNurture = (c: RespondedCompany) =>
-    act(async () => {
-      if (c.track === 'later') await dealApi.triageCompany(c.name, '', '');
-      await dealApi.setAssignmentReady(c.name, false);
-    }, c.name);
-
-  // Waking a parked company by hand goes where the automatic wake-up goes:
-  // Assignment ready, because what it needs next is a routing decision.
-  const wakeNow = (c: RespondedCompany) =>
-    act(async () => {
-      await dealApi.triageCompany(c.name, '', '');
-      await dealApi.setAssignmentReady(c.name, true);
-    }, c.name);
+  // Back to Ishu from any step, or waking a parked company by hand: both clear
+  // the track (and the owner), which is exactly what Nurture means.
+  const backToNurture = (c: RespondedCompany) => route(c, '');
 
   const assign = (c: RespondedCompany, owner: DealOwner | '') =>
     act(() => dealApi.setCompanyOwner(c.name, owner), c.name);
@@ -173,11 +159,10 @@ export default function RespondedPage() {
   const n = (k: string) => byQueue[k]?.length || 0;
 
   // Header stats, all derived from the SAME queues the lists render.
-  const waitingOnYou = (byQueue['nurture'] || []).concat(byQueue['assignment_ready'] || [])
-    .filter(c => c.last_direction === 'received').length;
+  const waitingOnYou = (byQueue['nurture'] || []).filter(c => c.last_direction === 'received').length;
   const liveTotal = companies.filter(c => !['closed', 'talk_later'].includes(c.queue)).length;
-  const goingToBea = n('bea_review') + n('bea_assigned');
   const withAssociates = n('assoc_review') + n('assoc_pending');
+  const withPartners = n('partner_review') + n('partner_assigned');
 
   const toggle = (key: string) => setOpen(o => ({ ...o, [key]: !o[key] }));
 
@@ -191,7 +176,7 @@ export default function RespondedPage() {
     <>
       <button className="rsp-btn later" disabled={busy === c.name}
               onClick={() => startPark(c, 'later')}
-              title="Warm but not now. Asks why, then parks it below; wakes into Assignment ready in 6 months.">
+              title="Warm but not now. Asks why, then parks it below; wakes back into Nurture in 6 months.">
         Talk later
       </button>
       <button className="rsp-btn kill" disabled={busy === c.name}
@@ -202,52 +187,30 @@ export default function RespondedPage() {
     </>
   );
 
+  const assocSelect = (c: RespondedCompany, emptyLabel: string) => (
+    <select
+      className="rsp-assign"
+      value={c.owner || ''}
+      disabled={busy === c.name}
+      onChange={e => assign(c, e.target.value as DealOwner | '')}
+      title="Which associate takes the relationship. Whoever has fewer open conversations is marked next up."
+    >
+      <option value="">{emptyLabel}</option>
+      {CALL_ASSOCIATES.map(a => (
+        <option key={a} value={a}>{a}{nextUp === a ? ' (next up)' : ''}</option>
+      ))}
+    </select>
+  );
+
   const actionsFor = (listKey: string, c: RespondedCompany) => {
     switch (listKey) {
       case 'nurture':
         return (
           <>
-            <button className="rsp-btn a" disabled={busy === c.name}
-                    onClick={() => ready(c, true)}
-                    title="The conversation is mature. Moves it to Assignment ready for routing.">
-              Ready to assign
-            </button>
-            {exits(c)}
-          </>
-        );
-      case 'assignment_ready':
-        return (
-          <>
-            <button className="rsp-btn a" disabled={busy === c.name}
-                    onClick={() => route(c, 'A')}
-                    title="Currently inside Averroes' investment range — goes to the High Fit, Right Size table for Bea's Thursday session.">
-              High fit, right size
-            </button>
             <button className="rsp-btn b" disabled={busy === c.name}
                     onClick={() => route(c, 'B')}
-                    title="Good fit but below Averroes' investment size today — goes to the Good Fit, Small Companies table; Wednesday decides which associate keeps it warm.">
-              Good fit, still small
-            </button>
-            <button className="rsp-btn" disabled={busy === c.name}
-                    onClick={() => backToNurture(c)}
-                    title="Not mature after all. Returns it to Nurture.">
-              Back to nurture
-            </button>
-            {exits(c)}
-          </>
-        );
-      case 'bea_review':
-        return (
-          <>
-            <button className="rsp-btn a" disabled={busy === c.name}
-                    onClick={() => assign(c, 'Bea')}
-                    title="The Thursday session agreed: Bea takes it. Moves to Qualified leads.">
-              Confirm to Bea
-            </button>
-            <button className="rsp-btn" disabled={busy === c.name}
-                    onClick={() => route(c, '')}
-                    title="The session passed on it. Returns to Ishu's Assignment ready list.">
-              Back to Ishu
+                    title="The conversation is ready. Puts it on the associates' Thursday list.">
+              Pass to associates
             </button>
             {exits(c)}
           </>
@@ -255,20 +218,15 @@ export default function RespondedPage() {
       case 'assoc_review':
         return (
           <>
-            <select
-              className="rsp-assign"
-              value={c.owner || ''}
-              disabled={busy === c.name}
-              onChange={e => assign(c, e.target.value as DealOwner | '')}
-            >
-              <option value="">Assign to…</option>
-              {CALL_ASSOCIATES.map(a => (
-                <option key={a} value={a}>{a}{nextUp === a ? ' (next up)' : ''}</option>
-              ))}
-            </select>
+            {assocSelect(c, 'Assign to…')}
+            <button className="rsp-btn a" disabled={busy === c.name}
+                    onClick={() => route(c, 'A')}
+                    title="Thursday agreed it goes straight up. Puts it on the partners' Monday list.">
+              Pass to partners
+            </button>
             <button className="rsp-btn" disabled={busy === c.name}
-                    onClick={() => route(c, '')}
-                    title="Not one for the associates. Returns to Ishu's Assignment ready list.">
+                    onClick={() => backToNurture(c)}
+                    title="Not ready after all. Returns it to Ishu's Nurture list.">
               Back to Ishu
             </button>
             {exits(c)}
@@ -277,28 +235,40 @@ export default function RespondedPage() {
       case 'assoc_pending':
         return (
           <>
-            <select
-              className="rsp-assign"
-              value={c.owner || ''}
-              disabled={busy === c.name}
-              onChange={e => assign(c, e.target.value as DealOwner | '')}
-              title="Reassign, or clear to put it back on the Wednesday list"
-            >
-              <option value="">Back to Wednesday list</option>
-              {CALL_ASSOCIATES.map(a => (
-                <option key={a} value={a}>{a}{nextUp === a ? ' (next up)' : ''}</option>
-              ))}
-            </select>
+            {assocSelect(c, 'Back to Thursday list')}
+            <button className="rsp-btn a" disabled={busy === c.name}
+                    onClick={() => route(c, 'A')}
+                    title="The associate has taken it as far as they can. Puts it on the partners' Monday list.">
+              Pass to partners
+            </button>
             {exits(c)}
           </>
         );
-      case 'bea_assigned':
+      case 'partner_review':
+        return (
+          <>
+            {CALL_PARTNERS.map(p => (
+              <button key={p} className="rsp-btn a" disabled={busy === c.name}
+                      onClick={() => assign(c, p)}
+                      title={`The Monday call agreed: ${p} takes it forward.`}>
+                Confirm to {p}
+              </button>
+            ))}
+            <button className="rsp-btn" disabled={busy === c.name}
+                    onClick={() => route(c, 'B')}
+                    title="Monday passed on it for now. Returns it to the associates' Thursday list.">
+              Back to associates
+            </button>
+            {exits(c)}
+          </>
+        );
+      case 'partner_assigned':
         return (
           <>
             <button className="rsp-btn" disabled={busy === c.name}
                     onClick={() => assign(c, '')}
-                    title="Back to the Thursday discussion list.">
-              Back to discussion
+                    title="Back to the Monday list for a fresh decision.">
+              Back to Monday list
             </button>
             {exits(c)}
           </>
@@ -306,16 +276,16 @@ export default function RespondedPage() {
       case 'talk_later':
         return (
           <button className="rsp-btn" disabled={busy === c.name}
-                  onClick={() => wakeNow(c)}
-                  title="Wake it up now instead of waiting 6 months. Goes to Assignment ready.">
+                  onClick={() => backToNurture(c)}
+                  title="Wake it up now instead of waiting 6 months. Returns to Nurture.">
             Wake up now
           </button>
         );
       case 'closed':
         return (
           <button className="rsp-btn" disabled={busy === c.name}
-                  onClick={() => route(c, '')}
-                  title="Bring it back into the live sections.">
+                  onClick={() => backToNurture(c)}
+                  title="Bring it back into Nurture.">
             Restore
           </button>
         );
@@ -349,7 +319,7 @@ export default function RespondedPage() {
                   after 6 months asleep. (A "probably ready" hint used to sit
                   on Nurture rows and was removed on Ishu's request, 28 Aug
                   2026: maturity is his read, not an email count.) */}
-              {listKey === 'assignment_ready' && c.resurfaced && (
+              {listKey === 'nurture' && c.resurfaced && (
                 <span className="rsp3-chip woke" title="Parked 6 months ago; its Talk-later timer just expired.">
                   back from Talk later
                 </span>
@@ -400,8 +370,8 @@ export default function RespondedPage() {
           <div>
             <h1>Responded</h1>
             <p className="page-sub">
-              Everyone who replied, as a three-step funnel: Ishu nurtures, the
-              weekly sessions route, Bea and the associates take the calls.
+              Everyone who replied, as one flow: Ishu nurtures, the associates
+              take the Thursday call, the partners take the Monday call.
               Click a section to open its lists.
             </p>
           </div>
@@ -430,12 +400,12 @@ export default function RespondedPage() {
                 <div className="rsp-stat-l">Live conversations</div>
               </div>
               <div className="rsp-stat">
-                <div className="rsp-stat-n">{goingToBea}</div>
-                <div className="rsp-stat-l">Going to Bea</div>
+                <div className="rsp-stat-n">{withAssociates}</div>
+                <div className="rsp-stat-l">Associates · Thursday</div>
               </div>
               <div className="rsp-stat">
-                <div className="rsp-stat-n">{withAssociates}</div>
-                <div className="rsp-stat-l">With Issam/Marianna</div>
+                <div className="rsp-stat-n">{withPartners}</div>
+                <div className="rsp-stat-l">Partners · Monday</div>
               </div>
               <div className="rsp-stat act">
                 <div className="rsp-stat-n">{waitingOnYou}</div>

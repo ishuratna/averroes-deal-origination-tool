@@ -209,27 +209,30 @@ export type DealStage = typeof DEAL_STAGES[number];
 export const DEAL_OWNERS = ['Bea', 'Ishu', 'Issam', 'Marianna'] as const;
 export type DealOwner = typeof DEAL_OWNERS[number];
 
-// Only Issam and Marianna take Track B founder calls; the Wednesday allocation
-// balances between them. Bea takes Track A calls; Ishu takes none.
+// Issam and Marianna are the associates (the Thursday call); Bea is the
+// partner (the Monday call); Ishu nurtures and takes no calls.
 export const CALL_ASSOCIATES = ['Issam', 'Marianna'] as const;
+export const CALL_PARTNERS = ['Bea'] as const;
 
-// Stored values, never renamed (see CLAUDE.md 2a on value renames). The UI
-// shows: A = "Pass to Bea", B = "Pass to Issam/Marianna",
-// kill = "Not interested", later = "Talk later".
+// Stored values, never renamed (see CLAUDE.md 2a on value renames). Since
+// 22 Sep 2026 the UI reads them as: B = "with the associates" (Thursday),
+// A = "with the partners" (Monday), kill = "Not interested", later = "Talk
+// later". The old fit/size meaning of A and B is gone.
 export type DealTrack = 'A' | 'B' | 'kill' | 'later' | '';
 
 export const OWNER_ROLES: Record<DealOwner, string> = {
-  Bea: 'Partner — takes Track A calls',
-  Ishu: 'Operator — triages, writes as Bea, takes no calls',
-  Issam: 'Associate — Track B calls',
-  Marianna: 'Associate — Track B calls',
+  Bea: 'Partner — Monday call',
+  Ishu: 'Operator — nurtures, writes as Bea, takes no calls',
+  Issam: 'Associate — Thursday call',
+  Marianna: 'Associate — Thursday call',
 };
 
-// Responded page v3 (agreed with Ishu, 21 Aug 2026): three OWNED SECTIONS,
-// each a stage of the funnel with a named person responsible, plus the parked
-// lists. Backend counterpart: main.py _responded_group() — the queue keys here
-// mirror its return values exactly, so the page renders whatever the one
-// derivation says and can never disagree with the header stats.
+// Responded page v4 (Ishu, 22 Sep 2026): ONE flow, two calls, no fork.
+//   Ishu (Nurture) -> associates, Thursday call -> partners, Monday call
+// Three OWNED SECTIONS, each a step with a named person responsible, plus the
+// parked lists. Backend counterpart: main.py _responded_group() — the queue
+// keys here mirror its return values exactly, so the page renders whatever
+// the one derivation says and can never disagree with the header stats.
 // PLAIN ENGLISH ON PURPOSE: every list says what a company is WAITING FOR, in
 // words a first-time reader understands. Internal vocabulary (Track A/B, kill)
 // stays in the stored values; it does not appear on screen.
@@ -262,11 +265,9 @@ export interface NewsItem {
   url: string;
 }
 
-// Sections hold LANES. A lane is one route drawn top-to-bottom, exactly like
-// a branch in the decision tree; a section with two lanes renders them side
-// by side, because that is the picture Ishu approved: Assignment ready splits
-// into TWO KINDS of call, the Bea route and the associate route, and stacking
-// them made the split read as one queue.
+// Sections hold LANES. Since v4 every section is a single lane (the v3
+// fit/size split into two side-by-side routes is gone), but the shape is kept
+// so a future branch can be drawn without rewriting the page.
 export interface RespondedList { key: string; label: string; hint: string; }
 export interface RespondedLane { key: string; title: string; tone: string; lists: RespondedList[]; }
 export interface RespondedSection {
@@ -277,44 +278,35 @@ export interface RespondedSection {
 export const RESPONDED_SECTIONS: RespondedSection[] = [
   {
     key: 's1', title: 'Nurture', owner: 'Ishu', tone: 'plum',
-    blurb: 'Ishu runs every conversation until it is mature, then clicks it forward.',
+    blurb: 'Ishu runs every conversation until it is ready, then passes it to the associates.',
     lanes: [
       {
         key: 'main', title: '', tone: 'plum', lists: [
-          { key: 'nurture',          label: 'Nurture',          hint: 'Live email conversations. Keep them warm; the reminders below chase anything quiet for 7 days.' },
-          { key: 'assignment_ready', label: 'Assignment ready', hint: 'Mature conversations you marked ready. Route each to Bea or to an associate call.' },
+          { key: 'nurture', label: 'Nurture', hint: 'Live email conversations. Keep them warm; the reminders chase anything quiet for 7 days. When one is ready, pass it to the associates for Thursday.' },
         ],
       },
     ],
   },
   {
-    key: 's2', title: 'Associates weekly list', owner: 'Wed · Thu sessions', tone: 'amber',
-    blurb: 'Two kinds of company come out of Nurture, and each has its own table and weekly session. Which table a company sits in tells you WHY it is here.',
+    key: 's2', title: 'Associates', owner: 'Thursday call · Issam & Marianna', tone: 'amber',
+    blurb: 'Everything Ishu passes on lands here. The Thursday call decides: an associate takes the relationship, or it goes up to the partners.',
     lanes: [
       {
-        key: 'bea', title: 'High Fit, Right Size — Bea (Thursday)', tone: 'teal', lists: [
-          { key: 'bea_review',
-            label: 'High Fit, Right Size companies',
-            hint: 'Companies that currently fall inside Averroes’ investment range. The Thursday session confirms each to Bea or bounces it back.' },
-        ],
-      },
-      {
-        key: 'assoc', title: 'Good Fit, Small Companies — associates (Wednesday)', tone: 'amber', lists: [
-          { key: 'assoc_review',
-            label: 'Good Fit, Small Companies',
-            hint: 'A good fit, but not yet at Averroes’ investment size — highly likely to fit in the future. Wednesday decides which associate keeps the relationship warm.' },
-          { key: 'assoc_pending', label: 'Allocated — call pending', hint: 'An associate owns it. After the call they move it to Meeting on the Pipeline themselves.' },
+        key: 'main', title: '', tone: 'amber', lists: [
+          { key: 'assoc_review',  label: 'Thursday list',        hint: 'Passed by Ishu, not yet discussed. On Thursday: assign to Issam or Marianna, or pass straight to the partners.' },
+          { key: 'assoc_pending', label: 'With Issam / Marianna', hint: 'An associate owns the relationship. When it is ready, they pass it to the partners for Monday; a booked meeting moves it to the Pipeline.' },
         ],
       },
     ],
   },
   {
-    key: 's3', title: 'Qualified leads', owner: 'Bea', tone: 'teal',
-    blurb: 'Confirmed to Bea at the Thursday session. Hers until a meeting happens.',
+    key: 's3', title: 'Partners', owner: 'Monday call · Bea', tone: 'teal',
+    blurb: 'Passed up by the associates. The Monday call confirms who takes it forward.',
     lanes: [
       {
         key: 'main', title: '', tone: 'teal', lists: [
-          { key: 'bea_assigned', label: 'With Bea', hint: 'Bea takes these conversations forward. A booked meeting moves them off this page.' },
+          { key: 'partner_review',   label: 'Monday list', hint: 'Passed by the associates, not yet discussed. On Monday: confirm to Bea, or send it back to the associates.' },
+          { key: 'partner_assigned', label: 'With Bea',    hint: 'Bea takes these conversations forward. A booked meeting moves them off this page.' },
         ],
       },
     ],
@@ -325,7 +317,7 @@ export const RESPONDED_SECTIONS: RespondedSection[] = [
 // toggle): live sections + these + progressed = the Pipeline's
 // Responded-and-beyond count, so the reconciliation is a glance, not faith.
 export const RESPONDED_PARKED = [
-  { key: 'talk_later', label: 'Talk later',     hint: 'Warm but not now. No reminders; each wakes into Assignment ready 6 months after you parked it.' },
+  { key: 'talk_later', label: 'Talk later',     hint: 'Warm but not now. No reminders; each wakes back into Nurture 6 months after you parked it.' },
   { key: 'closed',     label: 'Not interested', hint: 'Closed out by us. Still counted in the Pipeline’s Responded column, because they did reply.' },
 ] as const;
 
@@ -340,7 +332,7 @@ export interface RespondedCompany extends CompanyTarget {
   // a genuine reply exists that the mailbox has no record of.
   reply_exempt_at?: string;
   reply_exempt_by?: string;
-  // v3: Ishu's "Ready to assign" click (Nurture -> Assignment ready).
+  // v3 staging stamp, retired in v4 (22 Sep 2026); still on the row, ignored.
   assignment_ready_at?: string;
   // Derived server-side alongside the queue, so the rules live once:
   resurfaced?: boolean;      // a Talk-later that just woke up after 6 months
