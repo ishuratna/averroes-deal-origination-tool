@@ -122,15 +122,15 @@ def _recipient_note(company_data: Dict) -> str:
 def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     """The 14-day follow-up. A fixed template, zero AI calls.
 
-    Wording approved by Ishu (18 Aug 2026). Deliberately NOT model-generated:
+    Wording approved by Ishu (18 Aug 2026, revised 22 Sep 2026). Deliberately NOT model-generated:
     the first email carries the personalisation, and a follow-up that suddenly
     knows new things about the company reads as automated. A short, identical,
     human nudge is the point.
 
     Replies in the SAME THREAD: the subject is "Re:" plus the original subject,
     so the first email sits directly underneath and the founder needs no
-    context. Ends with "Best," and no name, because send_email appends the
-    full signature beneath it, exactly like the first email.
+    context. Ends with "Best," and the sender's first name; send_email appends
+    the full signature block beneath it.
     """
     first, _ = _greeting_for(company_data)
     greeting = f"Hi {first}," if first else "Hello,"
@@ -143,16 +143,22 @@ def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     else:
         subject = f"Averroes Capital, {company}"
 
+    # Wording revised by Ishu, 22 Sep 2026: "follow up on", "private equity",
+    # and a first-name sign-off ("Best,\nBeatrice") above the appended
+    # signature block. The name is SIG_FIRST_NAME (SIGNATURE_FIRST_NAME env,
+    # the name Bea goes by rather than the first token of her legal name), so
+    # a mailbox change is an env change, never a code edit.
+    first_name_sender = SIG_FIRST_NAME
     body = (
         f"{greeting}\n\n"
-        "I wanted to come back to my note from a couple of weeks ago. I know how "
+        "I wanted to follow up on my note from a couple of weeks ago. I know how "
         "busy things get, so no concern at all if it slipped past.\n\n"
-        "In short, we are Averroes Capital, a growth equity investor in UK software "
+        "In short, we are Averroes Capital, a private equity investor in UK software "
         f"companies, and {company} stood out to us. I would love to hear how you "
         "think about the business and where it is heading.\n\n"
         "If now is not the right time, that is completely understood. I would be "
         "glad to stay in touch either way.\n\n"
-        "Best,"
+        f"Best,\n{first_name_sender}".rstrip()
     )
     return {"to": company_data.get("contact_email", ""), "subject": subject,
             "body": body, "company": company_data.get("name", "")}
@@ -680,6 +686,7 @@ def draft_lp_followup_email(investor: Dict) -> Dict[str, str]:
 # copies the signature address into a new email would otherwise vanish from
 # the pipeline.
 SIG_NAME = os.getenv("SIGNATURE_NAME", "Maria Beatrice Carrara")
+SIG_FIRST_NAME = os.getenv("SIGNATURE_FIRST_NAME", "Beatrice")  # the name she signs with, not her first legal name
 SIG_TITLE = os.getenv("SIGNATURE_TITLE", "Partner")
 SIG_PHONE = os.getenv("SIGNATURE_PHONE", "")   # blank = no phone line (Ishu's copy omits it)
 SIG_EMAIL = os.getenv("SIGNATURE_EMAIL", "beatrice@averroescapital.com")
