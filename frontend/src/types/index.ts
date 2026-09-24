@@ -162,6 +162,9 @@ export interface CompanyTarget {
   // clock read (Ishu, 24 Sep 2026: follow up only once).
   sent_count?: number;
   last_sent_at?: string;
+  // The 14-day follow-up, pre-built server-side on Contacted pipeline rows
+  // still owed their one follow-up, so the modal opens with no request.
+  followup_draft?: { to: string; subject: string; body: string };
   reply_classification?: string;
   // Responded-stage action buckets (set by email sync intelligence)
   action_bucket?: string;

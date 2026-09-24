@@ -100,6 +100,16 @@ export default function OutreachModal({
       return;
     }
     if (mode === 'followup') {
+      // The follow-up is generic (no AI) and the pipeline row already carries
+      // it (followup_draft, built server-side from the same template), so the
+      // modal opens instantly. The request below is only the fallback for a
+      // row that arrived without it (the slim universe, investors).
+      const pre = (company as { followup_draft?: { to?: string; subject?: string; body?: string } }).followup_draft;
+      if (pre?.body) {
+        setDraft({ to: pre.to || company.contact_email || '', subject: pre.subject || '',
+                   body: pre.body, company: company.name });
+        return;
+      }
       setLoading(true);
       api.followup(company.name)
         .then(d => setDraft({ to: d.to || company.contact_email || '', subject: d.subject || '',
@@ -153,8 +163,17 @@ export default function OutreachModal({
           {loading ? (
             <div className="outreach-loading">
               <div className="spinner"></div>
-              <p>Drafting personalised email with AI...</p>
-              <p className="loading-sub">Personalising the intro to {company.name} from what the tool holds</p>
+              {mode === 'outreach' ? (
+                <>
+                  <p>Drafting personalised email with AI...</p>
+                  <p className="loading-sub">Personalising the intro to {company.name} from what the tool holds</p>
+                </>
+              ) : (
+                <>
+                  <p>{mode === 'followup' ? 'Loading the follow-up template...' : 'Opening the thread...'}</p>
+                  <p className="loading-sub">No AI involved: {mode === 'followup' ? 'the approved 14-day wording, threaded under the first email' : 'recipient and subject come from the conversation'}</p>
+                </>
+              )}
             </div>
           ) : sent ? (
             <div className="outreach-sent">

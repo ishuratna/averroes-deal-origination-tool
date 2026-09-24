@@ -270,9 +270,27 @@ async def get_pipeline():
     Reads the active target pipeline from BigQuery.
     """
     try:
-        return bq_handler.get_pipeline()
+        rows = bq_handler.get_pipeline()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load pipeline: {str(e)}")
+    # THE FOLLOW-UP TRAVELS WITH THE CARD (Ishu, 24 Sep 2026: "it should
+    # already be loaded, it's super generic stuff, no AI"). The template is
+    # pure string formatting from fields already on the row, so it is
+    # attached here for every Contacted company still owed its one follow-up
+    # and the modal opens instantly with no second request. The endpoint
+    # `/outreach/followup-draft/{name}` stays as the fallback for rows that
+    # arrive without it (the slim universe).
+    try:
+        from services.outreach_service import draft_followup_email
+        for r in rows:
+            if r.get("status") == "Contacted" and (r.get("sent_count") or 0) < 2:
+                d = draft_followup_email(r)
+                if r.get("source") == "Internal Test":
+                    d["to"] = TEST_RECIPIENT
+                r["followup_draft"] = {"to": d.get("to", ""), "subject": d.get("subject", ""), "body": d.get("body", "")}
+    except Exception as e:
+        logger.warning(f"[Pipeline] follow-up prefill skipped: {e}")
+    return rows
 
 
 @app.get("/universe", response_model=List[dict])
@@ -2492,14 +2510,10 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         )
     _enforce_grounding_budget(4, "SmartFill")
     logger.info(f"SmartFill triggered for: {company_name} ({used_today + 1}/{DAILY_SMARTFILL_CAP} today)")
-    company_data = {"name": company_name}
-    try:
-        for c in bq_handler.get_universe():
-            if c.get("name") == company_name:
-                company_data = c
-                break
-    except Exception:
-        pass
+    # ONE row, not a full-universe scan: SELECT * over 17k rows with cap
+    # tables and filing history in each blew the 512Mi container and the
+    # browser saw "Failed to fetch" (Giftcloud follow-up, 24 Sep 2026).
+    company_data = bq_handler.get_company_full(company_name) or {"name": company_name}
 
     # Step 1: Qualify via hard filters (Gemini if available, else keywords).
     # COST GATE: this runs FIRST, before any grounded search calls. If the
@@ -3376,11 +3390,7 @@ async def smartenrich_company(company_name: str):
         raise HTTPException(status_code=429, detail=f"Daily SmartFill limit reached ({DAILY_SMARTFILL_CAP}/day). Resets at midnight UTC.")
     _enforce_grounding_budget(3, "SmartEnrich")
 
-    company = None
-    for c in bq_handler.get_universe():
-        if c.get("name") == company_name:
-            company = c
-            break
+    company = bq_handler.get_company_full(company_name)  # one row, never a universe scan
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
 
@@ -3759,14 +3769,10 @@ async def draft_outreach(company_name: str):
       2. One grounded news search — only if nothing stored, budget-enforced
     """
     logger.info(f"Outreach draft requested for: {company_name}")
-    company_data = {"name": company_name}
-    try:
-        for c in bq_handler.get_universe():
-            if c.get("name") == company_name:
-                company_data = c
-                break
-    except Exception:
-        pass
+    # ONE row, not a full-universe scan: SELECT * over 17k rows with cap
+    # tables and filing history in each blew the 512Mi container and the
+    # browser saw "Failed to fetch" (Giftcloud follow-up, 24 Sep 2026).
+    company_data = bq_handler.get_company_full(company_name) or {"name": company_name}
 
     is_test_company = company_data.get("source") == "Internal Test"
 
@@ -3994,11 +4000,8 @@ async def outreach_followup_draft(company_name: str):
     whose subject this follow-up threads under. Overwriting them would break
     the threading of every later follow-up.
     """
-    company_data = {"name": company_name}
-    for c in bq_handler.get_universe():
-        if c.get("name") == company_name:
-            company_data = c
-            break
+    # One row, never a full-universe scan (see draft_outreach).
+    company_data = bq_handler.get_company_full(company_name) or {"name": company_name}
     from services.outreach_service import draft_followup_email
     result = draft_followup_email(company_data)
     if company_data.get("source") == "Internal Test":
@@ -4020,11 +4023,8 @@ async def outreach_compose_draft(company_name: str):
     * Body: blank on purpose. Mid-conversation, the tool has no business
       guessing the words.
     """
-    company_data = {"name": company_name}
-    for c in bq_handler.get_universe():
-        if c.get("name") == company_name:
-            company_data = c
-            break
+    # One row, never a full-universe scan (see draft_outreach).
+    company_data = bq_handler.get_company_full(company_name) or {"name": company_name}
 
     to_addr = company_data.get("contact_email") or ""
     subject = (company_data.get("outreach_draft_subject") or "").strip()
@@ -4065,14 +4065,15 @@ async def send_outreach(req: OutreachSendRequest):
     stored = {}
     if req.company_name:
         try:
-            for c in bq_handler.get_universe():
-                if c.get("name") == req.company_name:
-                    stored = c
-                    prev_status = c.get("status") or ""
-                    if c.get("source") == "Internal Test" and to_addr != TEST_RECIPIENT:
-                        logger.info(f"Test company send: recipient '{to_addr}' overridden to {TEST_RECIPIENT}")
-                        to_addr = TEST_RECIPIENT
-                    break
+            # One row, never a full-universe scan (the scan blew the 512Mi
+            # container once the universe passed ~17k rows, 24 Sep 2026).
+            c = bq_handler.get_company_full(req.company_name)
+            if c:
+                stored = c
+                prev_status = c.get("status") or ""
+                if c.get("source") == "Internal Test" and to_addr != TEST_RECIPIENT:
+                    logger.info(f"Test company send: recipient '{to_addr}' overridden to {TEST_RECIPIENT}")
+                    to_addr = TEST_RECIPIENT
         except Exception:
             pass
     req.to = to_addr

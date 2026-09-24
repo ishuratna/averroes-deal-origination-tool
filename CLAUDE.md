@@ -849,6 +849,29 @@ mistake is both visible and correctable. This one logged nothing, which is why
   happening. Falling through to "open" on failure is right: an unreachable
   backend must not lock the UI, because each call reports its own error anyway.
 
+## 6f. One company means one row: never scan the universe to find a name
+
+- Six request handlers (SmartFill, SmartEnrich, first draft, follow-up
+  draft, compose, SEND) found their company with `for c in
+  bq_handler.get_universe(): if c["name"] == name`. That is `SELECT *` over
+  the whole table, every heavy blob included, into Python dicts, inside a
+  512Mi container, to read one row. It held while the universe was 13k rows;
+  at 17k (Enterprise Ireland added 4,176) a click on Follow up for Giftcloud
+  came back "Failed to fetch" (24 Sep 2026): the container was killed and
+  Cloud Run's 503 carries no CORS headers, so the browser reports a network
+  error and the true cause is invisible. All six now call
+  `bq_handler.get_company_full(name)`. A new handler that needs one company
+  uses that; `get_universe()` is for passes that genuinely need every row
+  (the sync, the audits, eligibility), and each of those is a memory risk to
+  keep in mind as the universe grows.
+- The follow-up is PREFILLED on the row. `draft_followup_email` is pure
+  string formatting, so `/pipeline` attaches `followup_draft` to every
+  Contacted row still owed its one follow-up and `OutreachModal` opens it
+  with no request (Ishu: "it should already be loaded, it's super generic
+  stuff, no AI"). The endpoint stays as the fallback for rows without it.
+  The template itself still lives in ONE place, the backend; the frontend
+  never carries a copy of the wording.
+
 ## 6e. Every page is gated, and a 401 reloads at most once
 
 - `AuthGate` is applied PER PAGE (`<AuthGate><XInner /></AuthGate>` in each
