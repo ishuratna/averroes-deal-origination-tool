@@ -3834,7 +3834,6 @@ async def draft_outreach(company_name: str):
 # The phrase the v10 wording retired (Ishu, 21 Sep 2026). A stored UNSENT draft
 # still carrying it is stale and is redrafted by the endpoint below.
 STALE_DRAFT_PHRASES = ("been following", "have been watching", "been tracking")
-_redraft_write_lock = _threading.Lock()   # one BigQuery UPDATE at a time (see redraft_stale_outreach)
 
 
 @app.post("/admin/outreach/redraft-stale")
@@ -3887,36 +3886,54 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
             return name, "skipped", "AI unavailable, fallback not persisted"
         if company_data.get("source") == "Internal Test":
             result["to"] = TEST_RECIPIENT
-        # The AI drafting runs eight-wide; the WRITE takes turns. BigQuery
-        # refuses concurrent UPDATEs on one table ("Could not serialize access
-        # to table targets": Iotac, Intoque, iamproperty in the first batch,
-        # 25 Sep 2026), so the row update and its activity note go through a
-        # lock, with a short retry for the rare refusal that still slips in.
-        with _redraft_write_lock:
-            for attempt in range(3):
-                try:
-                    bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
-                            outreach_draft_subject = @s, outreach_draft_body = @b,
-                            outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
-                            WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
-                        bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
-                        bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
-                        bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
-                        bq_lib.ScalarQueryParameter("name", "STRING", name),
-                    ])).result()
-                    break
-                except Exception as e:
-                    if "serialize" not in str(e).lower() or attempt == 2:
-                        raise
-                    _time.sleep(2 * (attempt + 1))
-            bq_handler._log_activity(name, "note", "system",
-                                     note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
-        return name, "done", ""
+        # Drafting only. The WRITE happens once per chunk, below, as ONE
+        # statement (doctrine 2c: bulk writes are one statement, not a loop).
+        return name, "done", {"subject": result.get("subject") or "", "body": result.get("body") or "",
+                              "to": result.get("to") or (r.get("outreach_draft_to") or "")}
+
+    def _write_chunk(drafts):
+        """One UPDATE ... FROM UNNEST for the chunk. BigQuery refuses DML that
+        collides with another writer on the same table ("Could not serialize
+        access to table targets due to concurrent update"; the nightly
+        SmartFill was updating rows at the same time, 25 Sep 2026). Eight
+        single-row UPDATEs were eight chances to collide; one statement is
+        one, and it is retried with a growing back-off."""
+        if not drafts:
+            return
+        names = [d[0] for d in drafts]
+        q = f"""UPDATE `{bq_handler.table_id}` t SET
+                    outreach_draft_subject = u.s, outreach_draft_body = u.b,
+                    outreach_draft_to = u.t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                FROM (SELECT n AS name, s, b, t
+                      FROM UNNEST(@names) AS n WITH OFFSET i
+                      JOIN UNNEST(@subjects) AS s WITH OFFSET j ON i = j
+                      JOIN UNNEST(@bodies) AS b WITH OFFSET k ON i = k
+                      JOIN UNNEST(@tos) AS t WITH OFFSET l ON i = l) u
+                WHERE t.name = u.name"""
+        params = [bq_lib.ArrayQueryParameter("names", "STRING", names),
+                  bq_lib.ArrayQueryParameter("subjects", "STRING", [d[1]["subject"] for d in drafts]),
+                  bq_lib.ArrayQueryParameter("bodies", "STRING", [d[1]["body"] for d in drafts]),
+                  bq_lib.ArrayQueryParameter("tos", "STRING", [d[1]["to"] for d in drafts])]
+        for attempt in range(5):
+            try:
+                bq_handler.client.query(q, job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if ("serialize" not in msg and "concurrent" not in msg) or attempt == 4:
+                    raise
+                _time.sleep(3 * (2 ** attempt))
+        for n in names:
+            try:
+                bq_handler._log_activity(n, "note", "system",
+                                         note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
+            except Exception as e:
+                logger.warning(f"[Redraft] activity note failed for {n}: {e}")
 
     # PARALLEL, in chunks, deadline checked before each chunk is submitted:
-    # one draft is ~25s end to end (Gemini + two BigQuery writes), so a
-    # sequential loop managed 10 per call against 2,294 stale drafts (Ishu's
-    # first run, 21 Sep 2026). Eight workers make it ~70 per call.
+    # one draft is ~25s end to end, so a sequential loop managed 10 per call
+    # against 2,294 stale drafts (Ishu's first run, 21 Sep 2026). Eight
+    # workers draft at once; each chunk is then saved in one statement.
     from concurrent.futures import ThreadPoolExecutor, as_completed
     todo = rows[:limit]
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -3924,12 +3941,21 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
             if _time.time() > deadline:
                 break
             futs = {pool.submit(_one, r): r["name"] for r in todo[i:i + workers]}
+            drafts = []
             for f in as_completed(futs):
                 try:
-                    name, outcome, why = f.result()
-                    (done if outcome == "done" else skipped).append(name if outcome == "done" else f"{name}: {why}")
+                    name, outcome, payload = f.result()
+                    if outcome == "done":
+                        drafts.append((name, payload))
+                    else:
+                        skipped.append(f"{name}: {payload}")
                 except Exception as e:
                     failed.append(f"{futs[f]}: {e}")
+            try:
+                _write_chunk(drafts)
+                done.extend(n for n, _ in drafts)
+            except Exception as e:
+                failed.extend(f"{n}: {e}" for n, _ in drafts)
     return {"status": "Success", "redrafted": len(done), "companies": done, "skipped": skipped,
             "failed": failed[:20], "remaining": max(0, len(rows) - len(done) - len(skipped) - len(failed)),
             "seconds": round(_time.time() - t0, 1)}
