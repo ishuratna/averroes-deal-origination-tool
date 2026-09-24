@@ -832,6 +832,22 @@ mistake is both visible and correctable. This one logged nothing, which is why
   happening. Falling through to "open" on failure is right: an unreachable
   backend must not lock the UI, because each call reports its own error anyway.
 
+## 6e. Every page is gated, and a 401 reloads at most once
+
+- `AuthGate` is applied PER PAGE (`<AuthGate><XInner /></AuthGate>` in each
+  `page.tsx`), not in the layout. The Responded page never had it, and
+  nothing noticed for a month because a live session hides the gap. On 24
+  Sep 2026 Ishu's 12h token lapsed, he clicked Responded, and the page
+  loaded, got 401, `apiFetch` cleared the token and reloaded so the gate
+  could show sign-in, found no gate, and reloaded again for ever ("it
+  continuously reloads and the screen jitters"). A new page MUST wrap its
+  content in `AuthGate`; check with `grep -L AuthGate src/app/**/page.tsx`.
+- `_sessionRedirect` now reloads at most ONCE per lapse
+  (`averroes_401_reloaded` in sessionStorage, cleared by the next successful
+  call): a second 401 in a row sends the browser to `/`, which is gated,
+  instead of reloading the same page. A missing gate is then a wrong
+  landing page, not a frozen browser.
+
 ## 7. Verification before push (hard-learned)
 
 - `python3 -m compileall backend` (lazy imports hide f-string syntax errors),

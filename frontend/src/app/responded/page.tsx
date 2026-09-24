@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import SideNav from '../../components/SideNav';
+import AuthGate from '../../components/AuthGate';
 import CompanyProfile from '../../components/CompanyProfile';
 import OwnerTag from '../../components/OwnerTag';
 import ReplyRuleButton from '../../components/ReplyRuleButton';
@@ -35,7 +36,17 @@ const SECTION_KEYS = RESPONDED_SECTIONS.flatMap(s => s.lanes.flatMap(ln => ln.li
 const PARKED_KEYS = RESPONDED_PARKED.map(p => p.key);
 const RENDER_ORDER: string[] = [...SECTION_KEYS, ...PARKED_KEYS, 'progressed'];
 
+// The gate wraps this page like every other. It did not (24 Sep 2026): with
+// an expired session the page loaded, the API answered 401, apiFetch cleared
+// the token and reloaded to show sign-in, and with no gate here there was
+// nothing to show, so it reloaded again, for ever ("continuously reloads and
+// the screen jitters"). AuthGate is what turns a dead session into a sign-in
+// card instead of a loop.
 export default function RespondedPage() {
+  return <AuthGate><RespondedInner /></AuthGate>;
+}
+
+function RespondedInner() {
   const [data, setData] = useState<RespondedResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

@@ -5,13 +5,25 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes
 // Authenticated fetch: attaches the Google ID token. On a missing/expired
 // session it redirects to sign-in cleanly and returns a never-resolving
 // promise, so callers' catch blocks don't fire misleading error alerts.
+// RELOAD ONCE, NEVER LOOP (24 Sep 2026). The reload exists so AuthGate can
+// show the sign-in card. A page that is not wrapped in AuthGate (Responded was
+// not) has nothing to show, so it loaded, got 401, reloaded, got 401 ... for
+// ever. The guard: if the previous load ALREADY reloaded for this reason,
+// send the browser to the home page (which is gated) instead of reloading
+// this one again. A second 401 in a row can never produce a second reload.
 function _sessionRedirect(): Promise<Response> {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('averroes_id_token');
     sessionStorage.setItem('averroes_session_note', 'Your session expired — please sign in again.');
-    window.location.reload();
+    const looped = sessionStorage.getItem('averroes_401_reloaded') === '1';
+    sessionStorage.setItem('averroes_401_reloaded', '1');
+    if (looped && window.location.pathname !== '/') {
+      window.location.assign('/');
+    } else {
+      window.location.reload();
+    }
   }
-  return new Promise<Response>(() => {});  // never resolves; page is reloading
+  return new Promise<Response>(() => {});  // never resolves; page is navigating
 }
 
 function _tokenValid(token: string | null): boolean {
@@ -44,6 +56,7 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<Respons
   if (response.status === 401) {
     return _sessionRedirect();
   }
+  if (typeof window !== 'undefined') sessionStorage.removeItem('averroes_401_reloaded');
   return response;
 }
 
