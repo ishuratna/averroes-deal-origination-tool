@@ -3834,6 +3834,7 @@ async def draft_outreach(company_name: str):
 # The phrase the v10 wording retired (Ishu, 21 Sep 2026). A stored UNSENT draft
 # still carrying it is stale and is redrafted by the endpoint below.
 STALE_DRAFT_PHRASES = ("been following", "have been watching", "been tracking")
+_redraft_write_lock = _threading.Lock()   # one BigQuery UPDATE at a time (see redraft_stale_outreach)
 
 
 @app.post("/admin/outreach/redraft-stale")
@@ -3886,17 +3887,30 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
             return name, "skipped", "AI unavailable, fallback not persisted"
         if company_data.get("source") == "Internal Test":
             result["to"] = TEST_RECIPIENT
-        bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
-                outreach_draft_subject = @s, outreach_draft_body = @b,
-                outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
-                WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
-            bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
-            bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
-            bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
-            bq_lib.ScalarQueryParameter("name", "STRING", name),
-        ])).result()
-        bq_handler._log_activity(name, "note", "system",
-                                 note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
+        # The AI drafting runs eight-wide; the WRITE takes turns. BigQuery
+        # refuses concurrent UPDATEs on one table ("Could not serialize access
+        # to table targets": Iotac, Intoque, iamproperty in the first batch,
+        # 25 Sep 2026), so the row update and its activity note go through a
+        # lock, with a short retry for the rare refusal that still slips in.
+        with _redraft_write_lock:
+            for attempt in range(3):
+                try:
+                    bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` SET
+                            outreach_draft_subject = @s, outreach_draft_body = @b,
+                            outreach_draft_to = @t, outreach_drafted_at = CURRENT_TIMESTAMP()
+                            WHERE name = @name""", job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ScalarQueryParameter("s", "STRING", result.get("subject") or ""),
+                        bq_lib.ScalarQueryParameter("b", "STRING", result.get("body") or ""),
+                        bq_lib.ScalarQueryParameter("t", "STRING", result.get("to") or (r.get("outreach_draft_to") or "")),
+                        bq_lib.ScalarQueryParameter("name", "STRING", name),
+                    ])).result()
+                    break
+                except Exception as e:
+                    if "serialize" not in str(e).lower() or attempt == 2:
+                        raise
+                    _time.sleep(2 * (attempt + 1))
+            bq_handler._log_activity(name, "note", "system",
+                                     note_text="Outreach draft refreshed to the current wording (old draft carried the retired opener)")
         return name, "done", ""
 
     # PARALLEL, in chunks, deadline checked before each chunk is submitted:
