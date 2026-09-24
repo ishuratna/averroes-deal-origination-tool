@@ -3869,14 +3869,17 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
         return {"status": "Preview", "stale_drafts": len(rows), "would_redraft": min(len(rows), limit),
                 "companies": [r["name"] for r in rows[:200]],
                 "note": "dry_run=0 redrafts up to `limit` per call; sent emails are never touched."}
-    full = {c.get("name"): c for c in bq_handler.get_universe()}
     done, skipped, failed = [], [], []
     t0 = _time.time()
     deadline = t0 + 230
 
     def _one(r):
         name = r["name"]
-        company_data = full.get(name) or {"name": name}
+        # One row per company, fetched inside the worker. The first version
+        # loaded the ENTIRE universe up front (`get_universe()`, 17k rows with
+        # every blob) and the container died before the first redraft: every
+        # apply call came back "Failed to fetch" (25 Sep 2026). Doctrine 6f.
+        company_data = bq_handler.get_company_full(name) or {"name": name}
         news_hook = _stored_news_signal(company_data)
         result = draft_outreach_email(company_data, news_hook=news_hook)
         if result.get("is_fallback"):
