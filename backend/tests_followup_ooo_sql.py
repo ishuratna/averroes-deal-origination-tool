@@ -34,6 +34,9 @@ last_sent AS (
         FROM msgs WHERE direction = 'sent'
     ) WHERE rn = 1
 ),
+sent_n AS (
+    SELECT entity_name, COUNT(*) AS sent_count FROM msgs WHERE direction = 'sent' GROUP BY entity_name
+),
 last_recv AS (
     SELECT * EXCLUDE(rn) FROM (
         SELECT entity_name, subject, snippet, counterparty_email, sent_at,
@@ -42,7 +45,8 @@ last_recv AS (
     ) WHERE rn = 1
 ),
 calc AS (
-    SELECT t.name, t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until,
+    SELECT t.name, t.status, t.action_bucket, t.track, NULLIF(t.ooo_until, '') AS ooo_until,
+           COALESCE(n.sent_count, 0) AS sent_count,
            s.sent_at AS last_sent_at, r.sent_at AS last_recv_at,
            CASE WHEN TRY_CAST(NULLIF(t.ooo_until, '') AS DATE) IS NOT NULL
                      AND DATE_DIFF('day', CAST(s.sent_at AS DATE),
@@ -52,6 +56,7 @@ calc AS (
            END AS due_at
     FROM targets t
     JOIN last_sent s ON s.entity_name = t.name
+    LEFT JOIN sent_n n ON n.entity_name = t.name
     LEFT JOIN last_recv r ON r.entity_name = t.name
     WHERE t.status IN ('Contacted','Responded','Meeting','DD','Offer')
       AND COALESCE(t.source,'') != 'Internal Test'
@@ -65,7 +70,8 @@ WHERE (
     (owed AND DATE_DIFF('day', last_recv_at, TIMESTAMP '{NOW}') >= {REPLY_DAYS}
        AND COALESCE(action_bucket,'') NOT IN ('not_fit_no_respond','declined_close')
        AND COALESCE(track,'') = '')
-    OR (NOT owed AND TIMESTAMP '{NOW}' >= due_at)
+    OR (NOT owed AND TIMESTAMP '{NOW}' >= due_at
+        AND NOT (status = 'Contacted' AND sent_count >= 2))
 )
 ORDER BY name
 """
@@ -152,6 +158,16 @@ mail("WithBea", "sent", D(2026, 7, 20)); mail("WithBea", "received", D(2026, 7, 
 company("WithAssoc", status="Responded", track="B")
 mail("WithAssoc", "sent", D(2026, 7, 20)); mail("WithAssoc", "received", D(2026, 7, 25))
 
+# ── ONE FOLLOW-UP ONLY (Ishu, 24 Sep 2026) ──────────────────────────────────
+# 17. First email 40 days ago, a follow-up 20 days ago (typed in the inbox, so
+#     only email_log knows): two sends, still Contacted -> never nagged again.
+company("FollowedUpOnce"); mail("FollowedUpOnce", "sent", D(2026, 7, 3))
+mail("FollowedUpOnce", "sent", D(2026, 7, 23))
+# 18. Same shape but in Responded (we replied to their reply and they went
+#     quiet): the reminder still applies, a reply is not a follow-up.
+company("RepliedThenQuiet", status="Responded"); mail("RepliedThenQuiet", "sent", D(2026, 7, 1))
+mail("RepliedThenQuiet", "received", D(2026, 7, 5)); mail("RepliedThenQuiet", "sent", D(2026, 7, 10))
+
 rows = {r[0]: {"type": r[1], "threshold": r[2], "due_on": r[3]} for r in db.execute(SQL).fetchall()}
 
 fails = 0
@@ -192,6 +208,14 @@ print("── A kill silences the reminder for good ──")
 chk("a killed company never appears", "Killed" in rows, False)
 chk("a company routed to Bea never nags Ishu", "WithBea" in rows, False)
 chk("a company routed to the associates never nags Ishu", "WithAssoc" in rows, False)
+
+print()
+print("── One follow-up only ──")
+chk("a Contacted company already followed up (2 sends) is never nagged for a third",
+    "FollowedUpOnce" in rows, False)
+chk("a Responded company we replied to still reminds after 14 quiet days",
+    "RepliedThenQuiet" in rows, True)
+chk("PlainOverdue (one send) still shows", "PlainOverdue" in rows, True)
 
 print()
 print("── A bounce is not a reply ──")

@@ -22,24 +22,51 @@ export interface OutreachButtonState {
 export function outreachMode(company: {
   status?: string;
   outreach_sent_at?: string;
+  contacted_at?: string;
+  sent_count?: number;
 }): 'outreach' | 'followup' | 'compose' {
   const s = company.status || '';
   // Company stages and investor stages (Committed) alike: the conversation is live.
   if (['Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Committed'].includes(s)) return 'compose';
-  if (company.outreach_sent_at) return 'followup';
+  if (company.outreach_sent_at || (company.sent_count ?? 0) > 0) {
+    // ONE FOLLOW-UP ONLY (Ishu, 24 Sep 2026): once the nudge has gone, the
+    // template is never offered again. Anything further is a deliberate,
+    // blank email in the same thread.
+    return hasFollowedUp(company) ? 'compose' : 'followup';
+  }
   return 'outreach';
 }
 
+// Our last outbound email, wherever it was sent from. email_log's
+// last_sent_at knows about the inbox; outreach_sent_at knows only the tool.
+export function lastSentAt(company: {
+  outreach_sent_at?: string;
+  last_sent_at?: string;
+}): string | undefined {
+  const a = company.last_sent_at ? new Date(company.last_sent_at).getTime() : 0;
+  const b = company.outreach_sent_at ? new Date(company.outreach_sent_at).getTime() : 0;
+  if (!a && !b) return undefined;
+  return a >= b ? company.last_sent_at : company.outreach_sent_at;
+}
+
 // Has a follow-up already gone out? DERIVED, never stored (doctrine: no second
-// copy of a fact): the first send stamps contacted_at and outreach_sent_at in
-// the same statement, so they are equal. Every later send refreshes only
-// outreach_sent_at. A meaningful gap between them therefore means at least one
-// follow-up has been sent. The 60s tolerance absorbs clock jitter without ever
-// mistaking a first send for a follow-up.
+// copy of a fact). THE RULE (Ishu, 24 Sep 2026): the Follow up button shows
+// only while exactly ONE email has ever been sent to the company. Ishu had
+// been following up from his inbox, and the card kept offering a follow-up
+// on the follow-up, because the row's outreach_sent_at only knows about
+// sends from the tool. `sent_count` comes from email_log, which the sync
+// fills from Gmail's Sent folder, so it counts both. Two or more sends =
+// followed up, whoever pressed send and wherever.
+// Fallback, when a row arrives without sent_count (an older endpoint): the
+// first send stamps contacted_at and outreach_sent_at together, every later
+// send refreshes only outreach_sent_at, so a gap over 60s means a follow-up
+// went out from the tool.
 export function hasFollowedUp(company: {
   outreach_sent_at?: string;
   contacted_at?: string;
+  sent_count?: number;
 }): boolean {
+  if (typeof company.sent_count === 'number') return company.sent_count >= 2;
   if (!company.outreach_sent_at || !company.contacted_at) return false;
   return new Date(company.outreach_sent_at).getTime()
        - new Date(company.contacted_at).getTime() > 60_000;
@@ -52,11 +79,12 @@ export function hasFollowedUp(company: {
 export function owesReply(company: {
   last_reply_at?: string;
   outreach_sent_at?: string;
+  last_sent_at?: string;
 }): boolean {
   if (!company.last_reply_at) return false;
-  if (!company.outreach_sent_at) return true;
-  return new Date(company.last_reply_at).getTime()
-       > new Date(company.outreach_sent_at).getTime();
+  const sent = lastSentAt(company);
+  if (!sent) return true;
+  return new Date(company.last_reply_at).getTime() > new Date(sent).getTime();
 }
 
 export function outreachButtonState(company: {
@@ -65,9 +93,24 @@ export function outreachButtonState(company: {
   outreach_sent_at?: string;
   contacted_at?: string;
   last_reply_at?: string;
+  sent_count?: number;
+  last_sent_at?: string;
 }): OutreachButtonState {
   const mode = outreachMode(company);
+  const sentAt = lastSentAt(company);
   if (mode === 'compose') {
+    // Contacted, already followed up: say so, and do NOT offer the template
+    // again. The click opens a blank email in the same thread, for the rare
+    // case there is something new to say.
+    if (company.status === 'Contacted' && hasFollowedUp(company)) {
+      const n = company.sent_count;
+      return {
+        state: 'compose',
+        cls: 'sent',
+        label: '✓ Followed up',
+        title: `${n ? `${n} emails sent` : 'Followed up'}${sentAt ? `, last on ${new Date(sentAt).toLocaleDateString('en-GB')}` : ''} (from the tool or the inbox; the sync counts both). No further follow-up is offered; moves to Responded automatically if they reply. Click only to write something new in the same thread.`,
+      };
+    }
     // Same principle as the Contacted column: amber = the ball is with us,
     // green = we answered and the ball is with them. On Responded cards the
     // distinction is "Reply" vs "Email"; deeper stages just say Email, since
@@ -88,23 +131,14 @@ export function outreachButtonState(company: {
     };
   }
   if (mode === 'followup') {
-    // Already followed up: say so, so the column reads at a glance who has had
-    // the nudge and who is still waiting for one. Still clickable — a second
-    // follow-up is a legitimate (if rare) move, and the modal opens the same
-    // template in the same thread.
-    if (hasFollowedUp(company)) {
-      return {
-        state: 'followup',
-        cls: 'sent',
-        label: '✓ Followed up',
-        title: `Followed up ${company.outreach_sent_at ? new Date(company.outreach_sent_at).toLocaleString('en-GB') : ''} — moves to Responded automatically if they reply. Click to send another follow-up in the same thread.`,
-      };
-    }
+    // Exactly one email has gone out and nothing has come back: the one
+    // follow-up is on offer. (Two or more sends never reach here; see
+    // outreachMode.)
     return {
       state: 'followup',
       cls: 'followup',
       label: '↩ Follow up',
-      title: `Email sent ${company.outreach_sent_at ? new Date(company.outreach_sent_at).toLocaleString('en-GB') : ''} — opens the follow-up template in the same thread, ready to review and send`,
+      title: `Email sent ${sentAt ? new Date(sentAt).toLocaleString('en-GB') : ''} — opens the follow-up template in the same thread, ready to review and send`,
     };
   }
   if (company.outreach_drafted_at) {

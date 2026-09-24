@@ -617,8 +617,13 @@ class BigQueryHandler:
         return self._log_activity(company_name, kind, "system", note_text=f"{kind} run")
 
     def _ensure_email_log_table(self):
-        """Create the email_log table if missing. Called lazily on first sync."""
+        """Create the email_log table if missing. Called lazily on first sync.
+        Existence is remembered per process: the pipeline and universe reads
+        join this table on every page load and must not pay a metadata call
+        each time."""
         table_id = f"{self.project_id}.{self.dataset_id}.email_log"
+        if getattr(self, "_email_log_ok", False):
+            return table_id
         try:
             self.client.get_table(table_id)
         except Exception:
@@ -632,6 +637,7 @@ class BigQueryHandler:
             ]]
             self.client.create_table(bigquery.Table(table_id, schema=schema))
             logger.info("Created email_log table")
+        self._email_log_ok = True
         return table_id
 
     def get_logged_message_ids(self) -> set:
@@ -1162,13 +1168,31 @@ class BigQueryHandler:
 
         return merged
 
+    # ── How many emails have WE sent this company? Derived from email_log,
+    # never stored (doctrine 1). The sync files every outbound message from
+    # Gmail's All Mail, the tool's own sends included, so this counts a
+    # follow-up Ishu typed in his inbox exactly like one sent from the card.
+    # `outreach_sent_at` on the row cannot: only the tool's send path stamps
+    # it. Served on every pipeline/universe/profile row as `sent_count` and
+    # `last_sent_at`, so the Follow up button, the card clock and the reminder
+    # queue all read the same fact (Ishu, 24 Sep 2026: follow up only once).
+    def _sent_agg_sql(self, entity_type: str = "company") -> str:
+        return f"""(SELECT entity_name, COUNT(*) AS sent_count, MAX(sent_at) AS last_sent_at
+                    FROM `{self._ensure_email_log_table()}`
+                    WHERE entity_type = '{entity_type}' AND direction = 'sent'
+                    GROUP BY entity_name)"""
+
+    _SENT_COLS = "IFNULL(s.sent_count, 0) AS sent_count, CAST(s.last_sent_at AS STRING) AS last_sent_at"
+
     def get_pipeline(self) -> List[Dict]:
         if not self.client:
             return []
         query = f"""
-            SELECT * FROM `{self.table_id}`
-            WHERE status IN ('Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
-            ORDER BY name ASC
+            SELECT t.*, {self._SENT_COLS}
+            FROM `{self.table_id}` t
+            LEFT JOIN {self._sent_agg_sql()} s ON s.entity_name = t.name
+            WHERE t.status IN ('Qualified', 'Contacted', 'Responded', 'Meeting', 'DD', 'Offer')
+            ORDER BY t.name ASC
         """
         return self._run_query(query)
 
@@ -1206,12 +1230,13 @@ class BigQueryHandler:
             return []
         drop = ", ".join(self._SLIM_DROP + tuple(self._SLIM_TRUNC.keys()))
         trunc = ", ".join(f"SUBSTR({c}, 1, {n}) AS {c}" for c, n in self._SLIM_TRUNC.items())
-        where = "" if include_hidden else "WHERE hidden_at IS NULL"
+        where = "" if include_hidden else "WHERE t.hidden_at IS NULL"
         query = f"""
-            SELECT * EXCEPT({drop}), {trunc}
-            FROM `{self.table_id}`
+            SELECT t.* EXCEPT({drop}), {trunc}, {self._SENT_COLS}
+            FROM `{self.table_id}` t
+            LEFT JOIN {self._sent_agg_sql()} s ON s.entity_name = t.name
             {where}
-            ORDER BY ingested_at DESC
+            ORDER BY t.ingested_at DESC
         """
         return self._run_query(query)
 
@@ -2136,7 +2161,9 @@ class BigQueryHandler:
         """One company, every column (profile depth on demand)."""
         if not self.client:
             return None
-        query = f"SELECT * FROM `{self.table_id}` WHERE LOWER(name) = LOWER(@name) LIMIT 1"
+        query = f"""SELECT t.*, {self._SENT_COLS} FROM `{self.table_id}` t
+                    LEFT JOIN {self._sent_agg_sql()} s ON s.entity_name = t.name
+                    WHERE LOWER(t.name) = LOWER(@name) LIMIT 1"""
         rows = self._run_query(query, [bigquery.ScalarQueryParameter("name", "STRING", name)])
         return rows[0] if rows else None
 

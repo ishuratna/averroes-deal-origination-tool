@@ -137,6 +137,23 @@ mistake is both visible and correctable. This one logged nothing, which is why
   as the last one. Do not add a second rule for it.
 - Parked companies (`not_fit_no_respond`, `declined_close`) never nag:
   intentional silence is not an oversight.
+- ONE FOLLOW-UP ONLY (Ishu, 24 Sep 2026: "I do not want that I follow up
+  on the follow up"). The Follow up button shows while exactly ONE email has
+  ever gone to the company; at two or more it reads "Followed up", the
+  template is never offered again (the click is a blank compose in the same
+  thread), the card never goes red for it, and the `waiting_on_them`
+  reminder skips it (`status = 'Contacted' AND sent_count >= 2`). Responded
+  and later are untouched: a reply in a live conversation is not a follow-up.
+- THE COUNT COMES FROM email_log, NOT THE ROW. `outreach_sent_at` is stamped
+  only by the tool's send path; Ishu had been following up from his inbox,
+  and the card kept offering the follow-up again because the row could not
+  see those sends. The sync files every outbound message from Gmail's All
+  Mail (the tool's own sends included), so `bq_handler._sent_agg_sql()`
+  derives `sent_count` and `last_sent_at` per company and every pipeline,
+  slim-universe and full-profile row carries them; `hasFollowedUp` /
+  `lastSentAt` / `owesReply` in `lib/outreach.ts` read them first and fall
+  back to the timestamp gap only when a row arrives without them. Never
+  store the count: it is a fact about email_log (doctrine 1).
 
 ## 2c. THE INVESTOR LOOP (LPs mirror founders; one machinery, two tables)
 

@@ -154,6 +154,14 @@ export interface CompanyTarget {
   outreach_drafted_at?: string;
   outreach_sent_at?: string;
   last_reply_at?: string;
+  // DERIVED server-side from email_log on every pipeline/universe/profile
+  // row: how many emails WE have sent this company (tool or inbox alike,
+  // the sync files both) and when the last one went. outreach_sent_at only
+  // knows about sends from the tool, so a follow-up typed in the inbox is
+  // invisible to it; these two are what the Follow up button and the card
+  // clock read (Ishu, 24 Sep 2026: follow up only once).
+  sent_count?: number;
+  last_sent_at?: string;
   reply_classification?: string;
   // Responded-stage action buckets (set by email sync intelligence)
   action_bucket?: string;

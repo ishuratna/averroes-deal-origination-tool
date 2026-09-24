@@ -1704,6 +1704,12 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                     FROM msgs WHERE direction = 'sent'
                 ) WHERE rn = 1
             ),
+            -- How many emails WE have sent, tool or inbox alike. ONE follow-up
+            -- is the rule (Ishu, 24 Sep 2026): a Contacted company that has had
+            -- two outbound emails is never nagged for a third.
+            sent_n AS (
+                SELECT entity_name, COUNT(*) AS sent_count FROM msgs WHERE direction = 'sent' GROUP BY entity_name
+            ),
             -- Their last GENUINE inbound. Out-of-office replies are excluded:
             -- an autoresponder does not mean we owe anybody an answer.
             last_recv AS (
@@ -1716,6 +1722,7 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
             calc AS (
                 SELECT t.name, t.status, t.contact_name, {fit_col},
                        {extra_cols},
+                       IFNULL(n.sent_count, 0) AS sent_count,
                        s.sent_at AS last_sent_at, s.subject AS sent_subject,
                        s.snippet AS sent_snippet, s.counterparty_email AS sent_to,
                        r.sent_at AS last_recv_at, r.subject AS recv_subject,
@@ -1738,11 +1745,12 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                        ) AS due_at
                 FROM `{table}` t
                 JOIN last_sent s ON s.entity_name = t.name
+                LEFT JOIN sent_n n ON n.entity_name = t.name
                 LEFT JOIN last_recv r ON r.entity_name = t.name
                 WHERE {stage_filter}
             )
             SELECT name, status, contact_name, averroes_fit_score, action_bucket,
-                   ooo_until, ooo_note,
+                   ooo_until, ooo_note, sent_count,
                    CAST(due_at AS STRING) AS due_at,
                    TIMESTAMP_DIFF(due_at, last_sent_at, DAY) AS threshold_days,
                    IF(owed, 'we_owe_reply', 'waiting_on_them') AS type,
@@ -1774,7 +1782,13 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 OR
                 -- THE BALL IS WITH THEM: silence since our email, reminder due.
                 -- Contacted = 14 days, overridden by the out-of-office rule above.
-                (NOT owed AND CURRENT_TIMESTAMP() >= due_at)
+                -- ONE FOLLOW-UP ONLY: a Contacted company we have already
+                -- written to twice (first email + one follow-up, from the tool
+                -- or from the inbox) is not reminded again. Silence after a
+                -- follow-up is the answer. Later stages keep the reminder: a
+                -- second email there is a reply in a live conversation.
+                (NOT owed AND CURRENT_TIMESTAMP() >= due_at
+                 AND NOT (status = 'Contacted' AND sent_count >= 2))
             )
             ORDER BY owed DESC, days_waiting DESC""",
             job_config=bq_lib.QueryJobConfig(query_parameters=[

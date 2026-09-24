@@ -10,7 +10,7 @@ import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
 import SyncEmailsButton from "../components/SyncEmailsButton";
 import ReplyRuleButton from "../components/ReplyRuleButton";
-import { outreachButtonState, owesReply } from "../lib/outreach";
+import { outreachButtonState, owesReply, hasFollowedUp, lastSentAt } from "../lib/outreach";
 import SideNav from '../components/SideNav';
 import OwnerTag from '../components/OwnerTag';
 
@@ -583,18 +583,28 @@ function HomeInner() {
                         //   Elsewhere  plain days-in-stage, red past 10.
                         const isContacted = company.status === 'Contacted';
                         const owed = company.status === 'Responded' && owesReply(company);
-                        const stageSince = (isContacted && company.outreach_sent_at)
-                          ? company.outreach_sent_at
+                        // Our last email from EITHER the tool or the inbox
+                        // (email_log via lastSentAt), so a follow-up typed in
+                        // Gmail resets the clock like one sent from here.
+                        const ourLast = lastSentAt(company);
+                        const followedUp = isContacted && hasFollowedUp(company);
+                        const stageSince = (isContacted && ourLast)
+                          ? ourLast
                           : company.status === 'Responded'
-                            ? (owed ? company.last_reply_at : (company.outreach_sent_at || company.stage_entered_at))
+                            ? (owed ? company.last_reply_at : (ourLast || company.stage_entered_at))
                             : (company.stage_entered_at || company.ingested_at);
                         const daysInStage = stageSince
                           ? Math.floor((Date.now() - new Date(stageSince).getTime()) / (1000 * 60 * 60 * 24))
                           : null;
+                        // ONE FOLLOW-UP ONLY: once it has gone, silence is the
+                        // answer and the card never goes red for it (the
+                        // reminder queue skips these too, same rule).
                         const isStale = daysInStage !== null && (
                           company.status === 'Responded'
                             ? (owed && daysInStage >= 7)
-                            : daysInStage > 10);
+                            : isContacted
+                              ? (!followedUp && daysInStage > 10)
+                              : daysInStage > 10);
 
                         return (
                           <div
@@ -618,7 +628,9 @@ function HomeInner() {
                                 {daysInStage !== null && (
                                   <span className={`kc-days ${isStale ? 'stale' : ''}`}
                                     title={isContacted
-                                      ? (isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
+                                      ? (followedUp
+                                          ? `${daysInStage} days since our follow-up — waiting on them; no further follow-up`
+                                          : isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
                                       : company.status === 'Responded'
                                         ? (owed
                                             ? `${daysInStage} days since their message — ${isStale ? 'reply overdue' : 'we owe the reply'}`
