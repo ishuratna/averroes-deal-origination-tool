@@ -53,11 +53,12 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LEDGER_VERSION = 2             # 2: small-issue rule, duplicate-filing fold, e-filed layout
+LEDGER_VERSION = 3             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money
 MAX_PDF_READS_PER_RUN = 8      # text extraction is free; this bounds the downloads
 MAX_AI_FALLBACKS_PER_RUN = 3   # a scanned SH01 costs one ungrounded Gemini call
 SMALL_ISSUE_GBP = 50_000       # under this, an allotment is not a fundraising
-OPTION_PRICE_RATIO = 0.25      # priced under a quarter of the last round: an option exercise
+OPTION_PRICE_RATIO = 0.25      # priced under a quarter of the last round: an option exercise ...
+OPTION_EXERCISE_MAX_GBP = 250_000   # ... but only for small money; more than this is a down round
 
 
 # ── Pure: read one SH01's text ───────────────────────────────────────────────
@@ -207,16 +208,34 @@ def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
     rounds.sort(key=lambda r: (r["date"], r["filed"]))
     all_ids = sorted({r["transaction_id"] for r in rounds if r.get("transaction_id")})
     rounds = _fold_duplicates(rounds)
+    # A statement of capital that shows FEWER shares in issue than an earlier
+    # filing did is a misread (or a consolidation we cannot see): the money
+    # still counts, the valuation does not. Arcus: an AI reading of a July
+    # 2018 scan gave 1,295,408 after an earlier one gave 1,479,927.
+    high = 0
+    for r in rounds:
+        t = r.get("total_shares_after")
+        if t:
+            if t < high:
+                r["note"] = f"statement of capital ({t:,}) below an earlier filing's ({high:,}); valuation not derived"
+                r.pop("post_money", None)
+                r.pop("pre_money", None)
+                r["total_inconsistent"] = True
+            else:
+                high = t
     cum, prev_price, n = 0.0, None, 0
     for r in rounds:
         if r["kind"] == "equity round" and r.get("raised"):
             # The small-issue rule: an option exercise is priced above nominal
             # but far below the last round, and raises very little. Neither
-            # is a fundraising and neither may set a valuation.
+            # is a fundraising and neither may set a valuation. The price
+            # test applies only to small money: GBP 2.5m at a fifth of the
+            # last price is a down round (or a misread of the last price),
+            # never an option exercise.
             if r["raised"] < SMALL_ISSUE_GBP:
                 r["kind"] = "small issue"
                 r["note"] = f"raised under GBP {SMALL_ISSUE_GBP:,}; not counted as a round"
-            elif prev_price and r["price"] < prev_price * OPTION_PRICE_RATIO:
+            elif prev_price and r["price"] < prev_price * OPTION_PRICE_RATIO and r["raised"] < OPTION_EXERCISE_MAX_GBP:
                 r["kind"] = "small issue"
                 r["note"] = f"priced at {r['price']:.2f} against a last round at {prev_price:.2f}; option exercise, not a round"
             if r["kind"] == "small issue":
@@ -337,10 +356,13 @@ def _ai_read(pdf: bytes, company_name: str) -> Dict:
         prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) for {company_name}.
 Read the form's own figures. NEVER guess. Return ONLY JSON:
 {{"allotment_date": "YYYY-MM-DD or null",
-  "allotments": [{{"share_class": "...", "currency": "GBP", "shares": number, "nominal": number or null, "paid": number or null}}],
+  "allotments": [{{"share_class": "...", "currency": "GBP", "shares": number, "nominal": number or null, "paid": number or null,
+                   "aggregate_paid": number or null}}],
   "total_shares_after": number or null}}
-"paid" is the amount paid (including share premium) on EACH share; "total_shares_after" is the
-total number of shares in the statement of capital after the allotment."""
+"paid" is the amount paid (including share premium) on EACH share, exactly as printed (it is often a
+small decimal such as 1.6258, never the total). "aggregate_paid" is the TOTAL consideration for the
+class if the form states one, else null. "total_shares_after" is the total number of shares in the
+statement of capital after the allotment (the Totals line, all classes)."""
         resp = model.generate_content(
             [{"mime_type": "application/pdf", "data": base64.b64encode(pdf).decode()}, prompt],
             generation_config={"response_mime_type": "application/json"})
@@ -349,6 +371,15 @@ total number of shares in the statement of capital after the allotment."""
         allots = [a for a in (data.get("allotments") or []) if isinstance(a, dict) and (a.get("shares") or 0) > 0]
         if not allots:
             return {}
+        for a in allots:
+            # Cross-check: when the form states a total, shares x paid must
+            # match it. A mismatch means "paid" was read as the total (or
+            # the reverse); the stated total divided by the shares wins.
+            agg, paid, sh = a.get("aggregate_paid"), a.get("paid"), a.get("shares")
+            if isinstance(agg, (int, float)) and agg > 0 and sh:
+                if not isinstance(paid, (int, float)) or abs(sh * paid - agg) > 0.05 * agg:
+                    a["paid_as_read"] = paid
+                    a["paid"] = round(agg / sh, 6)
         return {"allotment_date": data.get("allotment_date") or "", "allotments": allots,
                 "total_shares_after": data.get("total_shares_after"), "_source": "ai"}
     except Exception as e:
@@ -356,15 +387,25 @@ total number of shares in the statement of capital after the allotment."""
         return {}
 
 
-def get_funding_ladder(company_number: str, company_name: str, stored_json: str = "") -> Dict:
+def get_funding_ladder(company_number: str, company_name: str, stored_json: str = "",
+                       reread_ai: bool = False) -> Dict:
     """Read every SH01 not yet in the stored ledger and return the merged
-    ledger, plus {"read": n, "ai_reads": n, "skipped": bool}."""
+    ledger, plus {"read": n, "ai_reads": n, "skipped": bool}. `reread_ai`
+    discards the stored AI readings so the scans are read again (paid):
+    for when a reading looks wrong against an independent source."""
     from services.companies_house_service import _fetch_filing_history, _download_accounts_pdf
     try:
         stored = json.loads(stored_json) if stored_json else {}
     except Exception:
         stored = {}
     seen = set(stored.get("filings_seen") or [])
+    if reread_ai and stored:
+        ai_ids = {r.get("transaction_id") for r in (stored.get("rounds") or [])
+                  if (r.get("reading") or {}).get("_source") == "ai"}
+        for r in (stored.get("rounds") or []):
+            ai_ids |= {d.get("transaction_id") for d in (r.get("duplicate_filings") or [])}
+        stored["rounds"] = [r for r in (stored.get("rounds") or []) if r.get("transaction_id") not in ai_ids]
+        seen -= ai_ids
     upgrading = bool(stored) and (stored.get("v") or 1) < LEDGER_VERSION
     if upgrading:
         # The parser changed. A reading taken from the filing TEXT is re-read

@@ -3490,7 +3490,9 @@ async def admin_funding_ladder(request: Request, company_name: str):
     number = company.get("ch_company_number")
     if not number:
         raise HTTPException(status_code=400, detail="No Companies House number on the row")
-    lad = get_funding_ladder(number, company_name, stored_json=company.get("ch_funding_rounds") or "")
+    reread_ai = request.query_params.get("reread_ai", "0") in ("1", "true", "yes")
+    lad = get_funding_ladder(number, company_name, stored_json=company.get("ch_funding_rounds") or "",
+                             reread_ai=reread_ai)
     if lad.get("skipped"):
         return {"success": True, "company": company_name, "action": "nothing new to read",
                 "pending": (lad["ledger"] or {}).get("pending", 0)}

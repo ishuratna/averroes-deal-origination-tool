@@ -232,6 +232,22 @@ chk("a statement-of-capital total below the shares allotted derives no valuation
 chk("...but the money raised still counts", bad_total["total_raised"], 1000000.0)
 
 print()
+print("── A big cheque at a low price is a down round, not an option exercise; a shrinking total is a misread ──")
+r18a = {"allotment_date": "2018-05-11", "allotments": [{"share_class": "A Ordinary", "shares": 184519, "nominal": 0.0005, "paid": 16.2585}],
+        "total_shares_after": 1479927, "_source": "ai"}
+r18b = {"allotment_date": "2018-05-11", "allotments": [{"share_class": "Ordinary", "shares": 56070, "nominal": 0.0005, "paid": 7.24}],
+        "total_shares_after": 1295408, "_source": "ai"}
+D = build_ladder([r18a, r18b, may19], [{"date": "2018-05-14", "transaction_id": "t18a"}, {"date": "2018-07-10", "transaction_id": "t18b"},
+                                        {"date": "2019-05-29", "transaction_id": "t19"}])
+dd = {x["transaction_id"]: x for x in D["rounds"]}
+chk("GBP 2.47m at 3.25 after a round at 16.26 is an equity round (a down round), not a small issue",
+    (dd["t19"]["kind"], dd["t19"].get("vs_prior")), ("equity round", "down"))
+chk("a filing whose total in issue is below an earlier filing's derives no valuation",
+    ("post_money" in dd["t18b"], dd["t18b"].get("total_inconsistent")), (False, True))
+chk("...but the money still counts", dd["t18b"]["kind"], "equity round")
+chk("the consistent filings keep their valuation", "post_money" in dd["t18a"] and "post_money" in dd["t19"], True)
+
+print()
 print("── A corrected ladder may replace ITS OWN earlier fill, never anyone else's ──")
 v1_like = {"equity_rounds": 3, "total_raised": 4948995.64, "last_round": by["tx-nov"] | {"post_money": 2251604.0, "raised": 9000.0, "date": "2019-11-28"}}
 v1_fills = column_fills(v1_like, {})
