@@ -66,7 +66,12 @@ export function hasFollowedUp(company: {
   contacted_at?: string;
   sent_count?: number;
 }): boolean {
-  if (typeof company.sent_count === 'number') return company.sent_count >= 2;
+  // EITHER signal is enough. The log count sees inbox follow-ups but only
+  // after a sync; the row stamps see a follow-up sent from the tool the
+  // moment it goes. Giftcloud (25 Sep 2026) was followed up from the card and
+  // still read "Follow up" until the next sync, because the count alone was
+  // trusted. Two sends in the log, OR a tool send after the first: followed up.
+  if ((company.sent_count ?? 0) >= 2) return true;
   if (!company.outreach_sent_at || !company.contacted_at) return false;
   return new Date(company.outreach_sent_at).getTime()
        - new Date(company.contacted_at).getTime() > 60_000;
