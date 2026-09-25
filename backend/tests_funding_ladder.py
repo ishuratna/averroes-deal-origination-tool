@@ -248,6 +248,40 @@ chk("...but the money still counts", dd["t18b"]["kind"], "equity round")
 chk("the consistent filings keep their valuation", "post_money" in dd["t18a"] and "post_money" in dd["t19"], True)
 
 print()
+print("── The filing list's 'GBP x' is the capital after: duplicates, ordering, totals and reductions, all free ──")
+from services.funding_ladder import capital_from_description  # noqa: E402
+chk("capital after from the description", capital_from_description("Statement of capital following an allotment of shares on 11 May 2018  GBP 739.9635"), 739.9635)
+chk("with a thousands separator", capital_from_description("Statement of capital following an allotment of shares on 8 May 2019  GBP 1,121.302"), 1121.302)
+chk("no figure, no value", capital_from_description("Resolution of adoption of Articles"), None)
+# Arcus 2018 as the filing list shows it: two SH01s dated 11 May (647.704 then
+# 739.9635), one 24 May (741.501), and a 10 Jul RE-FILING of the first (647.7040).
+r56 = {"allotment_date": "2018-05-11", "allotments": [{"share_class": "Ordinary", "shares": 56070, "nominal": 0.0005, "paid": 7.24}],
+       "total_shares_after": 1295408, "_source": "ai"}
+F = [{"date": "2018-05-14", "transaction_id": "a", "capital_after": 739.9635},
+     {"date": "2018-05-14", "transaction_id": "b", "capital_after": 647.704},
+     {"date": "2018-05-29", "transaction_id": "c", "capital_after": 741.501},
+     {"date": "2018-07-10", "transaction_id": "d", "capital_after": 647.7040},
+     {"date": "2019-05-29", "transaction_id": "e", "capital_after": 1121.302},
+     {"date": "2026-04-08", "transaction_id": "f", "capital_after": 997.8825}]
+may19b = dict(may19, allotments=[dict(may19["allotments"][0], nominal=0.0005)])
+R = [r18a, r56, {"allotment_date": "2018-05-24", "allotments": [{"share_class": "A Ordinary", "shares": 3075, "nominal": 0.0005, "paid": 16.2602}], "total_shares_after": 1483002, "_source": "ai"},
+     r56, may19b, ef]
+G = build_ladder(R, F, reductions=[{"date": "2024-01-12", "capital": 831.341, "type": "SH19"}])
+ids = [x["transaction_id"] for x in G["rounds"]]
+chk("the 10 Jul re-filing (same capital after 647.704) folds into the 14 May filing", "d" in ids, False)
+chk("...and is recorded on it", [d["transaction_id"] for d in [x for x in G["rounds"] if x["transaction_id"] == "b"][0]["duplicate_filings"]], ["d"])
+chk("same-day allotments order by capital after: 56,070 (647.704) before 184,519 (739.9635)", ids[:2], ["b", "a"])
+chk("no total is flagged inconsistent any more", any(x.get("total_inconsistent") for x in G["rounds"]), False)
+chk("the May 2019 round's total in issue comes from the capital after (1,121.302 / 0.0005 = 2,242,604)",
+    [x for x in G["rounds"] if x["transaction_id"] == "e"][0]["total_shares_after"], 2242604)
+chk("2026's lower total (1,995,765 after the Jan 2024 reduction) is not a misread",
+    [x for x in G["rounds"] if x["transaction_id"] == "f"][0].get("total_inconsistent"), None)
+chk("equity rounds: 56k, 3.0m, 50k, 2.47m (the 3,075-share top-up is GBP 50,000.12, just over the floor)", G["equity_rounds"], 4)
+chk("reductions are kept on the ledger", G["reductions"][0]["date"], "2024-01-12")
+G2 = merge_ledger(G, [], [], capital_by_id={"a": 739.9635})
+chk("a rebuild keeps the fold and the reductions", (len(G2["rounds"]), G2["reductions"] == G["reductions"]), (len(G["rounds"]), True))
+
+print()
 print("── A corrected ladder may replace ITS OWN earlier fill, never anyone else's ──")
 v1_like = {"equity_rounds": 3, "total_raised": 4948995.64, "last_round": by["tx-nov"] | {"post_money": 2251604.0, "raised": 9000.0, "date": "2019-11-28"}}
 v1_fills = column_fills(v1_like, {})

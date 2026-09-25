@@ -53,7 +53,7 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LEDGER_VERSION = 3             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money
+LEDGER_VERSION = 4             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money; 4: capital-after from the filing list, reductions
 MAX_PDF_READS_PER_RUN = 8      # text extraction is free; this bounds the downloads
 MAX_AI_FALLBACKS_PER_RUN = 3   # a scanned SH01 costs one ungrounded Gemini call
 SMALL_ISSUE_GBP = 50_000       # under this, an allotment is not a fundraising
@@ -145,6 +145,17 @@ def parse_sh01_text(text: str) -> Dict:
 
 # ── Pure: the ladder from a list of read filings ─────────────────────────────
 
+def capital_from_description(description: str) -> Optional[float]:
+    """Companies House prints the aggregate NOMINAL capital after the event
+    in the filing description: "Statement of capital following an allotment
+    of shares on 11 May 2018  GBP 739.9635". Free, on the filing list, and
+    the statement of capital in one number: at a nominal of 0.0005 that is
+    1,479,927 shares. Two SH01s with the same figure are the same statement
+    re-filed (Arcus, 14 May and 10 Jul 2018; 29 May and 5 Jun 2019)."""
+    m = re.search(r"\bGBP\s*([0-9][0-9,]*(?:\.[0-9]+)?)", description or "")
+    return _f(m.group(1)) if m else None
+
+
 def _round_from(reading: Dict, filing: Dict) -> Dict:
     """One filing's reading -> one round row. Nominal issues are marked. The
     reading itself travels with the row, so the ladder can always be rebuilt
@@ -161,10 +172,21 @@ def _round_from(reading: Dict, filing: Dict) -> Dict:
         if price <= 0 or (top_nominal is not None and price <= top_nominal * 1.01):
             nominal_issue = True
     total_after = reading.get("total_shares_after")
+    # The filing list's "GBP x" is the aggregate nominal capital after the
+    # allotment. With the nominal from the form it gives the total in issue
+    # without reading the statement of capital, and it corrects a misread one.
+    cap = filing.get("capital_after")
+    noms_all = [a.get("nominal") for a in allots if a.get("nominal")]
+    implied = None
+    if cap and noms_all and len(set(noms_all)) == 1:
+        implied = int(round(cap / noms_all[0]))
+        if not total_after or abs(total_after - implied) > max(2, 0.005 * implied):
+            total_after = implied
     rd = {
         "date": reading.get("allotment_date") or filing.get("date") or "",
         "filed": filing.get("date") or "",
         "transaction_id": filing.get("transaction_id") or "",
+        "capital_after": cap,
         "shares": shares,
         "classes": sorted({a.get("share_class") or "Ordinary" for a in allots}),
         "price": round(price, 4) if price is not None else None,
@@ -181,6 +203,8 @@ def _round_from(reading: Dict, filing: Dict) -> Dict:
         rd["total_shares_after"] = None
         rd["note"] = f"statement of capital ({total_after:,}) below shares allotted; valuation not derived"
         total_after = None
+    if implied and reading.get("total_shares_after") and total_after == implied and implied != reading.get("total_shares_after"):
+        rd["note"] = f"statement of capital read as {reading['total_shares_after']:,}; the filing list's capital says {implied:,}, used"
     if not nominal_issue and price and total_after:
         rd["post_money"] = round(total_after * price, 2)
         rd["pre_money"] = round(total_after * price - raised, 2)
@@ -188,41 +212,51 @@ def _round_from(reading: Dict, filing: Dict) -> Dict:
 
 
 def _fold_duplicates(rounds: List[Dict]) -> List[Dict]:
-    """The same allotment filed twice is one allotment. Same date, same
-    shares, same price: keep the first filing, note the second on it."""
+    """The same allotment filed twice is one allotment. Same capital after
+    (the filing list's figure), or same date, shares and price: keep the
+    first filing, note the second on it."""
     out: List[Dict] = []
     for r in rounds:
         key = (r["date"], r["shares"], r.get("price"))
-        twin = next((o for o in out if (o["date"], o["shares"], o.get("price")) == key), None)
+        twin = next((o for o in out if (o.get("capital_after") and o.get("capital_after") == r.get("capital_after"))
+                     or (o["date"], o["shares"], o.get("price")) == key), None)
         if twin is not None and r.get("shares"):
-            twin.setdefault("duplicate_filings", []).append({"filed": r.get("filed"), "transaction_id": r.get("transaction_id")})
+            twin.setdefault("duplicate_filings", []).append({"filed": r.get("filed"), "transaction_id": r.get("transaction_id"),
+                                                             "capital_after": r.get("capital_after")})
             twin["note"] = "filed twice (" + ", ".join(d["filed"] for d in twin["duplicate_filings"] if d.get("filed")) + "); counted once"
             continue
         out.append(r)
     return out
 
 
-def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
-    """readings[i] is parse_sh01_text (or the AI fallback) for filings[i]."""
+def build_ladder(readings: List[Dict], filings: List[Dict], reductions: Optional[List[Dict]] = None) -> Dict:
+    """readings[i] is parse_sh01_text (or the AI fallback) for filings[i].
+    `reductions` are capital reductions from the filing list ({"date",
+    "capital"} from an SH19 / RES13): after one, the total in issue may
+    lawfully fall (Arcus, Jan 2024: 2,251,604 -> 1,662,682)."""
     rounds = [_round_from(r, f) for r, f in zip(readings, filings) if r]
-    rounds.sort(key=lambda r: (r["date"], r["filed"]))
+    # Same-day allotments order by the capital after each (the filing list's
+    # figure), so two SH01s dated 11 May 2018 read in the order they happened.
+    rounds.sort(key=lambda r: (r["date"], r.get("capital_after") or 0, r["filed"]))
     all_ids = sorted({r["transaction_id"] for r in rounds if r.get("transaction_id")})
     rounds = _fold_duplicates(rounds)
     # A statement of capital that shows FEWER shares in issue than an earlier
-    # filing did is a misread (or a consolidation we cannot see): the money
-    # still counts, the valuation does not. Arcus: an AI reading of a July
-    # 2018 scan gave 1,295,408 after an earlier one gave 1,479,927.
-    high = 0
+    # filing did is a misread, unless a capital reduction sits between: the
+    # money still counts, the valuation does not.
+    cuts = sorted([x for x in (reductions or []) if x.get("date")], key=lambda x: x["date"])
+    high, hi_date = 0, ""
     for r in rounds:
         t = r.get("total_shares_after")
         if t:
+            if any(hi_date < c["date"] <= r["date"] for c in cuts):
+                high = 0   # a reduction between the last filing and this one resets the floor
             if t < high:
                 r["note"] = f"statement of capital ({t:,}) below an earlier filing's ({high:,}); valuation not derived"
                 r.pop("post_money", None)
                 r.pop("pre_money", None)
                 r["total_inconsistent"] = True
             else:
-                high = t
+                high, hi_date = t, r["date"]
     cum, prev_price, n = 0.0, None, 0
     for r in rounds:
         if r["kind"] == "equity round" and r.get("raised"):
@@ -232,9 +266,9 @@ def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
             # test applies only to small money: GBP 2.5m at a fifth of the
             # last price is a down round (or a misread of the last price),
             # never an option exercise.
-            if r["raised"] < SMALL_ISSUE_GBP:
+            if r["raised"] <= SMALL_ISSUE_GBP:
                 r["kind"] = "small issue"
-                r["note"] = f"raised under GBP {SMALL_ISSUE_GBP:,}; not counted as a round"
+                r["note"] = f"raised GBP {SMALL_ISSUE_GBP:,} or less; not counted as a round"
             elif prev_price and r["price"] < prev_price * OPTION_PRICE_RATIO and r["raised"] < OPTION_EXERCISE_MAX_GBP:
                 r["kind"] = "small issue"
                 r["note"] = f"priced at {r['price']:.2f} against a last round at {prev_price:.2f}; option exercise, not a round"
@@ -261,28 +295,37 @@ def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
         "total_raised": round(cum, 2),
         "last_round": last,
         "filings_seen": all_ids,
+        "reductions": cuts,
     }
 
 
-def merge_ledger(stored: Optional[Dict], new_readings: List[Dict], new_filings: List[Dict]) -> Dict:
+def merge_ledger(stored: Optional[Dict], new_readings: List[Dict], new_filings: List[Dict],
+                 reductions: Optional[List[Dict]] = None, capital_by_id: Optional[Dict[str, float]] = None) -> Dict:
     """Extend a stored ledger with newly read filings. A filing already in
     the ledger is never re-read or duplicated; the whole ladder (numbering,
     cumulative totals, up/down steps) is rebuilt from every filing's reading.
     A filing folded into another as a duplicate keeps its own reading, so
-    the fold is re-decided on every rebuild rather than stored."""
+    the fold is re-decided on every rebuild rather than stored.
+    `capital_by_id` (transaction id -> capital after, from the filing list)
+    lets a stored round that predates the figure pick it up."""
     stored = stored or {}
+    caps = capital_by_id or {}
     new_ids = {f.get("transaction_id") for f in new_filings}
     readings, filings = [], []
     for r in (stored.get("rounds") or []):
         if not r.get("reading") or r.get("transaction_id") in new_ids:
             continue
+        tid = r.get("transaction_id") or ""
         readings.append(r["reading"])
-        filings.append({"date": r.get("filed") or "", "transaction_id": r.get("transaction_id") or ""})
+        filings.append({"date": r.get("filed") or "", "transaction_id": tid,
+                        "capital_after": r.get("capital_after") or caps.get(tid)})
         for d in r.get("duplicate_filings") or []:
             if d.get("transaction_id") and d["transaction_id"] not in new_ids:
                 readings.append(r["reading"])
-                filings.append({"date": d.get("filed") or "", "transaction_id": d["transaction_id"]})
-    out = build_ladder(readings + list(new_readings), filings + list(new_filings))
+                filings.append({"date": d.get("filed") or "", "transaction_id": d["transaction_id"],
+                                "capital_after": d.get("capital_after") or caps.get(d["transaction_id"])})
+    out = build_ladder(readings + list(new_readings), filings + list(new_filings),
+                       reductions=reductions if reductions is not None else stored.get("reductions"))
     if stored.get("fills"):
         out["fills"] = stored["fills"]
     return out
@@ -422,21 +465,47 @@ def get_funding_ladder(company_number: str, company_name: str, stored_json: str 
         # vendor figure is the only way this is wrong, and it is rounded to
         # two decimals of a derived number.
         stored["fills"] = column_fills({**stored, "fills": {}}, {})
-    filings = [f for f in _fetch_filing_history(company_number, category="capital", items=60)
+    history = _fetch_filing_history(company_number, category="capital", items=60)
+    filings = [f for f in history
                if ("allotment" in (f.get("description") or "").lower()
                    or (f.get("type") or "").upper().startswith("SH01"))]
+    for f in filings:
+        f["capital_after"] = capital_from_description(f.get("description") or "")
+    capital_by_id = {f["transaction_id"]: f["capital_after"] for f in filings if f.get("transaction_id") and f.get("capital_after")}
+    # Capital reductions (SH19 statement of capital, RES13 resolution): after
+    # one, a lower total in issue is lawful, not a misread.
+    reductions = [{"date": f.get("date") or "", "capital": capital_from_description(f.get("description") or ""),
+                   "type": f.get("type") or ""}
+                  for f in history
+                  if (f.get("type") or "").upper() == "SH19"
+                  or "reduction" in (f.get("description") or "").lower()]
     todo = [f for f in filings if f.get("transaction_id") and f["transaction_id"] not in seen]
     if not todo:
         if stored and (stored.get("v") or 1) < LEDGER_VERSION:
             # Rules changed: rebuild from the stored readings, free.
-            ledger = merge_ledger(stored, [], [])
+            ledger = merge_ledger(stored, [], [], reductions=reductions, capital_by_id=capital_by_id)
             ledger["parsed_at"] = stored.get("parsed_at") or date.today().isoformat()
             ledger["pending"] = stored.get("pending", 0)
             return {"ledger": ledger, "read": 0, "ai_reads": 0, "skipped": False}
         return {"ledger": stored, "read": 0, "ai_reads": 0, "skipped": True}
     todo.sort(key=lambda f: f.get("date") or "", reverse=True)   # newest first: the recent rounds matter most
+    # A filing whose capital-after matches one already read is the same
+    # statement re-filed: it takes its twin's reading and costs nothing.
+    known: Dict[float, Dict] = {}
+    for r in (stored.get("rounds") or []):
+        cap = r.get("capital_after") or capital_by_id.get(r.get("transaction_id") or "")
+        if cap and r.get("reading"):
+            known[cap] = r["reading"]
     readings, done_filings, reads, ai_reads = [], [], 0, 0
-    for f in todo[:MAX_PDF_READS_PER_RUN]:
+    for f in todo:
+        fd = {"date": f.get("date") or "", "transaction_id": f["transaction_id"], "capital_after": f.get("capital_after")}
+        cap = f.get("capital_after")
+        if cap and cap in known:
+            readings.append(dict(known[cap]))
+            done_filings.append(fd)
+            continue
+        if reads >= MAX_PDF_READS_PER_RUN:
+            continue
         pdf = _download_accounts_pdf(f)
         if not pdf:
             continue
@@ -447,9 +516,11 @@ def get_funding_ladder(company_number: str, company_name: str, stored_json: str 
             r = _ai_read(pdf, company_name)
         if not r:
             continue
+        if cap:
+            known[cap] = r
         readings.append(r)
-        done_filings.append({"date": f.get("date") or "", "transaction_id": f["transaction_id"]})
-    ledger = merge_ledger(stored, readings, done_filings)
+        done_filings.append(fd)
+    ledger = merge_ledger(stored, readings, done_filings, reductions=reductions, capital_by_id=capital_by_id)
     ledger["parsed_at"] = date.today().isoformat()
     ledger["pending"] = max(0, len(todo) - len(done_filings))
     logger.info(f"[Ladder] {company_name}: {len(done_filings)} filing(s) read ({ai_reads} via AI), "
