@@ -39,10 +39,11 @@ ACCOUNTS_FILINGS_FETCHED = 8    # asked of the filing-history endpoint
 ACCOUNTS_FILINGS_PARSED = 5     # actually opened and read
 YEARS_KEPT = 8                  # periods stored in ch_history
 # The wider iXBRL read (services/ixbrl_accounts._CONCEPTS + DERIVED), carried
-# through ch_history so the year store and the card see them. A Gemini PDF
-# parse of a paper filing does not return these; they are simply absent.
+# through ch_history so the year store and the card see them. Since v3 the
+# Gemini PDF fallback returns them too (it asks for the same keys).
 HISTORY_EXTRA_KEYS = ("operating_profit", "ebitda", "depreciation", "amortisation", "staff_costs",
                       "director_pay", "borrowings", "trade_debtors", "trade_creditors")
+CH_HISTORY_VERSION = 3          # SmartEnrich re-parses a history below this once
 
 # The Gemini PDF fallback is capped at the LATEST filing only. Deepening the
 # history must not quietly multiply AI spend: an old paper scan is worth reading
@@ -654,6 +655,20 @@ EXTRACT THE FOLLOWING (set to null if not present in the document):
 9. COMPARATIVE FIGURES — Many UK accounts show current year AND prior year side by side.
    Extract BOTH if available. Label clearly which is current vs prior year.
 
+10. THE WIDER READ (full accounts only; null when the document does not state them):
+   - OPERATING PROFIT — "Operating profit/(loss)" in the P&L (before interest and tax).
+   - DEPRECIATION — "Depreciation of tangible fixed assets" (notes to the operating profit,
+     or the fixed assets note's charge for the year).
+   - AMORTISATION — "Amortisation of intangible assets" (same places). Positive numbers.
+   - STAFF COSTS — the employees note's TOTAL "Wages and salaries + social security + pension"
+     (the total line, "Staff costs" or "Employee benefit expense").
+   - DIRECTORS' REMUNERATION — the TOTAL for all directors (not the highest paid director).
+   - BORROWINGS — total "Bank loans", "Loans and borrowings", "Other loans" across creditors
+     due within AND after one year (sum both; 0 if the balance sheet shows none).
+   - TRADE DEBTORS — "Trade debtors" / "Trade receivables" in the debtors note.
+   - TRADE CREDITORS — "Trade creditors" / "Trade payables" in the creditors note.
+   Do NOT compute EBITDA yourself; we derive it.
+
 IMPORTANT RULES:
 - Only extract numbers that ACTUALLY appear in the document. Do NOT estimate or calculate.
 - All monetary values in raw GBP (e.g., 5000000 for £5M). Do NOT format as strings.
@@ -677,6 +692,14 @@ Return ONLY valid JSON:
     "cash_prior": null or number,
     "employees": null or integer,
     "employees_prior": null or integer,
+    "operating_profit_current": null or number, "operating_profit_prior": null or number,
+    "depreciation_current": null or number, "depreciation_prior": null or number,
+    "amortisation_current": null or number, "amortisation_prior": null or number,
+    "staff_costs_current": null or number, "staff_costs_prior": null or number,
+    "director_pay_current": null or number, "director_pay_prior": null or number,
+    "borrowings_current": null or number, "borrowings_prior": null or number,
+    "trade_debtors_current": null or number, "trade_debtors_prior": null or number,
+    "trade_creditors_current": null or number, "trade_creditors_prior": null or number,
     "period_end_current": "YYYY-MM-DD or null",
     "period_end_prior": "YYYY-MM-DD or null",
     "filing_type": "full or small or micro-entity or abbreviated or medium or filleted or dormant",
@@ -702,6 +725,19 @@ Return ONLY valid JSON:
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
         result = json.loads(text)
+        # EBITDA is derived exactly as the iXBRL path derives it (doctrine
+        # 4af): operating profit + D + A, only when operating profit is read.
+        for suffix in ("current", "prior"):
+            op = result.get(f"operating_profit_{suffix}")
+            if isinstance(op, (int, float)):
+                dep = result.get(f"depreciation_{suffix}") or 0
+                amo = result.get(f"amortisation_{suffix}") or 0
+                result[f"ebitda_{suffix}"] = op + abs(dep) + abs(amo)
+            else:
+                result[f"ebitda_{suffix}"] = None
+        if any(isinstance(result.get(f"operating_profit_{s}"), (int, float)) for s in ("current", "prior")):
+            result["ebitda_basis"] = "operating profit + depreciation + amortisation (read from the filed PDF)"
+        result["_source"] = "pdf_ai"
         logger.info(f"Gemini extracted financials from PDF for {company_name}: "
                      f"revenue={result.get('revenue_current')}, assets={result.get('total_assets_current')}")
         return result
@@ -1287,7 +1323,12 @@ def extract_ch_financials(
     if history:
         # v2 (25 Sep 2026): entries may carry HISTORY_EXTRA_KEYS. The marker
         # lets SmartEnrich re-parse a v1 history once, for free, via iXBRL.
-        result["ch_history"] = json.dumps({"v": 2, "years": history})
+        # v3 (same day): the PDF fallback reads the wider set too, so a
+        # company whose LATEST filing is a scan (Arcus Global FY25) gets
+        # EBIT, staff costs and borrowings from the one AI read it already
+        # pays for. Re-parsing a v2 row costs that one call only when the
+        # latest filing has no iXBRL, and only when SmartEnrich is run on it.
+        result["ch_history"] = json.dumps({"v": CH_HISTORY_VERSION, "years": history})
 
     # Filing type from most recent
     if all_financials and all_financials[0].get("filing_type"):

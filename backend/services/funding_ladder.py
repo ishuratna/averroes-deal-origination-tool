@@ -23,6 +23,23 @@ A NOMINAL ISSUE (paid <= nominal, or paid = 0) is an option exercise, a bonus
 issue or a founder subscription, not a fundraising. It is kept in the ledger,
 marked, and excluded from "raised" and from any valuation.
 
+THREE MORE RULES, learnt on Arcus Global's real filings (25 Sep 2026):
+  * A SMALL ISSUE. 9,000 shares at GBP 1 (Nov 2019) and 333,083 shares at
+    GBP 0.10 (Mar 2026, against a last round at GBP 3.23) are option
+    exercises priced above nominal. Neither is a fundraising, and the first
+    had filled `last_financing_valuation_m` with 2.25. So an allotment that
+    raises under `SMALL_ISSUE_GBP`, or is priced under `OPTION_PRICE_RATIO`
+    of the last equity round's price, is a "small issue": listed, never a
+    round, never a valuation.
+  * A DUPLICATE FILING. The May 2019 round was filed twice (29 May and
+    5 Jun, the same allotment re-submitted); read once each, it doubled the
+    money raised. Readings with the same date, shares and price are one
+    allotment; the later filing is kept as a note on the first.
+  * THE E-FILED LAYOUT. "Number allotted" is also the label the statement
+    of capital uses for each class's total in issue, so section 3 must stop
+    at "Statement of Capital" or every class in issue reads as an allotment
+    with no price (2.3m shares "allotted" in 2026, 333,083 really were).
+
 Everything derived is labelled as derived on the card and traceable to the
 filing (transaction id, date). The ledger is stored once per company
 (`ch_funding_rounds`) and extended only for filings not yet read, so the
@@ -36,9 +53,11 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LEDGER_VERSION = 1
+LEDGER_VERSION = 2             # 2: small-issue rule, duplicate-filing fold, e-filed layout
 MAX_PDF_READS_PER_RUN = 8      # text extraction is free; this bounds the downloads
 MAX_AI_FALLBACKS_PER_RUN = 3   # a scanned SH01 costs one ungrounded Gemini call
+SMALL_ISSUE_GBP = 50_000       # under this, an allotment is not a fundraising
+OPTION_PRICE_RATIO = 0.25      # priced under a quarter of the last round: an option exercise
 
 
 # ── Pure: read one SH01's text ───────────────────────────────────────────────
@@ -70,22 +89,32 @@ def parse_sh01_text(text: str) -> Dict:
     "shares", "nominal", "paid"}], "total_shares_after"} or {} when the text
     carries no allotment block (a scan, or a different form).
     """
-    t = re.sub(r"[ \t]+", " ", text or "")
+    # The e-filed rendition (SH01(ef)) puts every label and its value on
+    # separate lines; the paper form runs them along a line. Folding all
+    # whitespace to one space reads both the same way.
+    t = re.sub(r"\s+", " ", text or "")
     if not t.strip():
         return {}
     out: Dict = {"allotment_date": "", "allotments": [], "total_shares_after": None}
 
     # Section 2: "From Date dd/mm/yyyy" (a range when shares were allotted
-    # over several days; the FROM date is the round's date).
-    m = re.search(r"From\s*(?:Date)?\s*:?\s*" + _DATE, t, re.I)
+    # over several days; the FROM date is the round's date). The e-filed
+    # layout prints the labels "From" and "To" before either date.
+    m = re.search(r"From\s*(?:Date)?\s*:?\s*(?:To\s*(?:Date)?\s*:?\s*)?" + _DATE, t, re.I)
     if not m:
         m = re.search(r"allot(?:ment|ted)\s+(?:date|on)\s*:?\s*" + _DATE, t, re.I)
     if m:
         out["allotment_date"] = _iso(m.group(1), m.group(2), m.group(3))
 
-    # Section 3: one block per class. Split on "Class of shares" and read the
-    # three labelled figures inside each block.
-    blocks = re.split(r"Class\s+of\s+shares?", t, flags=re.I)
+    # Section 3 ends where the statement of capital begins. The statement
+    # lists every class IN ISSUE under the same "Number allotted" label the
+    # e-filed form uses for the allotment, so it must be cut off first.
+    cut = re.search(r"Statement\s+of\s+Capital", t, re.I)
+    section3, section4 = (t[:cut.start()], t[cut.start():]) if cut else (t, t)
+
+    # One block per class. Split on "Class of shares" and read the three
+    # labelled figures inside each block.
+    blocks = re.split(r"Class\s+of\s+shares?", section3, flags=re.I)
     for blk in blocks[1:]:
         head = blk[:400]
         cls = re.match(r"\s*(?:allotted)?\s*:?\s*([A-Za-z0-9 \-'&/]+?)(?=\s+(?:Currency|Number|Nominal|$))", head, re.I)
@@ -93,9 +122,7 @@ def parse_sh01_text(text: str) -> Dict:
         cur = re.search(r"Currency\s*:?\s*([A-Z]{3})", blk)
         n = re.search(r"Number\s+(?:of\s+shares\s+)?allotted\s*:?\s*" + _NUM, blk, re.I)
         nom = re.search(r"Nominal\s+value\s+(?:of\s+)?(?:each\s+)?share\s*:?\s*(?:[A-Z]{3}\s*)?" + _NUM, blk, re.I)
-        paid = re.search(r"Amount\s+paid\s*\(including\s+(?:any\s+)?share\s+premium\)\s*(?:on\s+each\s+share)?\s*:?\s*(?:[A-Z]{3}\s*)?" + _NUM, blk, re.I)
-        if not paid:
-            paid = re.search(r"Amount\s+paid\s+(?:on\s+each\s+share)?\s*:?\s*(?:[A-Z]{3}\s*)?" + _NUM, blk, re.I)
+        paid = re.search(r"Amount\s+paid\s*(?:\(including\s+(?:any\s+)?share\s+premium\))?\s*(?:on\s+each\s+share)?\s*:?\s*(?:[A-Z]{3}\s*)?" + _NUM, blk, re.I)
         shares = _f(n.group(1)) if n else None
         if not shares:
             continue
@@ -108,7 +135,7 @@ def parse_sh01_text(text: str) -> Dict:
         })
 
     # Section 4: the statement of capital's total after the allotment.
-    m = re.search(r"Total\s+number\s+of\s+shares\s*:?\s*" + _NUM, t, re.I)
+    m = re.search(r"Total\s+number\s+of\s+shares\s*:?\s*" + _NUM, section4, re.I)
     if m:
         out["total_shares_after"] = int(_f(m.group(1)) or 0) or None
 
@@ -147,19 +174,56 @@ def _round_from(reading: Dict, filing: Dict) -> Dict:
         "reading": {"allotment_date": reading.get("allotment_date") or "", "allotments": allots,
                     "total_shares_after": total_after, "_source": reading.get("_source") or "text"},
     }
+    # A total in issue smaller than the shares just allotted is a misread
+    # (or a statement for one class only): no valuation can rest on it.
+    if total_after and shares and total_after < shares:
+        rd["total_shares_after"] = None
+        rd["note"] = f"statement of capital ({total_after:,}) below shares allotted; valuation not derived"
+        total_after = None
     if not nominal_issue and price and total_after:
         rd["post_money"] = round(total_after * price, 2)
         rd["pre_money"] = round(total_after * price - raised, 2)
     return rd
 
 
+def _fold_duplicates(rounds: List[Dict]) -> List[Dict]:
+    """The same allotment filed twice is one allotment. Same date, same
+    shares, same price: keep the first filing, note the second on it."""
+    out: List[Dict] = []
+    for r in rounds:
+        key = (r["date"], r["shares"], r.get("price"))
+        twin = next((o for o in out if (o["date"], o["shares"], o.get("price")) == key), None)
+        if twin is not None and r.get("shares"):
+            twin.setdefault("duplicate_filings", []).append({"filed": r.get("filed"), "transaction_id": r.get("transaction_id")})
+            twin["note"] = "filed twice (" + ", ".join(d["filed"] for d in twin["duplicate_filings"] if d.get("filed")) + "); counted once"
+            continue
+        out.append(r)
+    return out
+
+
 def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
     """readings[i] is parse_sh01_text (or the AI fallback) for filings[i]."""
     rounds = [_round_from(r, f) for r, f in zip(readings, filings) if r]
     rounds.sort(key=lambda r: (r["date"], r["filed"]))
+    all_ids = sorted({r["transaction_id"] for r in rounds if r.get("transaction_id")})
+    rounds = _fold_duplicates(rounds)
     cum, prev_price, n = 0.0, None, 0
     for r in rounds:
         if r["kind"] == "equity round" and r.get("raised"):
+            # The small-issue rule: an option exercise is priced above nominal
+            # but far below the last round, and raises very little. Neither
+            # is a fundraising and neither may set a valuation.
+            if r["raised"] < SMALL_ISSUE_GBP:
+                r["kind"] = "small issue"
+                r["note"] = f"raised under GBP {SMALL_ISSUE_GBP:,}; not counted as a round"
+            elif prev_price and r["price"] < prev_price * OPTION_PRICE_RATIO:
+                r["kind"] = "small issue"
+                r["note"] = f"priced at {r['price']:.2f} against a last round at {prev_price:.2f}; option exercise, not a round"
+            if r["kind"] == "small issue":
+                r.pop("post_money", None)
+                r.pop("pre_money", None)
+                r["cumulative_raised"] = round(cum, 2)
+                continue
             n += 1
             r["round_no"] = n
             cum += r["raised"]
@@ -177,41 +241,72 @@ def build_ladder(readings: List[Dict], filings: List[Dict]) -> Dict:
         "equity_rounds": len(equity),
         "total_raised": round(cum, 2),
         "last_round": last,
-        "filings_seen": sorted({r["transaction_id"] for r in rounds if r.get("transaction_id")}),
+        "filings_seen": all_ids,
     }
 
 
 def merge_ledger(stored: Optional[Dict], new_readings: List[Dict], new_filings: List[Dict]) -> Dict:
     """Extend a stored ledger with newly read filings. A filing already in
     the ledger is never re-read or duplicated; the whole ladder (numbering,
-    cumulative totals, up/down steps) is rebuilt from every filing's reading."""
+    cumulative totals, up/down steps) is rebuilt from every filing's reading.
+    A filing folded into another as a duplicate keeps its own reading, so
+    the fold is re-decided on every rebuild rather than stored."""
     stored = stored or {}
     new_ids = {f.get("transaction_id") for f in new_filings}
-    kept = [r for r in (stored.get("rounds") or []) if r.get("reading") and r.get("transaction_id") not in new_ids]
-    readings = [r["reading"] for r in kept] + list(new_readings)
-    filings = [{"date": r.get("filed") or "", "transaction_id": r.get("transaction_id") or ""} for r in kept] + list(new_filings)
-    return build_ladder(readings, filings)
+    readings, filings = [], []
+    for r in (stored.get("rounds") or []):
+        if not r.get("reading") or r.get("transaction_id") in new_ids:
+            continue
+        readings.append(r["reading"])
+        filings.append({"date": r.get("filed") or "", "transaction_id": r.get("transaction_id") or ""})
+        for d in r.get("duplicate_filings") or []:
+            if d.get("transaction_id") and d["transaction_id"] not in new_ids:
+                readings.append(r["reading"])
+                filings.append({"date": d.get("filed") or "", "transaction_id": d["transaction_id"]})
+    out = build_ladder(readings + list(new_readings), filings + list(new_filings))
+    if stored.get("fills"):
+        out["fills"] = stored["fills"]
+    return out
 
 
 def column_fills(ledger: Dict, row: Dict) -> Dict:
     """Fill-only suggestions for the legacy financing columns: a number the
     row already holds (Gain, PitchBook, a founder's document) is never
-    replaced by a derivation. Values in GBP millions where the column says so."""
+    replaced by a derivation. Values in GBP millions where the column says so.
+
+    OUR OWN EARLIER DERIVATION IS NOT SUCH A NUMBER. `ledger["fills"]`
+    records what the ladder itself wrote last time; a column still holding
+    exactly that value is treated as empty, so a corrected ladder can
+    correct its own fill (Arcus: a GBP 9k option exercise had set
+    `last_financing_valuation_m = 2.25`). A value anyone else wrote is left."""
     fills: Dict = {}
     if not ledger or not ledger.get("equity_rounds"):
         return fills
+    ours = ledger.get("fills") or {}
+
+    def empty(col):
+        v = row.get(col)
+        if v in (None, 0, 0.0, ""):
+            return True
+        if col in ours:
+            try:
+                return v == ours[col] or float(v) == float(ours[col])
+            except (TypeError, ValueError):
+                return v == ours[col]
+        return False
+
     last = ledger.get("last_round") or {}
-    if row.get("total_raised_m") in (None, 0, 0.0) and ledger.get("total_raised"):
+    if empty("total_raised_m") and ledger.get("total_raised"):
         fills["total_raised_m"] = round(ledger["total_raised"] / 1e6, 2)
-    if not row.get("last_financing_date") and last.get("date"):
+    if empty("last_financing_date") and last.get("date"):
         fills["last_financing_date"] = last["date"]
-    if row.get("last_financing_size_m") in (None, 0, 0.0) and last.get("raised"):
+    if empty("last_financing_size_m") and last.get("raised"):
         fills["last_financing_size_m"] = round(last["raised"] / 1e6, 2)
-    if not row.get("last_financing_type") and last:
+    if empty("last_financing_type") and last:
         fills["last_financing_type"] = "Equity (SH01 allotment)"
-    if row.get("last_financing_valuation_m") in (None, 0, 0.0) and last.get("post_money"):
+    if empty("last_financing_valuation_m") and last.get("post_money"):
         fills["last_financing_valuation_m"] = round(last["post_money"] / 1e6, 2)
-    if not row.get("last_valuation_date") and last.get("post_money"):
+    if empty("last_valuation_date") and last.get("post_money"):
         fills["last_valuation_date"] = last["date"]
     return fills
 
@@ -270,11 +365,23 @@ def get_funding_ladder(company_number: str, company_name: str, stored_json: str 
     except Exception:
         stored = {}
     seen = set(stored.get("filings_seen") or [])
+    if stored and (stored.get("v") or 1) < LEDGER_VERSION and "fills" not in stored:
+        # A v1 ledger never recorded what it filled. Whatever v1's rules
+        # would have written is ours to correct; a coincidence with a
+        # vendor figure is the only way this is wrong, and it is rounded to
+        # two decimals of a derived number.
+        stored["fills"] = column_fills({**stored, "fills": {}}, {})
     filings = [f for f in _fetch_filing_history(company_number, category="capital", items=60)
                if ("allotment" in (f.get("description") or "").lower()
                    or (f.get("type") or "").upper().startswith("SH01"))]
     todo = [f for f in filings if f.get("transaction_id") and f["transaction_id"] not in seen]
     if not todo:
+        if stored and (stored.get("v") or 1) < LEDGER_VERSION:
+            # Rules changed: rebuild from the stored readings, free.
+            ledger = merge_ledger(stored, [], [])
+            ledger["parsed_at"] = stored.get("parsed_at") or date.today().isoformat()
+            ledger["pending"] = stored.get("pending", 0)
+            return {"ledger": ledger, "read": 0, "ai_reads": 0, "skipped": False}
         return {"ledger": stored, "read": 0, "ai_reads": 0, "skipped": True}
     todo.sort(key=lambda f: f.get("date") or "", reverse=True)   # newest first: the recent rounds matter most
     readings, done_filings, reads, ai_reads = [], [], 0, 0

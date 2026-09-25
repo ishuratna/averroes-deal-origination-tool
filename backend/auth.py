@@ -45,7 +45,7 @@ EXEMPT_PATHS = {"/", "/auth/config", "/auth/session", "/ch-watch/run", "/enrich-
 # guessed a company name, revealing which companies are in the pipeline. It
 # was exempt only because a plain <a href> cannot carry an auth header; the
 # frontend now fetches it via dealApi.openChFilingPdf and opens a blob.
-EXEMPT_PREFIXES = ("/diag/deep/", "/admin/archive/history/", "/admin/smartenrich/")
+EXEMPT_PREFIXES = ("/diag/deep/", "/admin/archive/history/", "/admin/smartenrich/", "/admin/funding-ladder/")
 
 # ── 12-hour session tokens ────────────────────────────────────────────────────
 # Google ID tokens expire after 1 hour, which interrupted long bulk runs.

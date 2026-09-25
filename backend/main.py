@@ -2034,12 +2034,21 @@ async def diag_deep(company_name: str, request: Request,
         # to ixbrl_accounts._CONCEPTS (Arcus parity check, 25 Sep 2026).
         from services.ixbrl_accounts import fetch_ixbrl, _num, _local
         from bs4 import BeautifulSoup
-        filings = chs._get_accounts_filings(number, max_items=1)
+        filings = chs._get_accounts_filings(number, max_items=4)
         if not filings:
             return {"step": "ixbrl concepts", "error": "no accounts filing"}
-        x = fetch_ixbrl(filings[0])
+        x, used, skipped = None, None, []
+        for f in filings:
+            x = fetch_ixbrl(f)
+            if x:
+                used = f
+                break
+            skipped.append(f.get("date"))
         if not x:
-            return {"step": "ixbrl concepts", "error": "latest filing has no iXBRL rendition"}
+            return {"step": "ixbrl concepts", "error": "none of the newest filings has an iXBRL rendition", "tried": skipped}
+        filings = [used]
+        if skipped:
+            logger.info(f"[diag] ixbrl: newest filing(s) {skipped} are scans; reading {used.get('date')}")
         soup = BeautifulSoup(x, "html.parser")
         ends = {}
         for ctx in soup.find_all(lambda t: t.name and t.name.endswith("context")):
@@ -2051,7 +2060,7 @@ async def diag_deep(company_name: str, request: Request,
             c = _local(tag.get("name") or "")
             when, dim = ends.get(tag.get("contextref") or "", ("", False))
             facts.setdefault(c, []).append([when, _num(tag), "dim" if dim else ""])
-        return {"step": "ixbrl concepts", "filing": filings[0].get("date"), "concepts": facts}
+        return {"step": "ixbrl concepts", "filing": filings[0].get("date"), "scans_skipped": skipped, "concepts": facts}
     if step == "sh01text":
         # The extracted text of the newest capital filings, so the SH01 text
         # parser can be written against the real layout.
@@ -3010,14 +3019,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             chg = get_charges_detail(_num)
             sets, prm = [], [bq_lib.ScalarQueryParameter("name", "STRING", company_name)]
             if not lad.get("skipped"):
-                sets.append("ch_funding_rounds = @fr")
-                prm.append(bq_lib.ScalarQueryParameter("fr", "STRING", json.dumps(lad["ledger"])))
-                for col, val in column_fills(lad["ledger"], company_data).items():
-                    typ = "STRING" if col in ("last_financing_date", "last_financing_type", "last_valuation_date") else "FLOAT64"
-                    sets.append(f"{col} = @lad_{col}")
-                    prm.append(bq_lib.ScalarQueryParameter(f"lad_{col}", typ, val))
-                if lad.get("ai_reads"):
-                    bq_handler.log_smartfill(company_name, kind="sh01")
+                _s, _p, _ = _ladder_write(lad, company_data, company_name)
+                sets += _s
+                prm += _p
             if chg:
                 sets.append("ch_charges = @chg")
                 prm.append(bq_lib.ScalarQueryParameter("chg", "STRING", json.dumps(chg)))
@@ -3445,6 +3449,63 @@ async def smartenrich_company_admin(request: Request, company_name: str):
     return await smartenrich_company(company_name)
 
 
+def _ladder_write(lad: dict, company: dict, company_name: str):
+    """The ONE way a funding-ladder result becomes SET clauses (SmartFill,
+    SmartEnrich and the admin ladder run all land here). Records in the
+    ledger what the ladder itself filled, so a later correction may replace
+    its own derivation and never anyone else's number (doctrine 4af)."""
+    from services.funding_ladder import column_fills
+    ledger = lad["ledger"]
+    fills = column_fills(ledger, company)
+    ledger["fills"] = {**(ledger.get("fills") or {}), **fills}
+    sets = ["ch_funding_rounds = @ch_funding_rounds"]
+    params = [bq_lib.ScalarQueryParameter("ch_funding_rounds", "STRING", json.dumps(ledger))]
+    for col, val in fills.items():
+        typ = "STRING" if col in ("last_financing_date", "last_financing_type", "last_valuation_date") else "FLOAT64"
+        sets.append(f"{col} = @lad_{col}")
+        params.append(bq_lib.ScalarQueryParameter(f"lad_{col}", typ, val))
+    if lad.get("ai_reads"):
+        bq_handler.log_smartfill(company_name, kind="sh01")
+    action = (f"funding ladder: {lad['read']} SH01 filing(s) read, {ledger.get('equity_rounds', 0)} equity round(s)"
+              + (f", {lad['ai_reads']} via AI" if lad.get("ai_reads") else "")
+              + (f", {ledger.get('pending')} filing(s) still to read" if ledger.get("pending") else "")
+              + (f", filled {', '.join(fills)}" if fills else ""))
+    return sets, params, action
+
+
+@app.post("/admin/funding-ladder/{company_name}")
+async def admin_funding_ladder(request: Request, company_name: str):
+    """Run ONLY the funding ladder step for one company (token). Each run
+    reads up to MAX_PDF_READS_PER_RUN filings, MAX_AI_FALLBACKS_PER_RUN of
+    them by AI, so a company with a long paper history (Arcus: 16 scanned
+    SH01s) is drained over a few calls without re-running all of SmartEnrich.
+    Same write as SmartEnrich step 2c, via `_ladder_write`."""
+    _require_token(request)
+    from services.funding_ladder import get_funding_ladder
+    company = bq_handler.get_company_full(company_name)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
+    number = company.get("ch_company_number")
+    if not number:
+        raise HTTPException(status_code=400, detail="No Companies House number on the row")
+    lad = get_funding_ladder(number, company_name, stored_json=company.get("ch_funding_rounds") or "")
+    if lad.get("skipped"):
+        return {"success": True, "company": company_name, "action": "nothing new to read",
+                "pending": (lad["ledger"] or {}).get("pending", 0)}
+    sets, params, action = _ladder_write(lad, company, company_name)
+    params.append(bq_lib.ScalarQueryParameter("name", "STRING", company_name))
+    bq_handler.client.query(f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                            job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+    bq_handler.add_activity_note(company_name, f"SmartEnrich (ladder only): {action}", created_by="smartenrich")
+    L = lad["ledger"]
+    return {"success": True, "company": company_name, "action": action, "pending": L.get("pending", 0),
+            "equity_rounds": L.get("equity_rounds"), "total_raised": L.get("total_raised"),
+            "fills": L.get("fills"),
+            "rounds": [{k: r.get(k) for k in ("date", "filed", "shares", "price", "raised", "total_shares_after",
+                                              "post_money", "kind", "source", "round_no", "note")}
+                       for r in L.get("rounds") or []]}
+
+
 @app.get("/admin/company")
 async def admin_company(request: Request, name: str = Query(...)):
     """One company's full row plus its year store, for a parity check from
@@ -3624,20 +3685,10 @@ async def smartenrich_company(company_name: str):
             from services.funding_ladder import get_funding_ladder, column_fills
             lad = get_funding_ladder(number, company_name, stored_json=company.get("ch_funding_rounds") or "")
             if not lad.get("skipped"):
-                ledger = lad["ledger"]
-                set_clauses.append("ch_funding_rounds = @ch_funding_rounds")
-                params.append(bq_lib.ScalarQueryParameter("ch_funding_rounds", "STRING", json.dumps(ledger)))
-                fills = column_fills(ledger, company)
-                for col, val in fills.items():
-                    typ = "STRING" if col in ("last_financing_date", "last_financing_type", "last_valuation_date") else "FLOAT64"
-                    set_clauses.append(f"{col} = @lad_{col}")
-                    params.append(bq_lib.ScalarQueryParameter(f"lad_{col}", typ, val))
-                actions.append(f"funding ladder: {lad['read']} SH01 filing(s) read, "
-                               f"{ledger.get('equity_rounds', 0)} equity round(s)"
-                               + (f", {lad['ai_reads']} via AI" if lad.get("ai_reads") else "")
-                               + (f", filled {', '.join(fills)}" if fills else ""))
-                if lad.get("ai_reads"):
-                    bq_handler.log_smartfill(company_name, kind="sh01")
+                _s, _p, _a = _ladder_write(lad, company, company_name)
+                set_clauses += _s
+                params += _p
+                actions.append(_a)
         except Exception as e:
             logger.warning(f"[SmartEnrich] funding ladder failed for {company_name} (non-fatal): {e}")
 
@@ -3659,7 +3710,12 @@ async def smartenrich_company(company_name: str):
         filings = _get_accounts_filings(number, max_items=1)
         latest_filing_date = filings[0].get("date", "") if filings else ""
         known_date = company.get("revenue_y1_date") or ""
-        needs_history = not company.get("ch_history") or '"v": 2' not in (company.get("ch_history") or "")
+        from services.companies_house_service import CH_HISTORY_VERSION
+        try:
+            _hv = int((json.loads(company.get("ch_history") or "{}") or {}).get("v") or 1)
+        except Exception:
+            _hv = 1
+        needs_history = not company.get("ch_history") or _hv < CH_HISTORY_VERSION
         if latest_filing_date and (latest_filing_date > known_date or needs_history):
             # `number` (above) is already the CH-verified identity for this
             # row — never re-derive it by name here. Re-searching on every

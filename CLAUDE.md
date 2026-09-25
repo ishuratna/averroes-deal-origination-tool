@@ -664,6 +664,35 @@ mistake is both visible and correctable. This one logged nothing, which is why
   PitchBook or document figure is never replaced by a derivation.
   `tests_funding_ladder.py` checks the derivation against Mark to Market's
   independent reading of Arcus Round 6 (GBP 3.23 a share, ~GBP 7.27m post).
+  THE PARITY CHECK (same day, against the live row) found three faults,
+  none of which threw: (1) THE E-FILED LAYOUT. SH01(ef) prints "Number
+  allotted" for every class IN ISSUE in the statement of capital too, so
+  section 3 is cut at "Statement of Capital" or 2.3m shares read as a new
+  allotment. Labels and values sit on separate lines; all whitespace is
+  folded before matching. (2) A DUPLICATE FILING. The May 2019 return was
+  accepted on 29 May and again on 5 Jun; two readings, one allotment,
+  total raised doubled. `_fold_duplicates` keeps one per (date, shares,
+  price) and notes the twin; both ids stay in `filings_seen`. (3) SMALL
+  ISSUES. 9,000 shares at GBP 1 and 333,083 at GBP 0.10 are option
+  exercises priced above nominal; the first had set
+  `last_financing_valuation_m = 2.25`. Under `SMALL_ISSUE_GBP` (50k) or
+  under `OPTION_PRICE_RATIO` (a quarter) of the last round's price is a
+  "small issue": listed, never a round, never a valuation. A statement
+  total below the shares allotted derives no valuation either.
+  THE LADDER MAY CORRECT ITS OWN FILL AND NOBODY ELSE'S. `ledger["fills"]`
+  records what `column_fills` wrote; `_ladder_write` in main.py is the one
+  place a ladder result becomes SET clauses (SmartFill, SmartEnrich,
+  `POST /admin/funding-ladder/{name}`), and a column still holding exactly
+  our earlier derivation counts as empty. `LEDGER_VERSION` bumps trigger a
+  free rebuild from the stored readings on the next run. A v1 ledger with
+  no `fills` is credited with whatever v1's rules would have written.
+  THE PDF FALLBACK READS THE WIDER SET TOO (`CH_HISTORY_VERSION = 3`).
+  Arcus's FY25 accounts have no iXBRL rendition, so the wider fields were
+  empty for exactly the year that mattered; the Gemini prompt now asks for
+  the same keys and derives EBITDA the same way (`ebitda_basis` says
+  "read from the filed PDF"). Re-parsing a v2 row costs one AI call only
+  when the latest filing is a scan, and only when SmartEnrich runs on it.
+  Diag `?step=ixbrl` walks past scanned filings to the newest tagged one.
 - THE DEBT LINE (`get_charges_detail`, `ch_charges`): the charges register
   in full (lender, created, status, satisfied). The card names the lenders
   NOW and flags a REFINANCING, a charge satisfied within 30 days of a new
