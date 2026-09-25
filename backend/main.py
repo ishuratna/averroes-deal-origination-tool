@@ -3401,6 +3401,30 @@ async def smartfill_auto_run(request: Request):
     }
 
 
+@app.post("/admin/smartenrich/{company_name}")
+async def smartenrich_company_admin(request: Request, company_name: str):
+    """Token alias of SmartEnrich for ops (doctrine 6a: one handler, two
+    routes). Added 25 Sep 2026 for the Mark to Market parity check on Arcus."""
+    _require_token(request)
+    return await smartenrich_company(company_name)
+
+
+@app.get("/admin/company")
+async def admin_company(request: Request, name: str = Query(...)):
+    """One company's full row plus its year store, for a parity check from
+    a terminal. Read-only. Token."""
+    _require_token(request)
+    row = bq_handler.get_company_full(name)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Company '{name}' not found")
+    cells = bq_handler.get_financials(name)
+    # Long free text is truncated: this is a numbers check, not a read.
+    for k in ("description", "ic_memo", "outreach_draft_body", "action_reply_body", "action_rationale"):
+        if isinstance(row.get(k), str) and len(row[k]) > 300:
+            row[k] = row[k][:300] + "..."
+    return {"company": row, "financial_cells": cells}
+
+
 @app.post("/smartenrich/{company_name}")
 async def smartenrich_company(company_name: str):
     """
