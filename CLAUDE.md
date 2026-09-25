@@ -641,6 +641,54 @@ mistake is both visible and correctable. This one logged nothing, which is why
   (`finColumns`). The legacy `revenue_y1..y3` fallback in the chart is gone;
   those columns are a projection of the store and cannot disagree with it.
 
+## 4af. The register says more than we were reading (the Mark to Market audit)
+
+- Ishu compared Arcus Global on Mark to Market with our card (25 Sep 2026).
+  Nearly everything they show is DERIVED from Companies House filings we
+  already download; the gap was computation and presentation, not access.
+  Three things were built from it, all traceable to a filing, none a vendor
+  number: the FUNDING LADDER, the DEBT LINE, and the WIDER ACCOUNTS READ.
+- THE FUNDING LADDER (`services/funding_ladder.py`, `ch_funding_rounds`).
+  An SH01 states shares allotted, nominal value and amount paid per share,
+  then the total shares in issue after. So raised = shares x paid, price =
+  raised / shares, post-money = total after x price, pre = post - raised.
+  READ FROM THE FILING TEXT (pymupdf), ZERO AI; a scanned form falls back to
+  one ungrounded Gemini read, bounded (`MAX_AI_FALLBACKS_PER_RUN = 3`) and
+  logged as kind `sh01`. A NOMINAL ISSUE (paid <= nominal: options, bonus
+  shares, founder subscription) is listed, marked, and excluded from raised
+  and from any valuation. The ledger is incremental (`filings_seen`); each
+  filing is read once, ever, and each round carries its own `reading` so
+  the whole ladder is rebuilt from the filings' figures, never from a stored
+  derivation. `column_fills` writes `total_raised_m`, `last_financing_*`,
+  `last_financing_valuation_m`, `last_valuation_date` FILL-ONLY: a Gain,
+  PitchBook or document figure is never replaced by a derivation.
+  `tests_funding_ladder.py` checks the derivation against Mark to Market's
+  independent reading of Arcus Round 6 (GBP 3.23 a share, ~GBP 7.27m post).
+- THE DEBT LINE (`get_charges_detail`, `ch_charges`): the charges register
+  in full (lender, created, status, satisfied). The card names the lenders
+  NOW and flags a REFINANCING, a charge satisfied within 30 days of a new
+  one appearing (Arcus: SaaS Capital out, Gilion in, August 2026). Net debt
+  is borrowings minus cash from the accounts, derived in the view.
+- THE WIDER READ (`ixbrl_accounts._CONCEPTS`): operating profit (EBIT),
+  depreciation, amortisation, staff costs, director remuneration,
+  borrowings, trade debtors and creditors. EBITDA is DERIVED (EBIT + D + A)
+  only when operating profit is tagged, and `ebitda_basis` says so. Two
+  rules learnt writing it: (1) DIMENSIONAL CONTEXTS. Director pay is tagged
+  per director AND in total; "first fact wins" took a slice. A fact whose
+  context carries an explicitMember/typedMember is a slice and only ever a
+  fallback; a total for the same period replaces it. (2) A tagged ZERO is
+  kept for borrowings (debt-free is a fact) and dropped elsewhere (a nil is
+  "unknown"): `_HISTORY_KEEP_ZERO` in doc_smartfill. The keys travel via
+  `HISTORY_EXTRA_KEYS` into `ch_history` (marker `"v": 2`; SmartEnrich
+  re-parses a v1 history once, free) and via `cells_from_history` into the
+  year store, where they are ordinary metrics (`ebit`, `staff_costs`,
+  `director_pay`, `borrowings`, `trade_debtors`, `trade_creditors`).
+  Margins, net debt and debtor/creditor days are DERIVED ROWS in `FinGrid`,
+  computed in the view from two stored figures and never stored (doctrine 1).
+- NOT built, on purpose: web-traffic estimates and composite growth scores
+  (third-party estimates, not filings; our own growth signals already cover
+  headcount and revenue).
+
 ## 4ad. Sources with a JSON API: list fast, profile within a time box
 
 - Enterprise Ireland's directory (`scrapers/enterprise_ireland_scraper.py`,

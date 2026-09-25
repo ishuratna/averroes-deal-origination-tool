@@ -111,9 +111,19 @@ METRICS: Dict[str, Tuple[str, str]] = {
     "total_assets":      ("GBP",   "Total assets"),
     "employees":         ("count", "Employees"),
     "customers":         ("count", "Customers"),
+    # From the wider Companies House read (25 Sep 2026): EBIT is the tagged
+    # operating profit; ebitda above is filled from the filing too when it
+    # can be derived. Borrowings and the trade balances feed the derived
+    # net-debt and debtor/creditor-day rows on the card.
+    "ebit":              ("GBP",   "EBIT (operating profit)"),
+    "staff_costs":       ("GBP",   "Staff costs"),
+    "director_pay":      ("GBP",   "Directors' pay"),
+    "borrowings":        ("GBP",   "Borrowings"),
+    "trade_debtors":     ("GBP",   "Trade debtors"),
+    "trade_creditors":   ("GBP",   "Trade creditors"),
 }
 _METRIC_SIGNED = {"gross_profit", "gross_margin_pct", "ebitda", "ebitda_margin_pct",
-                  "profit_before_tax", "net_income", "net_assets"}
+                  "profit_before_tax", "net_income", "net_assets", "ebit"}
 BASES = ("actual", "budget", "forecast")
 
 # Legacy projection: metric -> the column for slot 1/2/3 (None = no column).
@@ -178,7 +188,14 @@ def cells_from_columns(row: Dict, source: str) -> List[Dict]:
 # ch_history keys -> store metrics. `profit` in the history is profit before tax.
 _HISTORY_METRICS = {"revenue": "revenue", "gross_profit": "gross_profit", "profit": "profit_before_tax",
                     "total_assets": "total_assets", "net_assets": "net_assets", "cash": "cash",
-                    "employees": "employees"}
+                    "employees": "employees",
+                    "operating_profit": "ebit", "ebitda": "ebitda", "staff_costs": "staff_costs",
+                    "director_pay": "director_pay", "borrowings": "borrowings",
+                    "trade_debtors": "trade_debtors", "trade_creditors": "trade_creditors"}
+# Signed metrics may legitimately be zero or negative; unsigned ones drop a 0
+# (a filer's nil is "unknown", not a fact) - except borrowings, where a tagged
+# 0 means debt-free and is worth showing.
+_HISTORY_KEEP_ZERO = {"profit_before_tax", "net_assets", "ebit", "ebitda", "borrowings"}
 
 
 def cells_from_history(row: Dict, source: str = "Companies House") -> List[Dict]:
@@ -202,7 +219,7 @@ def cells_from_history(row: Dict, source: str = "Companies House") -> List[Dict]
             if y.get(k) is None:
                 continue
             v = _num(y.get(k), signed=True)
-            if v is None or (v == 0 and m not in ("profit_before_tax", "net_assets")):
+            if v is None or (v == 0 and m not in _HISTORY_KEEP_ZERO):
                 continue
             cells.append({"period_end": d, "metric": m, "segment": "", "value": v,
                           "unit": "count" if m == "employees" else "GBP", "basis": "actual",

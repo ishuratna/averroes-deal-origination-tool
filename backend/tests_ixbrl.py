@@ -85,5 +85,33 @@ chk("filleted (no revenue tag) still yields the balance sheet", got2.get("cash_c
 chk("...with revenue honestly null", got2.get("revenue_current"), None)
 
 print()
+print("── The wider read (25 Sep 2026): EBIT, EBITDA derived, staff, directors, borrowings ──")
+WIDE = """<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"><body>
+<xbrli:context id="CUR"><xbrli:period><xbrli:startDate>2024-07-01</xbrli:startDate><xbrli:endDate>2025-06-30</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="CURBAL"><xbrli:period><xbrli:instant>2025-06-30</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="DIR1"><xbrli:entity><xbrli:segment><xbrldi:explicitMember dimension="d:Dirs">d:Director1</xbrldi:explicitMember></xbrli:segment></xbrli:entity>
+  <xbrli:period><xbrli:startDate>2024-07-01</xbrli:startDate><xbrli:endDate>2025-06-30</xbrli:endDate></xbrli:period></xbrli:context>
+<ix:nonFraction name="core:TurnoverRevenue" contextRef="CUR" unitRef="GBP" decimals="0">6993811</ix:nonFraction>
+<ix:nonFraction name="core:OperatingProfitLoss" contextRef="CUR" unitRef="GBP" decimals="0">455634</ix:nonFraction>
+<ix:nonFraction name="core:DepreciationExpense" contextRef="CUR" unitRef="GBP" decimals="0">31347</ix:nonFraction>
+<ix:nonFraction name="core:AmortisationExpense" contextRef="CUR" unitRef="GBP" decimals="0">624053</ix:nonFraction>
+<ix:nonFraction name="core:DirectorRemuneration" contextRef="DIR1" unitRef="GBP" decimals="0">200000</ix:nonFraction>
+<ix:nonFraction name="core:DirectorRemuneration" contextRef="CUR" unitRef="GBP" decimals="0">567138</ix:nonFraction>
+<ix:nonFraction name="core:StaffCostsEmployeeBenefitsExpense" contextRef="CUR" unitRef="GBP" decimals="0">4878462</ix:nonFraction>
+<ix:nonFraction name="core:Borrowings" contextRef="CURBAL" unitRef="GBP" decimals="0">1665701</ix:nonFraction>
+<ix:nonFraction name="core:CashBankOnHand" contextRef="CURBAL" unitRef="GBP" decimals="0">1921468</ix:nonFraction>
+<ix:nonFraction name="core:TradeDebtorsTradeReceivables" contextRef="CURBAL" unitRef="GBP" decimals="0">1200000</ix:nonFraction>
+</body></html>"""
+w = parse_ixbrl(WIDE)
+chk("operating profit (EBIT) read", w.get("operating_profit_current"), 455634.0)
+chk("EBITDA derived = EBIT + depreciation + amortisation", w.get("ebitda_current"), 455634.0 + 31347 + 624053)
+chk("...and the derivation is stated", "operating profit + depreciation" in (w.get("ebitda_basis") or ""))
+chk("director remuneration takes the company TOTAL, not the first per-director slice",
+    w.get("director_pay_current"), 567138.0)
+chk("staff costs", w.get("staff_costs_current"), 4878462.0)
+chk("borrowings, trade debtors (balance-sheet instants)", (w.get("borrowings_current"), w.get("trade_debtors_current")), (1665701.0, 1200000.0))
+chk("a filing without operating profit derives no EBITDA", parse_ixbrl(DOC).get("ebitda_current"), None)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

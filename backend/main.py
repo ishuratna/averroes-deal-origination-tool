@@ -2962,6 +2962,35 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     except Exception as e:
         logger.warning(f"[SmartFill] financials store update skipped for {company_name}: {e}")
 
+    # The funding ladder and the charges register, on the first pass too
+    # (doctrine 4af). Both read Companies House only; the ladder is filing
+    # text with a bounded AI fallback, the charges are a free API call.
+    if ch_data.get("ch_company_number"):
+        try:
+            from services.funding_ladder import get_funding_ladder, column_fills
+            from services.companies_house_service import get_charges_detail
+            _num = ch_data["ch_company_number"]
+            lad = get_funding_ladder(_num, company_name, stored_json=company_data.get("ch_funding_rounds") or "")
+            chg = get_charges_detail(_num)
+            sets, prm = [], [bq_lib.ScalarQueryParameter("name", "STRING", company_name)]
+            if not lad.get("skipped"):
+                sets.append("ch_funding_rounds = @fr")
+                prm.append(bq_lib.ScalarQueryParameter("fr", "STRING", json.dumps(lad["ledger"])))
+                for col, val in column_fills(lad["ledger"], company_data).items():
+                    typ = "STRING" if col in ("last_financing_date", "last_financing_type", "last_valuation_date") else "FLOAT64"
+                    sets.append(f"{col} = @lad_{col}")
+                    prm.append(bq_lib.ScalarQueryParameter(f"lad_{col}", typ, val))
+                if lad.get("ai_reads"):
+                    bq_handler.log_smartfill(company_name, kind="sh01")
+            if chg:
+                sets.append("ch_charges = @chg")
+                prm.append(bq_lib.ScalarQueryParameter("chg", "STRING", json.dumps(chg)))
+            if sets:
+                bq_handler.client.query(f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @name",
+                                        job_config=bq_lib.QueryJobConfig(query_parameters=prm)).result()
+        except Exception as e:
+            logger.warning(f"[SmartFill] funding ladder / charges skipped for {company_name}: {e}")
+
     # Auto-draft: a freshly Qualified company gets its outreach email drafted
     # immediately, so the button already reads "Review & Send" the moment it
     # lands in the pipeline. Cost-safe: ONE ungrounded Gemini call — the news
@@ -3527,13 +3556,50 @@ async def smartenrich_company(company_name: str):
         except Exception as e:
             logger.warning(f"[SmartEnrich] cap table failed for {company_name} (non-fatal): {e}")
 
+        # ── 2c. Funding ladder: every SH01 not yet in the ledger, read from
+        # the filing text (AI only for a scan, bounded). The legacy financing
+        # columns are filled ONLY where empty; Gain/PitchBook/document values
+        # are never replaced by a derivation. (25 Sep 2026, doctrine 4af.)
+        try:
+            from services.funding_ladder import get_funding_ladder, column_fills
+            lad = get_funding_ladder(number, company_name, stored_json=company.get("ch_funding_rounds") or "")
+            if not lad.get("skipped"):
+                ledger = lad["ledger"]
+                set_clauses.append("ch_funding_rounds = @ch_funding_rounds")
+                params.append(bq_lib.ScalarQueryParameter("ch_funding_rounds", "STRING", json.dumps(ledger)))
+                fills = column_fills(ledger, company)
+                for col, val in fills.items():
+                    typ = "STRING" if col in ("last_financing_date", "last_financing_type", "last_valuation_date") else "FLOAT64"
+                    set_clauses.append(f"{col} = @lad_{col}")
+                    params.append(bq_lib.ScalarQueryParameter(f"lad_{col}", typ, val))
+                actions.append(f"funding ladder: {lad['read']} SH01 filing(s) read, "
+                               f"{ledger.get('equity_rounds', 0)} equity round(s)"
+                               + (f", {lad['ai_reads']} via AI" if lad.get("ai_reads") else "")
+                               + (f", filled {', '.join(fills)}" if fills else ""))
+                if lad.get("ai_reads"):
+                    bq_handler.log_smartfill(company_name, kind="sh01")
+        except Exception as e:
+            logger.warning(f"[SmartEnrich] funding ladder failed for {company_name} (non-fatal): {e}")
+
+        # ── 2d. Charges in full: who lends now, who was refinanced. Free.
+        try:
+            from services.companies_house_service import get_charges_detail
+            chg = get_charges_detail(number)
+            if chg:
+                set_clauses.append("ch_charges = @ch_charges")
+                params.append(bq_lib.ScalarQueryParameter("ch_charges", "STRING", json.dumps(chg)))
+        except Exception as e:
+            logger.warning(f"[SmartEnrich] charges detail failed for {company_name} (non-fatal): {e}")
+
         # ── 3. Financials: re-parse if a newer filing exists, OR once to
         # backfill the multi-year history (ch_history) for rows parsed before
-        # the depth upgrade — the profile charts need the full series.
+        # the depth upgrade — the profile charts need the full series. A
+        # history without the wider read (EBIT, staff costs, borrowings; the
+        # v2 marker) is re-parsed once as well: iXBRL is free.
         filings = _get_accounts_filings(number, max_items=1)
         latest_filing_date = filings[0].get("date", "") if filings else ""
         known_date = company.get("revenue_y1_date") or ""
-        needs_history = not company.get("ch_history")
+        needs_history = not company.get("ch_history") or '"v": 2' not in (company.get("ch_history") or "")
         if latest_filing_date and (latest_filing_date > known_date or needs_history):
             # `number` (above) is already the CH-verified identity for this
             # row — never re-derive it by name here. Re-searching on every

@@ -251,6 +251,94 @@ function HistoryTable({ company }: { company: CompanyTarget }) {
   );
 }
 
+// ── Funding rounds: the SH01 ladder (services/funding_ladder.py) ───────────
+// Every figure is DERIVED from the filing's own numbers (shares allotted x
+// price paid; total shares after x price) and says so; nothing here is a
+// vendor's estimate. Nominal issues (options, bonus shares) are listed but
+// carry no valuation and are not counted as raised.
+function FundingRounds({ company }: { company: CompanyTarget }) {
+  const lad = useMemo(() => { try { return company.ch_funding_rounds ? JSON.parse(company.ch_funding_rounds) : null; } catch { return null; } }, [company.ch_funding_rounds]);
+  if (!lad || !(lad.rounds || []).length) return null;
+  const m = (v?: number | null) => v == null ? '—' : `£${(v / 1e6).toFixed(2)}m`;
+  const p = (v?: number | null) => v == null ? '—' : `£${v.toFixed(v >= 10 ? 0 : 2)}`;
+  const last = lad.last_round;
+  return (
+    <>
+      <div className="cp-section-title">Funding rounds (Companies House SH01 filings)</div>
+      <div className="cp-card">
+        {last && (
+          <p className="cp-fin-foot" style={{ marginTop: 0, marginBottom: '0.5rem', color: '#334155' }}>
+            <b>{lad.equity_rounds}</b> equity round{lad.equity_rounds === 1 ? '' : 's'}, <b>{m(lad.total_raised)}</b> raised in total.
+            Last round {fmtDate(last.date)}: {m(last.raised)} at {p(last.price)} a share
+            {last.post_money ? <>, implying <b>{m(last.post_money)}</b> post-money</> : null}
+            {last.vs_prior ? <> ({last.vs_prior} round, {last.vs_prior_pct > 0 ? '+' : ''}{last.vs_prior_pct}% on the previous price)</> : null}.
+            {lad.pending ? ` ${lad.pending} older filing(s) not yet read.` : ''}
+          </p>
+        )}
+        <table className="cp-table">
+          <thead><tr><th>Date</th><th>Round</th><th>Shares</th><th>Price</th><th>Raised</th><th>Post-money</th><th>Cumulative</th></tr></thead>
+          <tbody>
+            {[...lad.rounds].reverse().map((r: any, i: number) => (
+              <tr key={i} title={`${r.classes?.join(', ') || ''} · filed ${r.filed} · ${r.source === 'ai' ? 'read by AI from a scanned form' : 'read from the filing text'}${r.total_shares_after ? ` · ${r.total_shares_after.toLocaleString()} shares in issue after` : ''}`}
+                  style={r.kind !== 'equity round' ? { color: '#94a3b8' } : undefined}>
+                <td>{fmtDate(r.date)}</td>
+                <td>{r.kind === 'equity round' ? `Round ${r.round_no}` : r.kind}{r.vs_prior ? <span className="fc-tag" style={{ marginLeft: 6 }}>{r.vs_prior}</span> : null}</td>
+                <td>{(r.shares || 0).toLocaleString()}</td>
+                <td>{p(r.price)}</td>
+                <td>{r.kind === 'equity round' ? m(r.raised) : '—'}</td>
+                <td>{m(r.post_money)}</td>
+                <td>{m(r.cumulative_raised)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="cp-fin-foot">Derived in code from each SH01: raised = shares allotted × amount paid per share; post-money = shares in issue after × that price. Hover a row for the filing.</div>
+      </div>
+    </>
+  );
+}
+
+// ── Financing & debt: the charges register, and who is lending now ─────────
+function DebtLine({ company }: { company: CompanyTarget }) {
+  const chg = useMemo(() => { try { return company.ch_charges ? JSON.parse(company.ch_charges) : null; } catch { return null; } }, [company.ch_charges]);
+  const hist = chHistory(company);
+  const latest = [...hist].reverse().find(y => y.borrowings != null || y.cash != null);
+  if (!chg && !latest) return null;
+  const out = chg?.outstanding || [];
+  const sat = chg?.satisfied || [];
+  // A charge satisfied within 30 days of a new one being created: a refinancing.
+  const refi = out.find((o: any) => sat.some((s: any) => s.satisfied && o.created &&
+    Math.abs(new Date(s.satisfied).getTime() - new Date(o.created).getTime()) < 30 * 864e5));
+  const refiFrom = refi ? sat.find((s: any) => s.satisfied && Math.abs(new Date(s.satisfied).getTime() - new Date(refi.created).getTime()) < 30 * 864e5) : null;
+  const netDebt = latest && latest.borrowings != null ? latest.borrowings - (latest.cash || 0) : null;
+  return (
+    <>
+      <div className="cp-section-title">Financing &amp; debt</div>
+      <div className="cp-card">
+        {chg && (
+          <div className="cp-kv"><span className="k">Lenders now</span>
+            <span className="v">{(chg.current_lenders || []).length ? chg.current_lenders.join(' · ') : 'No outstanding charges'}
+              {out.length ? ` (${out.length} outstanding charge${out.length === 1 ? '' : 's'}, newest ${fmtDate(out[0].created)})` : ''}</span></div>
+        )}
+        {refi && refiFrom && (
+          <div className="cp-kv"><span className="k">Refinanced</span>
+            <span className="v" style={{ color: '#b45309' }}>{refiFrom.lender} satisfied {fmtDate(refiFrom.satisfied)}, replaced by {refi.lender} ({fmtDate(refi.created)})</span></div>
+        )}
+        {latest && latest.borrowings != null && (
+          <div className="cp-kv"><span className="k">Borrowings ({fyLabel(fiscalYearOf(latest.period_end))})</span><span className="v">{fmtRaw(latest.borrowings)}</span></div>
+        )}
+        {netDebt != null && (
+          <div className="cp-kv"><span className="k">Net debt / (cash)</span>
+            <span className="v" style={{ color: netDebt > 0 ? '#dc2626' : '#15803d' }}>{netDebt < 0 ? `(${fmtRaw(-netDebt)})` : fmtRaw(netDebt)} <span className="fc-tag">borrowings − cash, filed accounts</span></span></div>
+        )}
+        {sat.length > 0 && (
+          <div className="cp-kv"><span className="k">Past lenders</span><span className="v">{sat.slice(0, 4).map((s: any) => `${s.lender} (satisfied ${fmtDate(s.satisfied)})`).join(' · ')}</span></div>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ── Financials by year: metrics x FISCAL YEARS from company_financials ─────
 // Every figure we hold, whatever the source (Companies House filings, founder
 // documents, imports), one column per fiscal year in the five-year window
@@ -289,6 +377,27 @@ function FinGrid({ fin }: { fin: FinancialsResponse }) {
       ); })}
     </tr>
   );
+  // DERIVED rows, computed in the view from two stored figures for the same
+  // year and never stored (doctrine 1): margins, net debt, debtor and
+  // creditor days. Shown only when every input is held for at least one year.
+  const derive = (label: string, f: (fy: number) => number | null, fmtD: (v: number) => string) => {
+    const vals = cols.map(col => ({ fy: col.fy, v: f(col.fy) }));
+    if (!vals.some(x => x.v != null)) return null;
+    return (
+      <tr key={`d:${label}`} className="sub">
+        <td className="lbl" style={{ fontStyle: 'italic', color: '#64748b' }}>{label}</td>
+        {vals.map(x => <td key={x.fy} className={`num${x.v != null && x.v < 0 ? ' neg' : ''}`} style={{ fontStyle: 'italic', color: '#64748b' }}>{x.v == null ? '·' : fmtD(x.v)}</td>)}
+      </tr>
+    );
+  };
+  const val = (fy: number, m: string) => { const c = pickCell(cells, fy, m); return c ? c.value : null; };
+  const derivedRows = [
+    derive('Gross margin', fy => { const r = val(fy, 'revenue'), g = val(fy, 'gross_profit'); return r && g != null ? g / r * 100 : null; }, v => `${v.toFixed(1)}%`),
+    derive('EBITDA margin', fy => { const r = val(fy, 'revenue'), e = val(fy, 'ebitda'); return r && e != null ? e / r * 100 : null; }, v => `${v.toFixed(1)}%`),
+    derive('Net debt / (cash)', fy => { const b = val(fy, 'borrowings'), c = val(fy, 'cash'); return b != null ? b - (c || 0) : null; }, v => v < 0 ? `(£${(Math.abs(v) / 1e6).toFixed(2)}m)` : `£${(v / 1e6).toFixed(2)}m`),
+    derive('Debtor days', fy => { const r = val(fy, 'revenue'), d = val(fy, 'trade_debtors'); return r && d != null ? d / r * 365 : null; }, v => `${Math.round(v)}`),
+    derive('Creditor days', fy => { const r = val(fy, 'revenue'), g = val(fy, 'gross_profit'), c = val(fy, 'trade_creditors'); const cogs = r != null && g != null ? r - g : r; return cogs && c != null ? c / cogs * 365 : null; }, v => `${Math.round(v)}`),
+  ].filter(Boolean);
   const first = cols.length ? cols[0].fy : 0;
   const earlier = Array.from(new Set(cells.map(c => fiscalYearOf(c.period_end)).filter((y): y is number => !!y && y < first))).sort();
   const sources = Array.from(new Set(cells.map(c => c.source)));
@@ -307,10 +416,13 @@ function FinGrid({ fin }: { fin: FinancialsResponse }) {
           );
         })}</tr></thead>
         <tbody>
-          {metrics.length ? metrics.flatMap(m => [
-            row(FIN_METRIC_LABELS[m] || m, m),
-            ...(m === 'revenue' ? segNames.map(sn => row(`· ${sn}`, 'revenue', sn, true)) : []),
-          ]) : (
+          {metrics.length ? [
+            ...metrics.flatMap(m => [
+              row(FIN_METRIC_LABELS[m] || m, m),
+              ...(m === 'revenue' ? segNames.map(sn => row(`· ${sn}`, 'revenue', sn, true)) : []),
+            ]),
+            ...derivedRows,
+          ] : (
             <tr><td className="lbl">Revenue</td>{cols.map(col => <td key={col.fy} className="num ph">·</td>)}</tr>
           )}
         </tbody>
@@ -937,6 +1049,9 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   )}
                 </>
               ) : <p className="cp-empty">No cap table extracted yet — run SmartEnrich to parse the latest CS01.</p>}
+
+              <FundingRounds company={company} />
+              <DebtLine company={company} />
 
               <div className="cp-section-title">Investors &amp; funding</div>
               <div className="cp-card">

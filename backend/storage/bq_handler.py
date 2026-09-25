@@ -262,6 +262,13 @@ class BigQueryHandler:
         # appointment networks (fund partners / serial angels on the board)
         ("ch_allottees", "STRING"),
         ("ch_officer_network", "STRING"),
+        # Funding ladder (services/funding_ladder.py): every SH01 allotment
+        # read from the filing text - shares, price paid, money raised,
+        # implied post-money - as one JSON ledger, extended incrementally.
+        # And the charges register in full (lender, created, satisfied), not
+        # only the one-line summary, so the card can say who is lending now.
+        ("ch_funding_rounds", "STRING"),
+        ("ch_charges", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)
@@ -1210,7 +1217,7 @@ class BigQueryHandler:
     # rows SELECT * OOM-killed the container (503) and the response blew past
     # transfer limits.
     _SLIM_DROP = (
-        "ch_history", "ch_cap_table", "ch_officer_network", "ch_allottees",
+        "ch_history", "ch_cap_table", "ch_officer_network", "ch_allottees", "ch_funding_rounds", "ch_charges",
         "ic_memo", "score_details", "extra_data", "outreach_draft_body",
         "action_reply_body", "action_rationale", "ch_charges_summary",
         "ch_insolvency_summary",

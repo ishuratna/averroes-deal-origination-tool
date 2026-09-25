@@ -41,7 +41,27 @@ _CONCEPTS = {
     "cash": ("cashbankonhand", "cashbankinhand", "cashcashequivalents"),
     "employees": ("averagenumberemployeesduringperiod", "averagenumberofemployeesduringperiod",
                   "averagenumberofemployees"),
+    # ── The wider P&L and balance sheet (25 Sep 2026, after reading what
+    # Mark to Market derives from the SAME filings: EBIT/EBITDA, staff and
+    # director costs, borrowings, debtor/creditor days). Full accounts tag
+    # all of these; filleted accounts tag few. Absent stays absent.
+    "operating_profit": ("operatingprofitloss",),
+    "depreciation": ("depreciationexpense", "depreciationamortisationexpense",
+                     "depreciationamortisationimpairmentexpense", "depreciationtangiblefixedassetsexpense",
+                     "depreciationimpairmentexpense"),
+    "amortisation": ("amortisationexpense", "amortisationintangibleassetsexpense",
+                     "amortisationimpairmentexpenseintangibleassets"),
+    "staff_costs": ("staffcostsemployeebenefitsexpense", "employeebenefitsexpense", "staffcosts",
+                    "wagessalaries"),
+    "director_pay": ("directorremuneration", "directorsremuneration",
+                     "keymanagementpersonnelcompensation"),
+    "borrowings": ("borrowings", "totalborrowings", "bankborrowings", "bankborrowingsoverdrafts",
+                   "otherborrowings", "loansborrowings"),
+    "trade_debtors": ("tradedebtorstradereceivables", "tradedebtors", "tradereceivables"),
+    "trade_creditors": ("tradecreditorstradepayables", "tradecreditors", "tradepayables"),
 }
+# Fields that are DERIVED here, from the tagged ones, never read from a tag.
+DERIVED = ("ebitda",)
 
 
 def fetch_ixbrl(filing: dict) -> Optional[str]:
@@ -167,8 +187,13 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
     soup = BeautifulSoup(xhtml, "html.parser")
 
     # context id -> period end date (duration endDate, or instant for
-    # balance-sheet facts).
+    # balance-sheet facts). DIMENSIONAL contexts (a segment with an explicit
+    # member: one director's pay, one class of asset, one operating segment)
+    # are remembered so a company TOTAL is preferred over a slice of it:
+    # director remuneration is tagged per director as well as in total, and
+    # "first fact wins" used to take whichever came first in the document.
     ctx_end: Dict[str, str] = {}
+    ctx_dim: Dict[str, bool] = {}
     for ctx in soup.find_all(lambda t: t.name and t.name.endswith("context")):
         cid = ctx.get("id") or ""
         end = ctx.find(lambda t: t.name and t.name.endswith("enddate"))
@@ -177,6 +202,8 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
                (instant.get_text(strip=True) if instant else "")
         if cid and when:
             ctx_end[cid] = when
+            ctx_dim[cid] = ctx.find(lambda t: t.name and (t.name.endswith("explicitmember")
+                                                          or t.name.endswith("typedmember"))) is not None
 
     # The document states whose accounts these are - verify before reading.
     if company_number:
@@ -192,6 +219,7 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
     # The employee TAG is kept alongside its value: a headcount needs the raw
     # printed number when the filer's `scale` is nonsense (see _headcount).
     facts: Dict[str, Dict[str, float]] = {k: {} for k in _CONCEPTS}
+    dim_only: Dict[str, set] = {k: set() for k in _CONCEPTS}   # (field) -> periods filled from a slice
     emp_tags: Dict[str, object] = {}
     for tag in soup.find_all(lambda t: t.name and t.name.endswith("nonfraction")):
         concept = _local(tag.get("name") or "")
@@ -199,14 +227,24 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
         when = ctx_end.get(ref, "")
         if not when:
             continue
+        is_dim = ctx_dim.get(ref, False)
         for field, names in _CONCEPTS.items():
-            if concept in names and when not in facts[field]:
-                v = _num(tag)
-                if v is not None:
-                    facts[field][when] = v
-                    if field == "employees":
-                        emp_tags[when] = tag
+            if concept not in names:
+                continue
+            # A total (non-dimensional) fact always beats a slice; a slice is
+            # kept only until a total for the same period appears.
+            if when in facts[field] and not (is_dim is False and when in dim_only[field]):
                 break
+            v = _num(tag)
+            if v is not None:
+                facts[field][when] = v
+                if is_dim:
+                    dim_only[field].add(when)
+                else:
+                    dim_only[field].discard(when)
+                if field == "employees":
+                    emp_tags[when] = tag
+            break
 
     # Which period is current vs prior: the two newest end dates seen.
     ends = sorted({d for by in facts.values() for d in by}, reverse=True)
@@ -229,11 +267,28 @@ def parse_ixbrl(xhtml: str, company_number: str = "") -> Dict:
         "employees": _headcount(facts["employees"].get(cur), emp_tags.get(cur)),
         "employees_prior": _headcount(facts["employees"].get(prior), emp_tags.get(prior)) if prior else None,
         "period_end_current": cur, "period_end_prior": prior or None,
+        # The wider set. EBITDA is DERIVED: operating profit plus depreciation
+        # plus amortisation, only when operating profit is tagged; a missing
+        # D&A tag is treated as nil (small companies often have none), and
+        # the derivation is stated in `ebitda_basis` so the card can say so.
+        **{f"{k}_{suffix}": pick(k, when)
+           for k in ("operating_profit", "depreciation", "amortisation", "staff_costs",
+                     "director_pay", "borrowings", "trade_debtors", "trade_creditors")
+           for suffix, when in (("current", cur), ("prior", prior))},
         "filing_type": None,   # the orchestrator derives it from the filing description
         "currency": "GBP",
         "notes": "Parsed from iXBRL (machine-tagged filing): exact figures, zero AI.",
         "_source": "ixbrl",
     }
+    for suffix in ("current", "prior"):
+        op = out.get(f"operating_profit_{suffix}")
+        if op is not None:
+            dep = out.get(f"depreciation_{suffix}") or 0.0
+            amo = out.get(f"amortisation_{suffix}") or 0.0
+            out[f"ebitda_{suffix}"] = op + abs(dep) + abs(amo)
+        else:
+            out[f"ebitda_{suffix}"] = None
+    out["ebitda_basis"] = "operating profit + depreciation + amortisation (tagged in the filing)"
     # A parse with no substance is a failure - let the caller fall back.
     core = ("revenue_current", "gross_profit_current", "profit_current",
             "total_assets_current", "net_assets_current", "cash_current", "employees")

@@ -38,6 +38,11 @@ CH_DOC_API = "https://document-api.company-information.service.gov.uk"
 ACCOUNTS_FILINGS_FETCHED = 8    # asked of the filing-history endpoint
 ACCOUNTS_FILINGS_PARSED = 5     # actually opened and read
 YEARS_KEPT = 8                  # periods stored in ch_history
+# The wider iXBRL read (services/ixbrl_accounts._CONCEPTS + DERIVED), carried
+# through ch_history so the year store and the card see them. A Gemini PDF
+# parse of a paper filing does not return these; they are simply absent.
+HISTORY_EXTRA_KEYS = ("operating_profit", "ebitda", "depreciation", "amortisation", "staff_costs",
+                      "director_pay", "borrowings", "trade_debtors", "trade_creditors")
 
 # The Gemini PDF fallback is capped at the LATEST filing only. Deepening the
 # history must not quietly multiply AI spend: an old paper scan is worth reading
@@ -839,6 +844,53 @@ def get_charges_summary(company_number: str) -> Dict:
     return {"charges_count": len(outstanding), "charges_summary": summary if outstanding else ""}
 
 
+def get_charges_detail(company_number: str) -> Dict:
+    """The charges register in full, for the card's debt line (25 Sep 2026):
+    who is lending NOW, and who was refinanced when. Pure JSON, zero AI.
+
+    {"checked_at", "outstanding": [...], "satisfied": [...], "current_lenders": [...]}
+    each charge: {"lender", "created", "status", "satisfied", "description"}.
+    A charge SATISFIED within days of a NEW one being created is a
+    refinancing, which the card points out: on Arcus Global a venture-debt
+    lender (SaaS Capital) was replaced by another (Gilion) in August 2026.
+    """
+    from datetime import date as _date
+    auth = _ch_auth()
+    try:
+        resp = requests.get(f"{CH_API_BASE}/company/{company_number}/charges",
+                            auth=auth, timeout=15)
+        if resp.status_code == 404:
+            return {"checked_at": str(_date.today()), "outstanding": [], "satisfied": [], "current_lenders": []}
+        resp.raise_for_status()
+        items = resp.json().get("items", []) or []
+    except Exception as e:
+        logger.warning(f"[CH] Charges detail fetch failed for {company_number}: {e}")
+        return {}
+    rows = []
+    for c in items:
+        lenders = [p.get("name", "") for p in (c.get("persons_entitled") or []) if p.get("name")]
+        desc = ""
+        parts = c.get("particulars") or {}
+        if isinstance(parts, dict):
+            desc = (parts.get("description") or parts.get("type") or "")[:160]
+        rows.append({
+            "lender": ", ".join(lenders[:3]) or (c.get("classification") or {}).get("description", "") or "",
+            "created": c.get("created_on") or c.get("delivered_on") or "",
+            "status": c.get("status") or "",
+            "satisfied": c.get("satisfied_on") or "",
+            "description": desc or (c.get("classification") or {}).get("description", "") or "",
+        })
+    rows.sort(key=lambda r: r["created"], reverse=True)
+    outstanding = [r for r in rows if r["status"] == "outstanding"]
+    satisfied = [r for r in rows if r["status"] != "outstanding"]
+    seen, current = set(), []
+    for r in outstanding:
+        if r["lender"] and r["lender"] not in seen:
+            seen.add(r["lender"]); current.append(r["lender"])
+    return {"checked_at": str(_date.today()), "outstanding": outstanding[:12], "satisfied": satisfied[:12],
+            "current_lenders": current[:6]}
+
+
 def get_capital_events(company_number: str) -> Dict:
     """
     Share allotments (SH01 etc.) from filing history — a quiet-fundraise detector.
@@ -1177,6 +1229,7 @@ def extract_ch_financials(
                 "cash": parsed.get("cash_current"),
                 "gross_profit": parsed.get("gross_profit_current"),
                 "employees": parsed.get("employees"),
+                **{k: parsed.get(f"{k}_current") for k in HISTORY_EXTRA_KEYS},
             }))
 
         # Prior year from this filing (comparative figures)
@@ -1190,6 +1243,7 @@ def extract_ch_financials(
                 "cash": parsed.get("cash_prior"),
                 "gross_profit": parsed.get("gross_profit_prior"),
                 "employees": parsed.get("employees_prior"),
+                **{k: parsed.get(f"{k}_prior") for k in HISTORY_EXTRA_KEYS},
             }))
 
     # Deduplicate by period end date (prefer the current-year extraction)
@@ -1224,13 +1278,16 @@ def extract_ch_financials(
     history = []
     for date, data in sorted_years[:YEARS_KEPT]:
         entry = {"period_end": date}
-        for k in ("revenue", "gross_profit", "profit", "total_assets", "net_assets", "cash", "employees"):
+        for k in ("revenue", "gross_profit", "profit", "total_assets", "net_assets", "cash", "employees",
+                  *HISTORY_EXTRA_KEYS):
             if data.get(k) is not None:
                 entry[k] = data[k]
         if len(entry) > 1:
             history.append(entry)
     if history:
-        result["ch_history"] = json.dumps({"v": 1, "years": history})
+        # v2 (25 Sep 2026): entries may carry HISTORY_EXTRA_KEYS. The marker
+        # lets SmartEnrich re-parse a v1 history once, for free, via iXBRL.
+        result["ch_history"] = json.dumps({"v": 2, "years": history})
 
     # Filing type from most recent
     if all_financials and all_financials[0].get("filing_type"):

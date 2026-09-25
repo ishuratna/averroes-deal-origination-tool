@@ -136,6 +136,10 @@ export interface CompanyTarget {
   ch_accounts_regime?: string;
   ch_cap_table?: string;
   ch_cap_table_date?: string;
+  // Funding ladder (JSON, services/funding_ladder.py) and the charges
+  // register in full (JSON, get_charges_detail). Heavy: profile only.
+  ch_funding_rounds?: string;
+  ch_charges?: string;
   ch_founder_pct?: number;
   ch_watched_at?: string;
   ch_history?: string;
@@ -404,6 +408,8 @@ export const FIN_METRIC_LABELS: Record<string, string> = {
   ebitda: 'EBITDA', ebitda_margin_pct: 'EBITDA margin', profit_before_tax: 'Profit before tax',
   net_income: 'Net income', cash: 'Cash', net_assets: 'Net assets', total_assets: 'Total assets',
   employees: 'Employees', customers: 'Customers',
+  ebit: 'EBIT (operating profit)', staff_costs: 'Staff costs', director_pay: "Directors' pay",
+  borrowings: 'Borrowings', trade_debtors: 'Trade debtors', trade_creditors: 'Trade creditors',
 };
 export const FIN_METRIC_ORDER = Object.keys(FIN_METRIC_LABELS);
 
