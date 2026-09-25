@@ -1983,7 +1983,7 @@ async def diag_deep(company_name: str, request: Request,
         raise HTTPException(status_code=403, detail="Invalid token.")
 
     from services import companies_house_service as chs
-    company = next((c for c in bq_handler.get_universe() if c.get("name", "").lower() == company_name.lower()), None)
+    company = bq_handler.get_company_full(company_name)   # one row, never a universe scan (doctrine 6f)
     if not company:
         raise HTTPException(status_code=404, detail=f"'{company_name}' not in the universe")
     number = company.get("ch_company_number") or ""
@@ -2028,6 +2028,42 @@ async def diag_deep(company_name: str, request: Request,
         return {"step": "latest SH01 allottees", "data": chs.get_sh01_allottees(number, company["name"])}
     if step == "links":
         return {"step": "connection layer edges", "data": investor_handler.get_company_connections(company["name"])}
+    if step == "ixbrl":
+        # Every numeric concept the latest accounts filing tags, with period
+        # and value: the way to learn a filer's tag names before adding them
+        # to ixbrl_accounts._CONCEPTS (Arcus parity check, 25 Sep 2026).
+        from services.ixbrl_accounts import fetch_ixbrl, _num, _local
+        from bs4 import BeautifulSoup
+        filings = chs._get_accounts_filings(number, max_items=1)
+        if not filings:
+            return {"step": "ixbrl concepts", "error": "no accounts filing"}
+        x = fetch_ixbrl(filings[0])
+        if not x:
+            return {"step": "ixbrl concepts", "error": "latest filing has no iXBRL rendition"}
+        soup = BeautifulSoup(x, "html.parser")
+        ends = {}
+        for ctx in soup.find_all(lambda t: t.name and t.name.endswith("context")):
+            e = ctx.find(lambda t: t.name and (t.name.endswith("enddate") or t.name.endswith("instant")))
+            dim = ctx.find(lambda t: t.name and (t.name.endswith("explicitmember") or t.name.endswith("typedmember")))
+            ends[ctx.get("id") or ""] = ((e.get_text(strip=True) if e else ""), bool(dim))
+        facts = {}
+        for tag in soup.find_all(lambda t: t.name and t.name.endswith("nonfraction")):
+            c = _local(tag.get("name") or "")
+            when, dim = ends.get(tag.get("contextref") or "", ("", False))
+            facts.setdefault(c, []).append([when, _num(tag), "dim" if dim else ""])
+        return {"step": "ixbrl concepts", "filing": filings[0].get("date"), "concepts": facts}
+    if step == "sh01text":
+        # The extracted text of the newest capital filings, so the SH01 text
+        # parser can be written against the real layout.
+        from services.funding_ladder import _pdf_text
+        out = []
+        for f in [f for f in chs._fetch_filing_history(number, category="capital", items=40)
+                  if "allotment" in (f.get("description") or "").lower() or (f.get("type") or "").upper().startswith("SH01")][:int(request.query_params.get("n", "3"))]:
+            pdf = chs._download_accounts_pdf(f)
+            out.append({"date": f.get("date"), "type": f.get("type"), "description": f.get("description"),
+                        "transaction_id": f.get("transaction_id"),
+                        "text": (_pdf_text(pdf) if pdf else "")[:3500]})
+        return {"step": "sh01 text", "filings": out}
     raise HTTPException(status_code=400, detail=f"Unknown step '{step}'")
 
 
