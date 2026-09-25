@@ -3454,6 +3454,7 @@ def _ladder_write(lad: dict, company: dict, company_name: str):
     SmartEnrich and the admin ladder run all land here). Records in the
     ledger what the ladder itself filled, so a later correction may replace
     its own derivation and never anyone else's number (doctrine 4af)."""
+    from google.cloud import bigquery as bq_lib
     from services.funding_ladder import column_fills
     ledger = lad["ledger"]
     fills = column_fills(ledger, company)
@@ -3481,6 +3482,7 @@ async def admin_funding_ladder(request: Request, company_name: str):
     SH01s) is drained over a few calls without re-running all of SmartEnrich.
     Same write as SmartEnrich step 2c, via `_ladder_write`."""
     _require_token(request)
+    from google.cloud import bigquery as bq_lib
     from services.funding_ladder import get_funding_ladder
     company = bq_handler.get_company_full(company_name)
     if not company:

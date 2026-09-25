@@ -365,7 +365,17 @@ def get_funding_ladder(company_number: str, company_name: str, stored_json: str 
     except Exception:
         stored = {}
     seen = set(stored.get("filings_seen") or [])
-    if stored and (stored.get("v") or 1) < LEDGER_VERSION and "fills" not in stored:
+    upgrading = bool(stored) and (stored.get("v") or 1) < LEDGER_VERSION
+    if upgrading:
+        # The parser changed. A reading taken from the filing TEXT is re-read
+        # (a download, no AI): the v1 parser read the 2026 statement of
+        # capital as allotments and that reading must not survive a rebuild.
+        # An AI reading is kept: paying again would buy the same answer.
+        text_ids = {r.get("transaction_id") for r in (stored.get("rounds") or [])
+                    if (r.get("reading") or {}).get("_source", "text") != "ai"}
+        stored["rounds"] = [r for r in (stored.get("rounds") or []) if r.get("transaction_id") not in text_ids]
+        seen -= text_ids
+    if upgrading and "fills" not in stored:
         # A v1 ledger never recorded what it filled. Whatever v1's rules
         # would have written is ours to correct; a coincidence with a
         # vendor figure is the only way this is wrong, and it is rounded to
