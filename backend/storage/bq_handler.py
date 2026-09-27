@@ -1184,12 +1184,17 @@ class BigQueryHandler:
     # `last_sent_at`, so the Follow up button, the card clock and the reminder
     # queue all read the same fact (Ishu, 24 Sep 2026: follow up only once).
     def _sent_agg_sql(self, entity_type: str = "company") -> str:
-        return f"""(SELECT entity_name, COUNT(*) AS sent_count, MAX(sent_at) AS last_sent_at
+        # first_sent_snippet: the opening of our FIRST email, so a follow-up
+        # can address whoever that email addressed ("Hi team," to a shared
+        # inbox), never a name guessed from the row (28 Sep 2026: "Hi Careers,").
+        return f"""(SELECT entity_name, COUNT(*) AS sent_count, MAX(sent_at) AS last_sent_at,
+                           ARRAY_AGG(snippet ORDER BY sent_at ASC LIMIT 1)[SAFE_OFFSET(0)] AS first_sent_snippet
                     FROM `{self._ensure_email_log_table()}`
                     WHERE entity_type = '{entity_type}' AND direction = 'sent'
                     GROUP BY entity_name)"""
 
-    _SENT_COLS = "IFNULL(s.sent_count, 0) AS sent_count, CAST(s.last_sent_at AS STRING) AS last_sent_at"
+    _SENT_COLS = ("IFNULL(s.sent_count, 0) AS sent_count, CAST(s.last_sent_at AS STRING) AS last_sent_at, "
+                  "s.first_sent_snippet")
 
     def get_pipeline(self) -> List[Dict]:
         if not self.client:

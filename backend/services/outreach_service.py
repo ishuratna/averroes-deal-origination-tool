@@ -119,6 +119,51 @@ def _recipient_note(company_data: Dict) -> str:
     return f"{founder or 'the founder'} directly."
 
 
+# Words that are never a person's first name. A contact name built from an
+# inbox ("careers@", "info@") or a role must never open an email.
+GENERIC_GREETING_WORDS = {
+    "careers", "career", "jobs", "hr", "info", "hello", "hi", "team", "sales", "support",
+    "admin", "contact", "enquiries", "enquiry", "inquiries", "office", "mail", "press",
+    "marketing", "legal", "accounts", "finance", "help", "service", "services", "customer",
+    "partnerships", "partners", "general", "reception", "recruitment", "talent", "founders",
+    "founder", "ceo", "cto", "cfo", "director", "management", "business", "company", "the",
+}
+
+_GREETING_LINE = re.compile(r"^\s*\[?\s*(hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\s+([^,\n\[\]]{1,40}?)\s*,", re.I)
+
+
+def first_email_greeting(snippet: str) -> str:
+    """The greeting line our first email opened with, from its logged snippet.
+    PURE. "Hi team, [I wanted to ..." -> "Hi team,". '' when the snippet does
+    not start with a greeting (a name would then be a guess)."""
+    m = _GREETING_LINE.match(snippet or "")
+    if not m:
+        return ""
+    word, who = m.group(1), m.group(2).strip()
+    word = word[:1].upper() + word[1:].lower()
+    if word.lower().startswith("good"):
+        word = " ".join(w.capitalize() for w in word.split())
+    return f"{word} {who},"
+
+
+def followup_greeting(company_data: Dict) -> str:
+    """Who the follow-up opens to. THE RULE (28 Sep 2026, after "Hi Careers,"
+    went to careers@affiliatesquared.com): a follow-up addresses whoever the
+    FIRST email addressed, read from that email's logged opening. Only when
+    no first email is on record does the row's contact name apply, and then
+    never a generic word (an inbox name is not a person). Otherwise "Hello,"."""
+    g = first_email_greeting(company_data.get("first_sent_snippet") or "")
+    if g:
+        return g
+    first, _ = _greeting_for(company_data)
+    if first and first.lower().strip(".") in GENERIC_GREETING_WORDS:
+        first = ""
+    local = (company_data.get("contact_email") or "").split("@")[0].lower()
+    if first and first.lower() == local and local in GENERIC_GREETING_WORDS:
+        first = ""
+    return f"Hi {first}," if first else "Hello,"
+
+
 def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     """The 14-day follow-up. A fixed template, zero AI calls.
 
@@ -132,8 +177,7 @@ def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     context. Ends with "Best," and the sender's first name; send_email appends
     the full signature block beneath it.
     """
-    first, _ = _greeting_for(company_data)
-    greeting = f"Hi {first}," if first else "Hello,"
+    greeting = followup_greeting(company_data)
     company = company_data.get("name", "your company")
 
     original_subject = (company_data.get("outreach_draft_subject") or "").strip()

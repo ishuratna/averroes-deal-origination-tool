@@ -4495,8 +4495,18 @@ async def admin_followup_send(request: Request,
         if not (d.get("to") or "").strip():
             out["skipped"].append({"name": name, "why": "no contact email on file (bounced or never found)"})
             continue
-        entry = {"name": name, "to": d["to"], "subject": d["subject"], "days_waiting": r.get("days_waiting"),
-                 "sent_count": r.get("sent_count"), "first_email": (r.get("last_email_at") or "")[:10]}
+        from services.outreach_service import first_email_greeting, GENERIC_GREETING_WORDS
+        greeting = (d["body"] or "").split("\n", 1)[0]
+        local = (d["to"].split("@")[0] or "").lower()
+        flags = []
+        if local in GENERIC_GREETING_WORDS or local in ("hello", "info", "contact", "enquiries", "team", "sales", "support", "careers", "jobs", "hr", "admin", "office", "press", "legal"):
+            flags.append("generic inbox")
+        if not first_email_greeting(company.get("first_sent_snippet") or ""):
+            flags.append("first email's greeting not on record; row name used" if greeting != "Hello," else "no name: opens Hello,")
+        entry = {"name": name, "to": d["to"], "subject": d["subject"], "greeting": greeting, "flags": flags,
+                 "days_waiting": r.get("days_waiting"), "sent_count": r.get("sent_count"),
+                 "first_email": (r.get("last_email_at") or "")[:10],
+                 "first_opening": (company.get("first_sent_snippet") or "")[:60]}
         if dry_run:
             entry["body"] = d["body"]
             out["sent"].append(entry)
