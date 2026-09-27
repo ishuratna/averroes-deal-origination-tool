@@ -4439,6 +4439,82 @@ async def send_outreach(req: OutreachSendRequest):
     return result
 
 
+@app.post("/admin/outreach/followup-send")
+async def admin_followup_send(request: Request,
+                              dry_run: int = Query(1, description="1 = list who would get one (default), 0 = send"),
+                              limit: int = Query(1, description="how many to send this call"),
+                              names: str = Query("", description="comma-separated company names to restrict to"),
+                              min_days: int = Query(14, description="days since our email before a follow-up is due"),
+                              shuffle: int = Query(0, description="1 = pick at random from the eligible list")):
+    """THE ONE FOLLOW-UP, sent from the terminal instead of card by card
+    (Ishu, 27 Sep 2026: "instead of me going to each company's card ...
+    I want to push from here; let's start with one, then five, then all").
+
+    WHO IS ELIGIBLE is not decided here. It is exactly the set the Follow up
+    button and the reminder queue already agree on: `/followups` rows of type
+    `waiting_on_them` in Contacted, which means exactly one email has ever
+    gone out (tool or inbox, `sent_count < 2`), nothing genuine came back,
+    the out-of-office deferral has passed, and our email is at least
+    `min_days` old. WHAT IS SENT is `draft_followup_email`, the same template
+    the card opens, and HOW it is sent is `send_outreach`, the same handler
+    the card's Send button calls (threading, stamps, activity rows, contact
+    adoption). No second copy of any of it. Token; dry run by default;
+    240s time box; a company with no address on file is reported, not sent."""
+    _require_token(request)
+    import time as _time
+    from services.outreach_service import draft_followup_email
+    t0 = _time.time()
+    queue = await get_followups(days=min_days, entity="company")
+    eligible = [r for r in queue if r.get("type") == "waiting_on_them" and r.get("status") == "Contacted"]
+    wanted = {n.strip().lower() for n in names.split(",") if n.strip()}
+    if wanted:
+        eligible = [r for r in eligible if (r.get("name") or "").lower() in wanted]
+    if shuffle:
+        import random
+        random.shuffle(eligible)
+    else:
+        eligible.sort(key=lambda r: -(r.get("days_waiting") or 0))
+    picked = eligible[:max(0, limit)]
+    out = {"dry_run": bool(dry_run), "eligible_total": len(eligible), "picked": len(picked),
+           "min_days": min_days, "sent": [], "skipped": [], "errors": []}
+    for r in picked:
+        if _time.time() - t0 > 240:
+            out["errors"].append({"name": r.get("name"), "error": "time box reached; call again"})
+            break
+        name = r.get("name") or ""
+        company = bq_handler.get_company_full(name) or {}
+        if not company:
+            out["skipped"].append({"name": name, "why": "row not found"})
+            continue
+        if company.get("source") == "Internal Test":
+            out["skipped"].append({"name": name, "why": "internal test row"})
+            continue
+        d = draft_followup_email(company)
+        if not (d.get("to") or "").strip():
+            out["skipped"].append({"name": name, "why": "no contact email on file (bounced or never found)"})
+            continue
+        entry = {"name": name, "to": d["to"], "subject": d["subject"], "days_waiting": r.get("days_waiting"),
+                 "sent_count": r.get("sent_count"), "first_email": (r.get("last_email_at") or "")[:10]}
+        if dry_run:
+            entry["body"] = d["body"]
+            out["sent"].append(entry)
+            continue
+        try:
+            res = await send_outreach(OutreachSendRequest(to=d["to"], subject=d["subject"], body=d["body"], company_name=name))
+            entry["result"] = res.get("status")
+            out["sent"].append(entry)
+            bq_handler.add_activity_note(name, "Follow-up sent by the bulk run (same template and send path as the card).",
+                                         created_by="followup-run")
+            _time.sleep(1.5)   # SMTP courtesy gap
+        except HTTPException as e:
+            out["errors"].append({"name": name, "error": str(e.detail)})
+        except Exception as e:
+            out["errors"].append({"name": name, "error": str(e)})
+    out["elapsed_s"] = round(_time.time() - t0, 1)
+    out["remaining"] = max(0, len(eligible) - len([s for s in out["sent"] if not dry_run]))
+    return out
+
+
 @app.post("/admin/rescore-fit")
 async def admin_rescore_fit(request: Request,
                             dry_run: int = Query(1, description="1 = preview only (default), 0 = apply")):
