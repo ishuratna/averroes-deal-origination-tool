@@ -293,7 +293,7 @@ S = build_ladder([{"allotment_date": "2014-04-22", "allotments": [{"share_class"
 s2 = [x for x in S["rounds"] if x["transaction_id"] == "s2"][0]
 chk("shares allotted = 1,179,984 - 1,149,226", (s2["shares"], s2["shares_as_read"]), (30758, 1179984))
 chk("raised follows", s2["raised"], round(30758 * 0.3267, 2))
-chk("post-money still total x price", s2["post_money"], round(1179984 * 0.3267, 2))
+chk("...a small issue carries no valuation", "post_money" in s2, False)
 chk("...and it is a small issue at GBP 10k, not a GBP 385k round", s2["kind"], "small issue")
 
 print()
