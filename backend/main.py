@@ -4486,49 +4486,61 @@ async def admin_followup_send(request: Request,
     picked = eligible[:max(0, limit)]
     out = {"dry_run": bool(dry_run), "eligible_total": len(eligible), "picked": len(picked),
            "min_days": min_days, "sent": [], "skipped": [], "errors": []}
-    for r in picked:
-        if _time.time() - t0 > 240:
-            out["errors"].append({"name": r.get("name"), "error": "time box reached; call again"})
-            break
-        name = r.get("name") or ""
-        company = bq_handler.get_company_full(name) or {}
-        if not company:
-            out["skipped"].append({"name": name, "why": "row not found"})
-            continue
-        if company.get("source") == "Internal Test":
-            out["skipped"].append({"name": name, "why": "internal test row"})
-            continue
-        d = draft_followup_email(company)
-        if not (d.get("to") or "").strip():
-            out["skipped"].append({"name": name, "why": "no contact email on file (bounced or never found)"})
-            continue
+
+    def _run():
+        # OFF THE EVENT LOOP. SMTP and BigQuery are synchronous; run inline in
+        # an async handler they froze the whole service for the length of the
+        # call (28 Sep 2026: 155 sends queued behind each other, every page
+        # dead for twenty minutes). A worker thread keeps the app answering.
         from services.outreach_service import first_email_greeting, GENERIC_GREETING_WORDS
-        greeting = (d["body"] or "").split("\n", 1)[0]
-        local = (d["to"].split("@")[0] or "").lower()
-        flags = []
-        if local in GENERIC_GREETING_WORDS or local in ("hello", "info", "contact", "enquiries", "team", "sales", "support", "careers", "jobs", "hr", "admin", "office", "press", "legal"):
-            flags.append("generic inbox")
-        if not first_email_greeting(company.get("first_sent_snippet") or ""):
-            flags.append("first email's greeting not on record; row name used" if greeting != "Hello," else "no name: opens Hello,")
-        entry = {"name": name, "to": d["to"], "subject": d["subject"], "greeting": greeting, "flags": flags,
-                 "days_waiting": r.get("days_waiting"), "sent_count": r.get("sent_count"),
-                 "first_email": (r.get("last_email_at") or "")[:10],
-                 "first_opening": (company.get("first_sent_snippet") or "")[:60]}
-        if dry_run:
-            entry["body"] = d["body"]
-            out["sent"].append(entry)
-            continue
-        try:
-            res = await send_outreach(OutreachSendRequest(to=d["to"], subject=d["subject"], body=d["body"], company_name=name))
-            entry["result"] = res.get("status")
-            out["sent"].append(entry)
-            bq_handler.add_activity_note(name, "Follow-up sent by the bulk run (same template and send path as the card).",
-                                         created_by="followup-run")
-            _time.sleep(1.5)   # SMTP courtesy gap
-        except HTTPException as e:
-            out["errors"].append({"name": name, "error": str(e.detail)})
-        except Exception as e:
-            out["errors"].append({"name": name, "error": str(e)})
+        import asyncio as _aio
+        for r in picked:
+            if _time.time() - t0 > 240:
+                out["errors"].append({"name": r.get("name"), "error": "time box reached; call again"})
+                break
+            name = r.get("name") or ""
+            company = bq_handler.get_company_full(name) or {}
+            if not company:
+                out["skipped"].append({"name": name, "why": "row not found"})
+                continue
+            if company.get("source") == "Internal Test":
+                out["skipped"].append({"name": name, "why": "internal test row"})
+                continue
+            d = draft_followup_email(company)
+            if not (d.get("to") or "").strip():
+                out["skipped"].append({"name": name, "why": "no contact email on file (bounced or never found)"})
+                continue
+            greeting = (d["body"] or "").split("\n", 1)[0]
+            local = (d["to"].split("@")[0] or "").lower()
+            flags = []
+            if local in GENERIC_GREETING_WORDS or local in ("hello", "info", "contact", "enquiries", "team", "sales", "support", "careers", "jobs", "hr", "admin", "office", "press", "legal"):
+                flags.append("generic inbox")
+            if not first_email_greeting(company.get("first_sent_snippet") or ""):
+                flags.append("first email's greeting not on record; row name used" if greeting != "Hello," else "no name: opens Hello,")
+            entry = {"name": name, "to": d["to"], "subject": d["subject"], "greeting": greeting, "flags": flags,
+                     "days_waiting": r.get("days_waiting"), "sent_count": r.get("sent_count"),
+                     "first_email": (r.get("last_email_at") or "")[:10],
+                     "first_opening": (company.get("first_sent_snippet") or "")[:60]}
+            if dry_run:
+                entry["body"] = d["body"]
+                out["sent"].append(entry)
+                continue
+            try:
+                # send_outreach is the card's handler (a coroutine with synchronous
+                # internals); a private loop in this thread runs it to completion.
+                res = _aio.run(send_outreach(OutreachSendRequest(to=d["to"], subject=d["subject"], body=d["body"], company_name=name)))
+                entry["result"] = res.get("status")
+                out["sent"].append(entry)
+                bq_handler.add_activity_note(name, "Follow-up sent by the bulk run (same template and send path as the card).",
+                                             created_by="followup-run")
+                _time.sleep(1.5)   # SMTP courtesy gap
+            except HTTPException as e:
+                out["errors"].append({"name": name, "error": str(e.detail)})
+            except Exception as e:
+                out["errors"].append({"name": name, "error": str(e)})
+
+    import asyncio
+    await asyncio.to_thread(_run)
     out["elapsed_s"] = round(_time.time() - t0, 1)
     out["remaining"] = max(0, len(eligible) - len([s for s in out["sent"] if not dry_run]))
     return out
