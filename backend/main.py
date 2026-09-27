@@ -4465,7 +4465,9 @@ async def admin_followup_send(request: Request,
     from services.outreach_service import draft_followup_email
     t0 = _time.time()
     queue = await get_followups(days=min_days, reply_days=7, entity="company")   # every arg explicit: a Query default is not a value when called directly
-    eligible = [r for r in queue if r.get("type") == "waiting_on_them" and r.get("status") == "Contacted"]
+    if queue.get("error"):
+        raise HTTPException(status_code=500, detail=f"follow-up queue failed: {queue['error']}")
+    eligible = [r for r in (queue.get("followups") or []) if r.get("type") == "waiting_on_them" and r.get("status") == "Contacted"]
     wanted = {n.strip().lower() for n in names.split(",") if n.strip()}
     if wanted:
         eligible = [r for r in eligible if (r.get("name") or "").lower() in wanted]
