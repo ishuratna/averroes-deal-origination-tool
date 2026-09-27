@@ -1741,6 +1741,13 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 SELECT t.name, t.status, t.contact_name, {fit_col},
                        {extra_cols},
                        IFNULL(n.sent_count, 0) AS sent_count,
+                       -- A follow-up sent FROM THE TOOL is on the row before the
+                       -- next sync files it in email_log: the first send stamps
+                       -- contacted_at and outreach_sent_at together, a later
+                       -- send moves only outreach_sent_at (the card's fallback
+                       -- rule, lib/outreach.ts hasFollowedUp). Without this the
+                       -- bulk run offered five companies a THIRD email (28 Sep).
+                       IFNULL(TIMESTAMP_DIFF(t.outreach_sent_at, t.contacted_at, SECOND), 0) > 60 AS tool_followed_up,
                        s.sent_at AS last_sent_at, s.subject AS sent_subject,
                        s.snippet AS sent_snippet, s.counterparty_email AS sent_to,
                        r.sent_at AS last_recv_at, r.subject AS recv_subject,
@@ -1806,7 +1813,7 @@ async def get_followups(days: int = Query(14, description="'Waiting on them' thr
                 -- follow-up is the answer. Later stages keep the reminder: a
                 -- second email there is a reply in a live conversation.
                 (NOT owed AND CURRENT_TIMESTAMP() >= due_at
-                 AND NOT (status = 'Contacted' AND sent_count >= 2))
+                 AND NOT (status = 'Contacted' AND (sent_count >= 2 OR tool_followed_up)))
             )
             ORDER BY owed DESC, days_waiting DESC""",
             job_config=bq_lib.QueryJobConfig(query_parameters=[

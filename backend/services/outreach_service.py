@@ -129,6 +129,10 @@ GENERIC_GREETING_WORDS = {
     "founder", "ceo", "cto", "cfo", "director", "management", "business", "company", "the",
 }
 
+_NOT_A_FIRST_NAME = {"you", "there", "all", "everyone", "sir", "madam", "prof", "professor", "dr", "mr",
+                     "mrs", "ms", "miss", "customerservice", "dpo", "webmaster", "postmaster", "noreply",
+                     "no-reply", "unknown", "none", "null", "test", "user", "owner", "hey", "hiya"}
+
 _GREETING_LINE = re.compile(r"^\s*\[?\s*(hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\s+([^,\n\[\]]{1,40}?)\s*,", re.I)
 
 
@@ -156,11 +160,16 @@ def followup_greeting(company_data: Dict) -> str:
     if g:
         return g
     first, _ = _greeting_for(company_data)
-    if first and first.lower().strip(".") in GENERIC_GREETING_WORDS:
-        first = ""
     local = (company_data.get("contact_email") or "").split("@")[0].lower()
-    if first and first.lower() == local and local in GENERIC_GREETING_WORDS:
-        first = ""
+    # A name is used only when it looks like a person's first name: letters
+    # only, not an inbox word, not a title, and not the address's own local
+    # part ("Hi Customerservice,", "Hi Dpo,", "Hi You," were all row names).
+    if first:
+        f = first.strip(".").lower()
+        if (not re.fullmatch(r"[A-Za-z][a-z'\-]{1,24}", first.strip("."))
+                or f in GENERIC_GREETING_WORDS or f in _NOT_A_FIRST_NAME
+                or f == local or f == local.replace(".", "").replace("-", "").replace("_", "")):
+            first = ""
     return f"Hi {first}," if first else "Hello,"
 
 
