@@ -249,7 +249,11 @@ chk("the consistent filings keep their valuation", "post_money" in dd["t18a"] an
 
 print()
 print("── The filing list's 'GBP x' is the capital after: duplicates, ordering, totals and reductions, all free ──")
-from services.funding_ladder import capital_from_description  # noqa: E402
+from services.funding_ladder import capital_from_description, capital_from_filing  # noqa: E402
+chk("the API item carries the figure in description_values, not the description",
+    capital_from_filing({"description": "capital-allotment-shares", "description_values": {"date": "2018-05-11", "capital": [{"currency": "GBP", "figure": "739.9635"}]}}), 739.9635)
+chk("...with a thousands separator", capital_from_filing({"description": "capital-allotment-shares", "description_values": {"capital": [{"currency": "GBP", "figure": "1,121.302"}]}}), 1121.302)
+chk("...website text as the fallback", capital_from_filing({"description": "Statement of capital following an allotment of shares on 8 May 2019 GBP 1,121.302"}), 1121.302)
 chk("capital after from the description", capital_from_description("Statement of capital following an allotment of shares on 11 May 2018  GBP 739.9635"), 739.9635)
 chk("with a thousands separator", capital_from_description("Statement of capital following an allotment of shares on 8 May 2019  GBP 1,121.302"), 1121.302)
 chk("no figure, no value", capital_from_description("Resolution of adoption of Articles"), None)

@@ -53,7 +53,7 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LEDGER_VERSION = 4             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money; 4: capital-after from the filing list, reductions
+LEDGER_VERSION = 5             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money; 4: capital-after from the filing list, reductions; 5: read it from description_values
 MAX_PDF_READS_PER_RUN = 8      # text extraction is free; this bounds the downloads
 MAX_AI_FALLBACKS_PER_RUN = 3   # a scanned SH01 costs one ungrounded Gemini call
 SMALL_ISSUE_GBP = 50_000       # under this, an allotment is not a fundraising
@@ -154,6 +154,26 @@ def capital_from_description(description: str) -> Optional[float]:
     re-filed (Arcus, 14 May and 10 Jul 2018; 29 May and 5 Jun 2019)."""
     m = re.search(r"\bGBP\s*([0-9][0-9,]*(?:\.[0-9]+)?)", description or "")
     return _f(m.group(1)) if m else None
+
+
+def capital_from_filing(filing: Dict) -> Optional[float]:
+    """The same figure from an API filing-history item. The API's
+    `description` is a template key ("capital-allotment-shares"); the
+    rendered values sit in `description_values`, where `capital` is a list
+    of {"currency", "figure"}. The website text is the fallback."""
+    dv = filing.get("description_values") or {}
+    caps = dv.get("capital")
+    if isinstance(caps, list):
+        for c in caps:
+            if isinstance(c, dict) and (c.get("currency") or "GBP").upper() == "GBP":
+                v = _f(str(c.get("figure") or ""))
+                if v:
+                    return v
+    elif isinstance(caps, dict):
+        v = _f(str(caps.get("figure") or ""))
+        if v:
+            return v
+    return capital_from_description(filing.get("description") or "")
 
 
 def _round_from(reading: Dict, filing: Dict) -> Dict:
@@ -470,11 +490,11 @@ def get_funding_ladder(company_number: str, company_name: str, stored_json: str 
                if ("allotment" in (f.get("description") or "").lower()
                    or (f.get("type") or "").upper().startswith("SH01"))]
     for f in filings:
-        f["capital_after"] = capital_from_description(f.get("description") or "")
+        f["capital_after"] = capital_from_filing(f)
     capital_by_id = {f["transaction_id"]: f["capital_after"] for f in filings if f.get("transaction_id") and f.get("capital_after")}
     # Capital reductions (SH19 statement of capital, RES13 resolution): after
     # one, a lower total in issue is lawful, not a misread.
-    reductions = [{"date": f.get("date") or "", "capital": capital_from_description(f.get("description") or ""),
+    reductions = [{"date": f.get("date") or "", "capital": capital_from_filing(f),
                    "type": f.get("type") or ""}
                   for f in history
                   if (f.get("type") or "").upper() == "SH19"
