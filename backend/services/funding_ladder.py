@@ -53,7 +53,7 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LEDGER_VERSION = 5             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money; 4: capital-after from the filing list, reductions; 5: read it from description_values
+LEDGER_VERSION = 6             # 2: small-issue rule, duplicate fold, e-filed layout; 3: total consistency, price rule only for small money; 4: capital-after from the filing list, reductions; 5: read it from description_values; 6: allotment = total minus previous total
 MAX_PDF_READS_PER_RUN = 8      # text extraction is free; this bounds the downloads
 MAX_AI_FALLBACKS_PER_RUN = 3   # a scanned SH01 costs one ungrounded Gemini call
 SMALL_ISSUE_GBP = 50_000       # under this, an allotment is not a fundraising
@@ -270,6 +270,22 @@ def build_ladder(readings: List[Dict], filings: List[Dict], reductions: Optional
         if t:
             if any(hi_date < c["date"] <= r["date"] for c in cuts):
                 high = 0   # a reduction between the last filing and this one resets the floor
+            # SHARES ALLOTTED = this total minus the previous total, when both
+            # come from the filing list's capital (exact). An AI reading of a
+            # scan returned the total as the allotment for Arcus 2014 and 2016
+            # (1,179,984 "allotted" when 30,758 were); the difference is the
+            # truth and the money raised follows from it.
+            if high and r.get("capital_after") and r.get("shares") and r["kind"] != "allotment (price not stated)":
+                implied = t - high
+                if 0 < implied and abs(r["shares"] - implied) > max(2, 0.01 * implied) and r["shares"] >= t * 0.5:
+                    price = r.get("price")
+                    r["shares_as_read"] = r["shares"]
+                    r["shares"] = implied
+                    if price is not None:
+                        r["raised"] = round(implied * price, 2)
+                        if "post_money" in r:
+                            r["pre_money"] = round(r["post_money"] - r["raised"], 2)
+                    r["note"] = f"allotment read as {r['shares_as_read']:,}; the filing list's totals say {implied:,}, used"
             if t < high:
                 r["note"] = f"statement of capital ({t:,}) below an earlier filing's ({high:,}); valuation not derived"
                 r.pop("post_money", None)

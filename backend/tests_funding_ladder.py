@@ -286,6 +286,17 @@ G2 = merge_ledger(G, [], [], capital_by_id={"a": 739.9635})
 chk("a rebuild keeps the fold and the reductions", (len(G2["rounds"]), G2["reductions"] == G["reductions"]), (len(G["rounds"]), True))
 
 print()
+print("── An AI reading that returns the total as the allotment is corrected from the filing list ──")
+S = build_ladder([{"allotment_date": "2014-04-22", "allotments": [{"share_class": "Ordinary", "shares": 10800, "nominal": 0.0005, "paid": 0.0005}], "total_shares_after": 1149226, "_source": "ai"},
+                  {"allotment_date": "2014-04-25", "allotments": [{"share_class": "Ordinary", "shares": 1179984, "nominal": 0.0005, "paid": 0.3267}], "total_shares_after": 1179984, "_source": "ai"}],
+                 [{"date": "2014-05-07", "transaction_id": "s1", "capital_after": 574.613}, {"date": "2014-06-03", "transaction_id": "s2", "capital_after": 589.992}])
+s2 = [x for x in S["rounds"] if x["transaction_id"] == "s2"][0]
+chk("shares allotted = 1,179,984 - 1,149,226", (s2["shares"], s2["shares_as_read"]), (30758, 1179984))
+chk("raised follows", s2["raised"], round(30758 * 0.3267, 2))
+chk("post-money still total x price", s2["post_money"], round(1179984 * 0.3267, 2))
+chk("...and it is a small issue at GBP 10k, not a GBP 385k round", s2["kind"], "small issue")
+
+print()
 print("── A corrected ladder may replace ITS OWN earlier fill, never anyone else's ──")
 v1_like = {"equity_rounds": 3, "total_raised": 4948995.64, "last_round": by["tx-nov"] | {"post_money": 2251604.0, "raised": 9000.0, "date": "2019-11-28"}}
 v1_fills = column_fills(v1_like, {})
