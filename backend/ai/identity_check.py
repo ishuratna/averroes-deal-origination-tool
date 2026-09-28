@@ -194,7 +194,12 @@ def audit_row(company: Dict, domain_owners: Optional[Dict[str, str]] = None) -> 
     # realtarisk.com; SmartFill: realtafusion.com, a Wisconsin fusion startup).
     seed_dom = registrable_domain(company.get("seed_website") or "")
     if seed_dom and site_dom and seed_dom != site_dom:
-        signals.append(f"website '{site_dom}' REPLACED the source's '{seed_dom}' - enrichment researched a different company")
+        # abc.co.uk -> abc.com is a redirect or a TLD move, not another
+        # company: same stem, no signal. Anything else is raised, including
+        # a shared substring (realtarisk -> realtafusion was a mixup).
+        stem = lambda d: re.sub(r"[^a-z0-9]", "", d.split(".")[0])
+        if stem(seed_dom) != stem(site_dom):
+            signals.append(f"website '{site_dom}' REPLACED the source's '{seed_dom}' - enrichment researched a different company")
 
     if mail_dom in PLACEHOLDER_MAIL:
         signals.append(f"contact email is a FABRICATED placeholder ('{mail_dom}') - clear it and re-run the waterfall")

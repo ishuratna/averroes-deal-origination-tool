@@ -3517,6 +3517,14 @@ async def admin_funding_ladder(request: Request, company_name: str):
                        for r in L.get("rounds") or []]}
 
 
+@app.post("/admin/smartfill/{company_name}")
+async def smartfill_company_admin(request: Request, company_name: str):
+    """Token alias of single-company SmartFill for ops (doctrine 6a: one
+    handler, two routes). Used to re-research repaired identity rows."""
+    _require_token(request)
+    return await smartfill_company(company_name)
+
+
 @app.get("/admin/company")
 async def admin_company(request: Request, name: str = Query(...)):
     """One company's full row plus its year store, for a parity check from
@@ -5831,7 +5839,9 @@ async def identity_seed_backfill(request: Request, req: SeedBackfillRequest,
 async def identity_repair(request: Request,
                           dry_run: int = Query(1, description="1 = preview (default), 0 = apply"),
                           reenrich: int = Query(0, description="1 = also re-run guarded SmartEnrich on cleared cross-contamination rows (costs AI)"),
-                          limit: int = Query(25, description="Max re-enrichments in one run")):
+                          limit: int = Query(25, description="Max re-enrichments in one run"),
+                          names: str = Query("", description="comma-separated: act on these rows only (and ignore the emailed-row guard for them)"),
+                          tiers: str = Query("", description="comma-separated tiers to act on (default: all)")):
     """Repair the audit's tier 1 + 2 (per Ishu, 28 Aug 2026).
 
     ZERO-AI step (always): clear the WRONG contact emails -
@@ -5859,15 +5869,25 @@ async def identity_repair(request: Request,
             d = registrable_domain(c.get("website") or "")
             if d:
                 domain_owners.setdefault(d, c.get("name"))
-        to_clear, duplicates = [], []
+        to_clear, duplicates, held = [], [], []
+        wanted = {n.strip().lower() for n in names.split(",") if n.strip()}
+        tier_set = {t.strip() for t in tiers.split(",") if t.strip()}
         for c in rows:
             if c.get("source") == "Internal Test":
+                continue
+            if wanted and (c.get("name") or "").lower() not in wanted:
                 continue
             got = audit_row(c, domain_owners)
             if not got["suspect"]:
                 continue
             sig = " ".join(got["signals"])
             if "REPLACED the source" in sig:
+                # A row we have already EMAILED is never wiped by the sweep: a
+                # founder may have replied to the "wrong" site (a rebrand). It
+                # is repaired only when named explicitly (Ishu, 28 Sep 2026).
+                if not wanted and (c.get("outreach_sent_at") or c.get("status") in bq_handler.WORK_DONE_STAGES):
+                    held.append({"name": c["name"], "status": c.get("status"), "why": "already emailed; repair by naming it"})
+                    continue
                 to_clear.append({"name": c["name"], "tier": "website_replaced",
                                  "bad_email": c.get("contact_email") or "",
                                  "bad_website": c.get("website") or "", "seed_website": c.get("seed_website") or "",
@@ -5885,10 +5905,12 @@ async def identity_repair(request: Request,
                     to_clear.append({"name": c["name"], "tier": "cross_contamination",
                                      "bad_email": c.get("contact_email") or "", "signal": got["signals"][0]})
 
+        if tier_set:
+            to_clear = [x for x in to_clear if x["tier"] in tier_set]
         if dry_run:
             return {"status": "Preview", "dry_run": True,
                     "would_clear": len(to_clear), "clear_list": sorted(to_clear, key=lambda x: x["name"]),
-                    "duplicates_detected": duplicates,
+                    "held_emailed": held, "duplicates_detected": duplicates,
                     "message": "Nothing was changed. Re-run with dry_run=0 to apply; add reenrich=1 "
                                "to also re-research the cross-contamination rows (guarded)."}
 
@@ -5982,7 +6004,7 @@ async def identity_repair(request: Request,
                     reenrich_failures.append(f"{item['name']}: {e}")
 
         return {"status": "Success", "cleared": sorted(cleared),
-                "failures": failures, "duplicates_detected": duplicates,
+                "failures": failures, "held_emailed": held, "duplicates_detected": duplicates,
                 "reenriched": reenriched, "reenrich_failures": reenrich_failures,
                 "message": f"Cleared {len(cleared)} wrong emails"
                            + (f", re-enriched {len(reenriched)} (guarded)" if reenrich else
