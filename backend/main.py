@@ -2724,7 +2724,19 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
 
     # Step 3: Companies House financials (UK/Ireland only)
     ch_data = {}
-    if qual.get("is_uk_ireland"):
+    # THE REGISTER RULE (28 Sep 2026): Companies House covers UK-registered
+    # companies. An Irish company files with the CRO, so a name match on CH
+    # is a coincidence by construction (Realta -> "REALTA LIMITED"). For a
+    # company outside the register, only a number we KNOW (stored from a
+    # structured source, or published on its own website) opens the step.
+    from services.companies_house_service import outside_uk_register
+    _outside = outside_uk_register(company_data.get("hq_country", ""), company_data.get("region", ""),
+                                   company_data.get("hq_location", ""))
+    _have_number = bool(company_data.get("ch_company_number") or company_data.get("registration_number")
+                        or res.get("site_company_number"))
+    if qual.get("is_uk_ireland") and _outside and not _have_number:
+        logger.info(f"'{company_name}' is registered outside the UK (Ireland): Companies House name search skipped")
+    elif qual.get("is_uk_ireland"):
         logger.info(f"UK/Ireland company — extracting Companies House financials for '{company_name}'")
         # Prefer a number we already KNOW over a fresh name search, in order:
         # 1. already stored on the row (CH SIC ingest, CH registry scraper,
@@ -5735,7 +5747,7 @@ async def identity_audit(request: Request,
         #   domain_mismatch      email/site domains differ (often benign:
         #                        brand vs legal domain, parent groups)
         #   ch_name_mismatch     CH match shares nothing with the name
-        tiers = {"website_replaced": [], "cross_contamination": [], "fabricated_email": [],
+        tiers = {"website_replaced": [], "ch_outside_register": [], "cross_contamination": [], "fabricated_email": [],
                  "domain_mismatch": [], "ch_name_mismatch": []}
         suspects = []
         for c in rows:
@@ -5749,6 +5761,8 @@ async def identity_audit(request: Request,
                 sig = " ".join(got["signals"])
                 if "REPLACED the source" in sig:
                     tiers["website_replaced"].append(entry)   # the whole row is the wrong company
+                elif "OUTSIDE the UK register" in sig:
+                    tiers["ch_outside_register"].append(entry)
                 elif "ANOTHER company" in sig:
                     tiers["cross_contamination"].append(entry)
                 elif "FABRICATED placeholder" in sig:
@@ -5892,6 +5906,10 @@ async def identity_repair(request: Request,
                                  "bad_email": c.get("contact_email") or "",
                                  "bad_website": c.get("website") or "", "seed_website": c.get("seed_website") or "",
                                  "signal": [x for x in got["signals"] if "REPLACED" in x][0]})
+            elif "OUTSIDE the UK register" in sig:
+                to_clear.append({"name": c["name"], "tier": "ch_outside_register",
+                                 "bad_email": "", "signal": [x for x in got["signals"] if "OUTSIDE" in x][0],
+                                 "ch": c.get("ch_official_name") or c.get("ch_company_number") or ""})
             elif "FABRICATED placeholder" in sig:
                 to_clear.append({"name": c["name"], "tier": "fabricated_email",
                                  "bad_email": c.get("contact_email") or "", "signal": got["signals"][0]})
@@ -5973,8 +5991,41 @@ async def identity_repair(request: Request,
                     cleared.append(item["name"])
             except Exception as e:
                 failures.append(f"website_replaced bulk: {e}")
+        # CH_OUTSIDE_REGISTER rows: only the register-derived data goes; the
+        # website, description and contact are the company's own.
+        outside = [i for i in to_clear if i["tier"] == "ch_outside_register"]
+        if outside:
+            names_o = [i["name"] for i in outside]
+            ch_cols = _CH_COLS + ["revenue_y1", "revenue_y1_date", "revenue_y2", "revenue_y2_date", "revenue_y3", "revenue_y3_date",
+                                  "profit_y1", "profit_y1_date", "gross_profit_y1", "total_assets_y1", "net_assets_y1", "cash_y1",
+                                  "employees_ch", "filing_type"]
+            try:
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` SET {', '.join(f'{c} = NULL' for c in ch_cols)},
+                          identity_note = CONCAT(IFNULL(identity_note, ''), '; CH name match cleared (registered outside the UK)')
+                        WHERE name IN UNNEST(@names)""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ArrayQueryParameter("names", "STRING", names_o)])).result()
+                try:
+                    ft = bq_handler._ensure_financials_table()
+                    bq_handler.client.query(
+                        f"DELETE FROM `{ft}` WHERE company_name IN UNNEST(@names) AND source = 'Companies House'",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ArrayQueryParameter("names", "STRING", names_o)])).result()
+                except Exception as e:
+                    logger.warning(f"[Identity repair] CH financials clear failed: {e}")
+                for item in outside:
+                    bq_handler.add_activity_note(
+                        item["name"],
+                        f"Identity repair: Companies House match '{item['ch']}' cleared. The company is registered "
+                        f"outside the UK (Ireland), so a UK company of the same name is a coincidence; the filed "
+                        f"figures that came with it are removed.",
+                        created_by="identity-repair")
+                    cleared.append(item["name"])
+            except Exception as e:
+                failures.append(f"ch_outside_register bulk: {e}")
         for item in to_clear:
-            if item["tier"] == "website_replaced":
+            if item["tier"] in ("website_replaced", "ch_outside_register"):
                 continue
             try:
                 bq_handler.client.query(

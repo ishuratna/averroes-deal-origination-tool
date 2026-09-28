@@ -121,5 +121,19 @@ chk("a live website that matches its seed raises nothing", any("REPLACED" in x f
 chk("no seed on file: the audit stays silent rather than guessing", any("REPLACED" in x for x in audit_row({"name": "X", "website": "https://x.com/"}, {})["signals"]), False)
 
 print()
+print("── The register rule: an Irish company gets no Companies House match on its name ──")
+from services.companies_house_service import outside_uk_register  # noqa: E402
+chk("IE is outside the register", outside_uk_register("IE"), True)
+chk("'Limerick, Ireland' is outside", outside_uk_register("", "", "Limerick, Ireland"), True)
+chk("Northern Ireland is ON the register", outside_uk_register("", "", "Belfast, Northern Ireland"), False)
+chk("GB / empty say nothing against the register", (outside_uk_register("GB"), outside_uk_register("")), (False, False))
+chk("audit flags a name-only CH match on an Irish row",
+    any("OUTSIDE the UK register" in x for x in audit_row({"name": "Realta", "hq_country": "IE", "ch_company_number": "11016995",
+                                                              "ch_official_name": "REALTA LIMITED", "ch_match_confidence": "high"}, {})["signals"]), True)
+chk("...but not a VERIFIED number (published on the company's own site)",
+    any("OUTSIDE" in x for x in audit_row({"name": "Realta", "hq_country": "IE", "ch_company_number": "11016995",
+                                            "ch_match_confidence": "verified-website"}, {})["signals"]), False)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

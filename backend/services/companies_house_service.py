@@ -951,6 +951,30 @@ def get_capital_events(company_number: str) -> Dict:
     return {"last_share_allotment": items[0].get("date", "") if items else ""}
 
 
+_IRISH = ("ireland", "republic of ireland", "eire", "éire", "ie", "irl")
+
+
+def outside_uk_register(hq_country: str = "", region: str = "", hq_location: str = "") -> bool:
+    """True when the company is registered somewhere Companies House does not
+    cover, so a NAME match there can only be a coincidence. PURE.
+
+    Today that means the Republic of Ireland (the CRO): Realta (Limerick,
+    28 Sep 2026) was matched to a UK "REALTA LIMITED" on the name alone.
+    Northern Ireland IS on Companies House and is never treated as Irish
+    here. An empty country says nothing and returns False: the name gate
+    keeps deciding for those."""
+    c = (hq_country or "").strip().lower()
+    if c in _IRISH:
+        return True
+    for field in (region, hq_location):
+        f = (field or "").strip().lower()
+        if not f or "northern ireland" in f:
+            continue
+        if f in _IRISH or f.endswith(", ireland") or f.endswith(" ireland") or f == "ireland":
+            return True
+    return False
+
+
 def extract_ch_financials(
     company_name: str,
     sector: str = "",

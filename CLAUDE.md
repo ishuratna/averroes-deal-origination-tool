@@ -820,6 +820,19 @@ mistake is both visible and correctable. This one logged nothing, which is why
   enrichment had never touched, from the live website. A row enriched
   before the guard with no upload on file has no seed and the audit says
   nothing about it: silence over a guess.
+- THE REGISTER RULE (29 Sep 2026). Companies House covers UK-registered
+  companies; an Irish company files with the CRO, so a CH name match for
+  it is a coincidence by construction (Realta, Limerick, re-matched to a
+  UK "REALTA LIMITED" straight after its repair). `outside_uk_register`
+  (PURE, `companies_house_service`) reads hq_country / region /
+  hq_location; Northern Ireland is on the register and is never treated
+  as Irish; an empty country says nothing. SmartFill skips the name
+  search for such a row unless a number is already KNOWN (stored from a
+  structured source, or read off the company's own website). The audit
+  tier `ch_outside_register` lists existing Irish rows with a name-only
+  match (`ch_match_confidence` not `verified*`); the repair clears the
+  `ch_*` columns and the filed-figure projection and deletes the
+  Companies House cells from the year store, and touches nothing else.
 - Retro: GET /admin/identity-audit is ZERO AI - it finds the contradictions a
   past mixup leaves (contact email on ANOTHER universe company's domain, CH
   match sharing no core word with the name). Only listed suspects are worth a

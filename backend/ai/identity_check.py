@@ -211,6 +211,20 @@ def audit_row(company: Dict, domain_owners: Optional[Dict[str, str]] = None) -> 
         else:
             signals.append(f"contact email domain '{mail_dom}' does not match the website '{site_dom}'")
 
+    # A Companies House match on a company registered outside the UK is a
+    # coincidence unless the number was verified (stored from a structured
+    # source, read off the company's own site, or confirmed by an officer).
+    try:
+        from services.companies_house_service import outside_uk_register
+        conf = (company.get("ch_match_confidence") or "").lower()
+        if company.get("ch_company_number") and not conf.startswith("verified") \
+                and outside_uk_register(company.get("hq_country") or "", company.get("region") or "",
+                                        company.get("hq_location") or ""):
+            signals.append(f"CH match '{company.get('ch_official_name') or company['ch_company_number']}' on a company "
+                           f"registered OUTSIDE the UK register (Ireland): a name coincidence")
+    except ImportError:
+        pass
+
     ch_name = company.get("ch_official_name") or ""
     if ch_name and name:
         ours, theirs = _core_tokens(name), _core_tokens(ch_name)
