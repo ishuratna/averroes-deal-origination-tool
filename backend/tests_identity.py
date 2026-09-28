@@ -107,5 +107,19 @@ chk("genuinely alien CH name still flags",
     audit_row({"name": "Hortis", "ch_official_name": "MERIDIAN CATERING LIMITED"}, {})["suspect"], True)
 
 print()
+print("── The seed anchor (Realta, 28 Sep 2026): a replaced website cannot vouch for itself ──")
+realta = {"name": "Realta", "website": "https://realtafusion.com/", "seed_website": "https://realtarisk.com",
+          "contact_email": "kieran@realtafusion.com", "hq_city": "Limerick"}
+a = audit_row(realta, {})
+chk("audit flags the live website as REPLACING the source's", any("REPLACED the source" in x for x in a["signals"]), True)
+chk("the guard anchors on the SEED domain, not the live website", seed_anchors(realta)["domain"], "realtarisk.com")
+chk("...so research returning the fusion company is a mismatch",
+    check_identity(seed_anchors(realta), {"website": "https://realtafusion.com", "hq_city": "Madison"})["verdict"], "mismatch")
+chk("...and research returning the risk company confirms on domain + city",
+    check_identity(seed_anchors(realta), {"website": "https://www.realtarisk.com/about", "hq_city": "Limerick"})["verdict"], "confirmed")
+chk("a live website that matches its seed raises nothing", any("REPLACED" in x for x in audit_row({"name": "X", "website": "https://x.com/", "seed_website": "x.com"}, {})["signals"]), False)
+chk("no seed on file: the audit stays silent rather than guessing", any("REPLACED" in x for x in audit_row({"name": "X", "website": "https://x.com/"}, {})["signals"]), False)
+
+print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

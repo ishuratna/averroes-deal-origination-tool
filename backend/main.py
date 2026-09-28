@@ -5727,7 +5727,7 @@ async def identity_audit(request: Request,
         #   domain_mismatch      email/site domains differ (often benign:
         #                        brand vs legal domain, parent groups)
         #   ch_name_mismatch     CH match shares nothing with the name
-        tiers = {"cross_contamination": [], "fabricated_email": [],
+        tiers = {"website_replaced": [], "cross_contamination": [], "fabricated_email": [],
                  "domain_mismatch": [], "ch_name_mismatch": []}
         suspects = []
         for c in rows:
@@ -5739,7 +5739,9 @@ async def identity_audit(request: Request,
                          "signals": got["signals"]}
                 suspects.append(entry)
                 sig = " ".join(got["signals"])
-                if "ANOTHER company" in sig:
+                if "REPLACED the source" in sig:
+                    tiers["website_replaced"].append(entry)   # the whole row is the wrong company
+                elif "ANOTHER company" in sig:
                     tiers["cross_contamination"].append(entry)
                 elif "FABRICATED placeholder" in sig:
                     tiers["fabricated_email"].append(entry)
@@ -5772,6 +5774,57 @@ async def identity_audit(request: Request,
                            f"(brand vs legal domain, parent groups) - review before spending."}
 
     return _stream_json(_run)
+
+
+class SeedBackfillRequest(BaseModel):
+    seeds: List[dict] = []          # [{"name", "website", "description"}] from the original upload files
+    lock_unenriched: int = 1        # rows never enriched: their live website IS the seed
+
+
+@app.post("/admin/identity/seed-backfill")
+async def identity_seed_backfill(request: Request, req: SeedBackfillRequest,
+                                 dry_run: int = Query(1, description="1 = count only (default), 0 = write")):
+    """Fill `seed_website` / `seed_description` for rows ingested before the
+    seed existed (28 Sep 2026). FILL-ONLY, never overwrites a seed. Two
+    sources: the original upload files (re-read locally, posted here as
+    name/website/description), and, for rows never touched by enrichment,
+    the live website itself. A row enriched before the guard with no upload
+    on file keeps no seed: the audit cannot judge it and says so."""
+    _require_token(request)
+    from google.cloud import bigquery as bq_lib
+    seeds = [x for x in req.seeds if (x.get("name") or "").strip() and (x.get("website") or "").strip()]
+    out = {"dry_run": bool(dry_run), "seeds_posted": len(seeds)}
+    if dry_run:
+        q = bq_handler._run_query(f"""SELECT COUNTIF(IFNULL(seed_website,'') = '') AS without_seed,
+                                          COUNTIF(IFNULL(seed_website,'') = '' AND last_smartfill_at IS NULL AND IFNULL(website,'') != '') AS lockable
+                                       FROM `{bq_handler.table_id}`""")
+        out.update(q[0] if q else {})
+        return out
+    written = 0
+    for i in range(0, len(seeds), 500):
+        chunk = seeds[i:i + 500]
+        bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}` t
+                SET seed_website = u.w, seed_description = IF(IFNULL(t.seed_description,'') = '', u.d, t.seed_description)
+                FROM (SELECT n AS name, w, d FROM UNNEST(@names) AS n WITH OFFSET i
+                      JOIN UNNEST(@sites) AS w WITH OFFSET j ON i = j
+                      JOIN UNNEST(@descs) AS d WITH OFFSET k ON i = k) u
+                WHERE t.name = u.name AND IFNULL(t.seed_website, '') = ''""",
+            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                bq_lib.ArrayQueryParameter("names", "STRING", [x["name"].strip() for x in chunk]),
+                bq_lib.ArrayQueryParameter("sites", "STRING", [x["website"].strip() for x in chunk]),
+                bq_lib.ArrayQueryParameter("descs", "STRING", [(x.get("description") or "")[:4000] for x in chunk]),
+            ])).result()
+        written += len(chunk)
+    out["seed_rows_posted"] = written
+    if req.lock_unenriched:
+        job = bq_handler.client.query(f"""UPDATE `{bq_handler.table_id}`
+                SET seed_website = website, seed_description = IF(IFNULL(seed_description,'') = '', description, seed_description)
+                WHERE IFNULL(seed_website, '') = '' AND last_smartfill_at IS NULL AND IFNULL(website, '') != ''""")
+        job.result()
+        out["locked_unenriched"] = job.num_dml_affected_rows
+    q = bq_handler._run_query(f"SELECT COUNTIF(IFNULL(seed_website,'') != '') AS with_seed, COUNT(*) AS total FROM `{bq_handler.table_id}`")
+    out.update(q[0] if q else {})
+    return out
 
 
 @app.post("/admin/identity-repair")
@@ -5814,7 +5867,12 @@ async def identity_repair(request: Request,
             if not got["suspect"]:
                 continue
             sig = " ".join(got["signals"])
-            if "FABRICATED placeholder" in sig:
+            if "REPLACED the source" in sig:
+                to_clear.append({"name": c["name"], "tier": "website_replaced",
+                                 "bad_email": c.get("contact_email") or "",
+                                 "bad_website": c.get("website") or "", "seed_website": c.get("seed_website") or "",
+                                 "signal": [x for x in got["signals"] if "REPLACED" in x][0]})
+            elif "FABRICATED placeholder" in sig:
                 to_clear.append({"name": c["name"], "tier": "fabricated_email",
                                  "bad_email": c.get("contact_email") or "", "signal": got["signals"][0]})
             elif "ANOTHER company" in sig:
@@ -5836,8 +5894,55 @@ async def identity_repair(request: Request,
 
         from google.cloud import bigquery as bq_lib
         cleared, failures = [], []
+        # A REPLACED WEBSITE means every researched field on the row describes
+        # the other company: the site, the description, the contact, the
+        # Companies House match and everything hung off it, the draft written
+        # from that description. All of it goes; the seeds come back; the
+        # status and the outreach history stay (doctrine 3a: enrichment, and
+        # its repair, never undo work). Cleared by column list, never DELETE.
+        _CH_COLS = [c for c, _ in bq_handler.EXPANDED_COLUMNS if c.startswith("ch_")]
+        _RESEARCHED = ["description", "contact_name", "contact_email", "contact_email_kind", "contact_email_name",
+                       "contact_email_source", "original_contact_email", "original_contact_name",
+                       "linkedin_url", "company_linkedin", "outreach_draft_subject", "outreach_draft_body",
+                       "outreach_draft_to", "outreach_drafted_at", "identity_status", "identity_note",
+                       "revenue_source", "news_items", "score_details", "averroes_fit_score", "revenue_band",
+                       "revenue_estimate_m", "last_smartfill_at",
+                       # figures read from the wrong company's filings
+                       "revenue_y1", "revenue_y1_date", "revenue_y2", "revenue_y2_date", "revenue_y3", "revenue_y3_date",
+                       "profit_y1", "profit_y1_date", "gross_profit_y1", "total_assets_y1", "net_assets_y1", "cash_y1",
+                       "employees_ch", "filing_type"] + _CH_COLS
         for item in to_clear:
             try:
+                if item["tier"] == "website_replaced":
+                    sets = ", ".join(f"{c} = NULL" for c in _RESEARCHED if c not in ("identity_status", "identity_note"))
+                    bq_handler.client.query(
+                        f"""UPDATE `{bq_handler.table_id}` SET {sets},
+                              website = seed_website,
+                              description = NULLIF(seed_description, ''),
+                              identity_status = 'repaired',
+                              identity_note = @note
+                            WHERE name = @name""",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("note", "STRING", f"repaired: {item['signal']}"[:500]),
+                            bq_lib.ScalarQueryParameter("name", "STRING", item["name"]),
+                        ])).result()
+                    # The year store holds the wrong company's filed years too.
+                    try:
+                        ft = bq_handler._ensure_financials_table()
+                        bq_handler.client.query(
+                            f"DELETE FROM `{ft}` WHERE company_name = @name AND source = 'Companies House'",
+                            job_config=bq_lib.QueryJobConfig(query_parameters=[
+                                bq_lib.ScalarQueryParameter("name", "STRING", item["name"])])).result()
+                    except Exception as e:
+                        logger.warning(f"[Identity repair] financials clear failed for {item['name']}: {e}")
+                    bq_handler.add_activity_note(
+                        item["name"],
+                        f"Identity repair: the row had been enriched as the wrong company ({item['signal']}). "
+                        f"Website restored to {item['seed_website']}; description, contact ({item['bad_email'] or 'none'}), "
+                        f"Companies House match, fit score and unsent draft cleared. Re-run SmartFill to research the right company.",
+                        created_by="identity-repair")
+                    cleared.append(item["name"])
+                    continue
                 bq_handler.client.query(
                     f"""UPDATE `{bq_handler.table_id}` SET contact_email = NULL,
                           contact_email_kind = '', contact_email_name = '',
@@ -5862,14 +5967,19 @@ async def identity_repair(request: Request,
             # purpose - each SmartEnrich is grounded and budget-checked, and
             # the identity guard inside it refuses wrong-company results.
             import asyncio as _aio
-            targets = [i["name"] for i in to_clear
-                       if i["tier"] == "cross_contamination" and i["name"] in cleared][:max(1, limit)]
-            for name in targets:
+            targets = [i for i in to_clear
+                       if i["tier"] in ("cross_contamination", "website_replaced") and i["name"] in cleared][:max(1, limit)]
+            for item in targets:
                 try:
-                    _aio.run(smartenrich_company(name))
-                    reenriched.append(name)
+                    if item["tier"] == "website_replaced":
+                        # Everything researched was cleared: a full SmartFill,
+                        # anchored on the restored seed website.
+                        _aio.run(smartfill_company(item["name"]))
+                    else:
+                        _aio.run(smartenrich_company(item["name"]))
+                    reenriched.append(item["name"])
                 except Exception as e:
-                    reenrich_failures.append(f"{name}: {e}")
+                    reenrich_failures.append(f"{item['name']}: {e}")
 
         return {"status": "Success", "cleared": sorted(cleared),
                 "failures": failures, "duplicates_detected": duplicates,

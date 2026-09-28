@@ -269,6 +269,12 @@ class BigQueryHandler:
         # only the one-line summary, so the card can say who is lending now.
         ("ch_funding_rounds", "STRING"),
         ("ch_charges", "STRING"),
+        # THE SEED (28 Sep 2026, Realta): the website and description a row was
+        # INGESTED with, never overwritten by enrichment. The identity guard
+        # anchors on the seed, so a wrong-company website written before the
+        # guard existed cannot vouch for itself; the audit flags any row whose
+        # live website domain differs from its seed.
+        ("seed_website", "STRING"), ("seed_description", "STRING"),
         # Stage timeline: when the company entered its CURRENT stage (drives
         # kanban sorting + stale flag), plus permanent first-entry timestamps
         # per stage (never overwritten — the Contacted date survives later moves)
@@ -783,7 +789,10 @@ class BigQueryHandler:
             if not name:
                 continue
             if name in existing_names:
-                rows_to_merge.append(c)
+                # A re-upload of a known company still carries its source
+                # website/description: fill the seed if the row has none.
+                rows_to_merge.append({**c, "seed_website": c.get("website") or "",
+                                      "seed_description": c.get("description") or ""})
                 continue
 
             def safe_float(val, default=0.0):
@@ -819,6 +828,8 @@ class BigQueryHandler:
                 "growth_signals": bool(c.get("growth_signals", False)),
                 "estimated_ebitda": safe_float(c.get("estimated_ebitda"), 0.0),
                 "ingested_at": datetime.utcnow().isoformat(),
+                "seed_website": c.get("website", "") or "",
+                "seed_description": c.get("description", "") or "",
                 # ── Expanded PitchBook fields ──
                 "contact_title": c.get("contact_title") or "",
                 "contact_phone": c.get("contact_phone") or "",
@@ -1075,7 +1086,8 @@ class BigQueryHandler:
         """
         # All mergeable field names and their BQ types
         MERGE_FIELDS = [
-            ("website", "STRING"), ("sector", "STRING"), ("region", "STRING"),
+            ("website", "STRING"), ("seed_website", "STRING"), ("seed_description", "STRING"),
+            ("sector", "STRING"), ("region", "STRING"),
             ("ownership", "STRING"), ("description", "STRING"),
             ("source", "STRING"), ("contact_name", "STRING"), ("contact_email", "STRING"),
             ("linkedin_url", "STRING"),
@@ -1223,7 +1235,7 @@ class BigQueryHandler:
     # transfer limits.
     _SLIM_DROP = (
         "ch_history", "ch_cap_table", "ch_officer_network", "ch_allottees", "ch_funding_rounds", "ch_charges",
-        "ic_memo", "score_details", "extra_data", "outreach_draft_body",
+        "ic_memo", "score_details", "extra_data", "outreach_draft_body", "seed_description",
         "action_reply_body", "action_rationale", "ch_charges_summary",
         "ch_insolvency_summary",
     )

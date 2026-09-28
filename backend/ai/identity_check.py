@@ -81,8 +81,12 @@ def seed_anchors(company: Dict) -> Dict[str, str]:
     """What we KNOW about which company we mean, from the row as it stands
     BEFORE enrichment (ingest sources fill these: Inven/Gain/PitchBook CSVs,
     conference lists, CH verification)."""
+    # THE SEED WINS. `website` is mutable: a pre-guard enrichment could have
+    # replaced it with the wrong company's site (Realta -> realtafusion.com,
+    # 28 Sep 2026), and anchoring on that would confirm the mixup for ever.
+    # `seed_website` is what the row was ingested with and is never enriched.
     return {
-        "domain": registrable_domain(company.get("website") or ""),
+        "domain": registrable_domain(company.get("seed_website") or company.get("website") or ""),
         "hq_city": norm_city(company.get("hq_city") or ""),
         "founder": surname(company.get("contact_name") or ""),
         "year_founded": str(company.get("year_founded") or "").strip(),
@@ -183,6 +187,14 @@ def audit_row(company: Dict, domain_owners: Optional[Dict[str, str]] = None) -> 
     name = company.get("name") or ""
     site_dom = registrable_domain(company.get("website") or "")
     mail_dom = registrable_domain(company.get("contact_email") or "")
+
+    # THE STRONGEST SIGNAL: the live website is not the one the source gave
+    # us. Only enrichment writes `website` after ingest, and enrichment that
+    # changes the domain has researched a different company (Realta, Gain:
+    # realtarisk.com; SmartFill: realtafusion.com, a Wisconsin fusion startup).
+    seed_dom = registrable_domain(company.get("seed_website") or "")
+    if seed_dom and site_dom and seed_dom != site_dom:
+        signals.append(f"website '{site_dom}' REPLACED the source's '{seed_dom}' - enrichment researched a different company")
 
     if mail_dom in PLACEHOLDER_MAIL:
         signals.append(f"contact email is a FABRICATED placeholder ('{mail_dom}') - clear it and re-run the waterfall")

@@ -800,6 +800,26 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - Seeds are constraints, not suggestions - but seeds can be stale, so one
   conflicting anchor never blocks a match that two others confirm (the note
   names the stale anchor).
+- THE SEED (Realta, 28 Sep 2026). Gain listed Realta at realtarisk.com
+  (Limerick). SmartFill on 18 Aug, ten days before the guard, researched
+  Realta Fusion (Madison, Wisconsin) and wrote its website, description,
+  CEO as contact and a Companies House match onto the row. The audit could
+  not see it: the contact email matched the website, because the website
+  had been replaced too. A mutable field cannot vouch for itself. So
+  `seed_website` / `seed_description` are written ONCE at ingest
+  (`save_targets` insert, fill-only on merge) and never enriched;
+  `seed_anchors` takes the domain from the seed, so a pre-guard mixup can
+  no longer confirm itself; `audit_row` raises "website REPLACED the
+  source's" whenever the live domain differs from the seed, the top tier
+  (`website_replaced`), and `/admin/identity-repair` treats that tier as
+  "the whole row is the other company": seeds restored, every researched
+  column and the CH-sourced financials cleared (stage, stamps and email
+  history kept), then `reenrich=1` runs a full SmartFill anchored on the
+  seed. `POST /admin/identity/seed-backfill` filled the seeds for rows
+  older than the column from the original upload files and, for rows
+  enrichment had never touched, from the live website. A row enriched
+  before the guard with no upload on file has no seed and the audit says
+  nothing about it: silence over a guess.
 - Retro: GET /admin/identity-audit is ZERO AI - it finds the contradictions a
   past mixup leaves (contact email on ANOTHER universe company's domain, CH
   match sharing no core word with the name). Only listed suspects are worth a
