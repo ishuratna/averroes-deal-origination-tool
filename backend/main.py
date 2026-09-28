@@ -5923,7 +5923,7 @@ async def identity_repair(request: Request,
         # status and the outreach history stay (doctrine 3a: enrichment, and
         # its repair, never undo work). Cleared by column list, never DELETE.
         _CH_COLS = [c for c, _ in bq_handler.EXPANDED_COLUMNS if c.startswith("ch_")]
-        _RESEARCHED = ["description", "contact_name", "contact_email", "contact_email_kind", "contact_email_name",
+        _RESEARCHED = ["contact_name", "contact_email", "contact_email_kind", "contact_email_name",
                        "contact_email_source", "original_contact_email", "original_contact_name",
                        "linkedin_url", "company_linkedin", "outreach_draft_subject", "outreach_draft_body",
                        "outreach_draft_to", "outreach_drafted_at", "identity_status", "identity_note",
@@ -5933,38 +5933,50 @@ async def identity_repair(request: Request,
                        "revenue_y1", "revenue_y1_date", "revenue_y2", "revenue_y2_date", "revenue_y3", "revenue_y3_date",
                        "profit_y1", "profit_y1_date", "gross_profit_y1", "total_assets_y1", "net_assets_y1", "cash_y1",
                        "employees_ch", "filing_type"] + _CH_COLS
-        for item in to_clear:
+        # WEBSITE_REPLACED rows: ONE statement for the whole set (doctrine 2c;
+        # 290 rows x 3 sequential queries blew past the request limit on the
+        # first attempt, 29 Sep 2026), then one DELETE for their CH-sourced
+        # financials, then one activity note each (cheap inserts).
+        replaced = [i for i in to_clear if i["tier"] == "website_replaced"]
+        if replaced:
+            names_r = [i["name"] for i in replaced]
+            notes_r = [f"repaired: {i['signal']}"[:500] for i in replaced]
+            sets = ", ".join(f"{c} = NULL" for c in _RESEARCHED if c not in ("identity_status", "identity_note"))
             try:
-                if item["tier"] == "website_replaced":
-                    sets = ", ".join(f"{c} = NULL" for c in _RESEARCHED if c not in ("identity_status", "identity_note"))
+                bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` t SET {sets},
+                          website = t.seed_website,
+                          description = NULLIF(t.seed_description, ''),
+                          identity_status = 'repaired',
+                          identity_note = u.note
+                        FROM (SELECT n AS name, x AS note FROM UNNEST(@names) AS n WITH OFFSET i
+                              JOIN UNNEST(@notes) AS x WITH OFFSET j ON i = j) u
+                        WHERE t.name = u.name""",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=[
+                        bq_lib.ArrayQueryParameter("names", "STRING", names_r),
+                        bq_lib.ArrayQueryParameter("notes", "STRING", notes_r)])).result()
+                try:
+                    ft = bq_handler._ensure_financials_table()
                     bq_handler.client.query(
-                        f"""UPDATE `{bq_handler.table_id}` SET {sets},
-                              website = seed_website,
-                              description = NULLIF(seed_description, ''),
-                              identity_status = 'repaired',
-                              identity_note = @note
-                            WHERE name = @name""",
+                        f"DELETE FROM `{ft}` WHERE company_name IN UNNEST(@names) AND source = 'Companies House'",
                         job_config=bq_lib.QueryJobConfig(query_parameters=[
-                            bq_lib.ScalarQueryParameter("note", "STRING", f"repaired: {item['signal']}"[:500]),
-                            bq_lib.ScalarQueryParameter("name", "STRING", item["name"]),
-                        ])).result()
-                    # The year store holds the wrong company's filed years too.
-                    try:
-                        ft = bq_handler._ensure_financials_table()
-                        bq_handler.client.query(
-                            f"DELETE FROM `{ft}` WHERE company_name = @name AND source = 'Companies House'",
-                            job_config=bq_lib.QueryJobConfig(query_parameters=[
-                                bq_lib.ScalarQueryParameter("name", "STRING", item["name"])])).result()
-                    except Exception as e:
-                        logger.warning(f"[Identity repair] financials clear failed for {item['name']}: {e}")
+                            bq_lib.ArrayQueryParameter("names", "STRING", names_r)])).result()
+                except Exception as e:
+                    logger.warning(f"[Identity repair] financials clear failed: {e}")
+                for item in replaced:
                     bq_handler.add_activity_note(
                         item["name"],
                         f"Identity repair: the row had been enriched as the wrong company ({item['signal']}). "
                         f"Website restored to {item['seed_website']}; description, contact ({item['bad_email'] or 'none'}), "
-                        f"Companies House match, fit score and unsent draft cleared. Re-run SmartFill to research the right company.",
+                        f"Companies House match, fit score and unsent draft cleared. SmartFill will research the right company.",
                         created_by="identity-repair")
                     cleared.append(item["name"])
-                    continue
+            except Exception as e:
+                failures.append(f"website_replaced bulk: {e}")
+        for item in to_clear:
+            if item["tier"] == "website_replaced":
+                continue
+            try:
                 bq_handler.client.query(
                     f"""UPDATE `{bq_handler.table_id}` SET contact_email = NULL,
                           contact_email_kind = '', contact_email_name = '',
