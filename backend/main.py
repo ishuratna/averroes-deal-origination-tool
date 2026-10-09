@@ -3384,6 +3384,15 @@ async def smartfill_auto_run(request: Request):
     target is met does nothing and costs nothing.
     """
     _require_token(request)
+    # THE KILL SWITCH (Ishu, 9 Oct 2026: AI budget exceeded, enough Qualified
+    # companies on hand). Read at REQUEST time, never cached at import, so a
+    # Cloud Run env change takes effect on the next tick without a deploy.
+    # Manual SmartFill / SmartEnrich from a card are untouched: a person
+    # asking is the whole point. The queue is derived from the rows, so
+    # nothing is lost while paused; flip the env back to resume.
+    if os.getenv("AUTO_SMARTFILL_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+        return {"status": "Paused", "message": "Nightly bulk SmartFill is switched off (AUTO_SMARTFILL_ENABLED=0). "
+                                               "Manual SmartFill and SmartEnrich still work. Nothing was spent."}
     used = bq_handler.count_smartfills_today()
     remaining = AUTO_SMARTFILL_TARGET - used
     if remaining <= 0:
