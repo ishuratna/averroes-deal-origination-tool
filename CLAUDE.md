@@ -864,6 +864,20 @@ mistake is both visible and correctable. This one logged nothing, which is why
   are building" only on an empty record), and the conviction sentence has a
   fixed shape: "We believe X is a big pain point for Y and the opportunity in
   solving it is huge."
+- A NAME MUST BE A PERSON (28 Sep and 12 Oct 2026). "Hi Careers," went to
+  careers@affiliatesquared.com from the follow-up; "Hi Complaints," went
+  out from a FIRST email two weeks later, because the fix had been applied
+  to `followup_greeting` only. Contact names get adopted from addresses, so
+  the row's first name can be an inbox word. `plausible_first_name` in
+  `outreach_service` is the ONE test (letters only; not in
+  `GENERIC_GREETING_WORDS` or `_NOT_A_FIRST_NAME`; not the address's own
+  local part), and `_greeting_for` applies it, which covers the AI draft
+  instruction, the fallback template and the follow-up alike. A shared
+  inbox with no person named opens "Hi team,"; otherwise "Hello,". A
+  follow-up still mirrors the first email's own opening first (28 Sep).
+  `/admin/outreach/redraft-stale` treats an unsent draft whose first line
+  greets one of those words as stale, so a bad greeting never waits for a
+  click to be caught.
 - A WORDING CHANGE REACHES STORED DRAFTS BY REDRAFTING, NOT BY WAITING.
   Drafts are persisted on the row (`outreach_draft_body`) so Review & Send
   works without a call, which means old copy survives a deploy. `POST

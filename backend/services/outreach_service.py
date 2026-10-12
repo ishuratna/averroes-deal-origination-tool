@@ -76,6 +76,41 @@ specific and recent, return found=false. Never guess."""
         return ""
 
 
+# Words that are never a person's first name. A contact name built from an
+# inbox ("careers@", "complaints@", "info@") or a role must never open an
+# email. Shared by the first email and the follow-up (28 Sep / 12 Oct 2026:
+# "Hi Careers," and "Hi Complaints," both went out).
+GENERIC_GREETING_WORDS = {
+    "careers", "career", "jobs", "hr", "info", "hello", "hi", "team", "sales", "support",
+    "admin", "contact", "enquiries", "enquiry", "inquiries", "office", "mail", "press",
+    "marketing", "legal", "accounts", "finance", "help", "service", "services", "customer",
+    "partnerships", "partners", "general", "reception", "recruitment", "talent", "founders",
+    "founder", "ceo", "cto", "cfo", "director", "management", "business", "company", "the",
+    "complaints", "complaint", "feedback", "billing", "invoices", "orders", "bookings",
+    "privacy", "security", "compliance", "dpo", "webmaster", "postmaster", "noreply", "no-reply",
+    "customerservice", "customercare", "helpdesk", "it", "tech", "dev", "developers", "api",
+}
+
+_NOT_A_FIRST_NAME = {"you", "there", "all", "everyone", "sir", "madam", "prof", "professor", "dr", "mr",
+                     "mrs", "ms", "miss", "unknown", "none", "null", "test", "user", "owner", "hey", "hiya"}
+
+
+def plausible_first_name(first: str, email: str = "") -> bool:
+    """Is this word safe to open an email with? Letters only, not an inbox or
+    role word, not a title, and not the local part of the address itself.
+    PURE."""
+    f = (first or "").strip().strip(".")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z'\-]{1,24}", f):
+        return False
+    low = f.lower()
+    if low in GENERIC_GREETING_WORDS or low in _NOT_A_FIRST_NAME:
+        return False
+    local = (email or "").split("@")[0].lower()
+    if local and (low == local or low == local.replace(".", "").replace("-", "").replace("_", "")):
+        return False
+    return True
+
+
 def _greeting_for(company_data: Dict) -> tuple:
     """Who this email opens by name, given who the To: actually belongs to.
 
@@ -97,8 +132,14 @@ def _greeting_for(company_data: Dict) -> tuple:
         first = recipient.split()[0] if recipient else ""
     else:
         first = contact_name.split()[0] if contact_name else ""
+    # An inbox word is not a person. "Complaints" and "Careers" were row
+    # contact names (adopted from the address) and opened real emails.
+    if first and not plausible_first_name(first, company_data.get("contact_email") or ""):
+        first = ""
 
     if not first:
+        if kind == "generic":
+            return "", '"Hi team," on its own line. The address is a shared inbox and no person is named, so do NOT invent one.'
         return "", '"Hello," on its own line. No name is known, so do NOT invent one.'
     return first, f'"Hi {first}," on its own line.'
 
@@ -118,20 +159,6 @@ def _recipient_note(company_data: Dict) -> str:
                 f"pass it on. Address it to {founder or 'the founder'}.")
     return f"{founder or 'the founder'} directly."
 
-
-# Words that are never a person's first name. A contact name built from an
-# inbox ("careers@", "info@") or a role must never open an email.
-GENERIC_GREETING_WORDS = {
-    "careers", "career", "jobs", "hr", "info", "hello", "hi", "team", "sales", "support",
-    "admin", "contact", "enquiries", "enquiry", "inquiries", "office", "mail", "press",
-    "marketing", "legal", "accounts", "finance", "help", "service", "services", "customer",
-    "partnerships", "partners", "general", "reception", "recruitment", "talent", "founders",
-    "founder", "ceo", "cto", "cfo", "director", "management", "business", "company", "the",
-}
-
-_NOT_A_FIRST_NAME = {"you", "there", "all", "everyone", "sir", "madam", "prof", "professor", "dr", "mr",
-                     "mrs", "ms", "miss", "customerservice", "dpo", "webmaster", "postmaster", "noreply",
-                     "no-reply", "unknown", "none", "null", "test", "user", "owner", "hey", "hiya"}
 
 _GREETING_LINE = re.compile(r"^\s*\[?\s*(hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\s+([^,\n\[\]]{1,40}?)\s*,", re.I)
 
@@ -159,18 +186,10 @@ def followup_greeting(company_data: Dict) -> str:
     g = first_email_greeting(company_data.get("first_sent_snippet") or "")
     if g:
         return g
-    first, _ = _greeting_for(company_data)
-    local = (company_data.get("contact_email") or "").split("@")[0].lower()
-    # A name is used only when it looks like a person's first name: letters
-    # only, not an inbox word, not a title, and not the address's own local
-    # part ("Hi Customerservice,", "Hi Dpo,", "Hi You," were all row names).
+    first, _ = _greeting_for(company_data)   # already refuses inbox words and titles
     if first:
-        f = first.strip(".").lower()
-        if (not re.fullmatch(r"[A-Za-z][a-z'\-]{1,24}", first.strip("."))
-                or f in GENERIC_GREETING_WORDS or f in _NOT_A_FIRST_NAME
-                or f == local or f == local.replace(".", "").replace("-", "").replace("_", "")):
-            first = ""
-    return f"Hi {first}," if first else "Hello,"
+        return f"Hi {first},"
+    return "Hi team," if (company_data.get("contact_email_kind") or "") == "generic" else "Hello,"
 
 
 def draft_followup_email(company_data: Dict) -> Dict[str, str]:
@@ -959,8 +978,8 @@ def _fallback_template(company_data: Dict) -> Dict[str, str]:
     name = company_data.get("name", "your company")
     contact_name = company_data.get("contact_name", "")
     contact_email = company_data.get("contact_email", "")
-    first_name, _ = _greeting_for(company_data)
-    greeting = f"Hi {first_name}," if first_name else "Hello,"
+    first_name, instruction = _greeting_for(company_data)
+    greeting = f"Hi {first_name}," if first_name else ("Hi team," if instruction.startswith('"Hi team,"') else "Hello,")
     body = (
         f"{greeting}\n\n"
         f"Hope you are having a great day.\n\n"

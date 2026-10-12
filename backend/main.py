@@ -4077,8 +4077,16 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
     _require_token(request)
     import time as _time
     from google.cloud import bigquery as bq_lib
+    # A draft is stale for its WORDING (STALE_DRAFT_PHRASES) or for its
+    # GREETING: "Hi Complaints," / "Hi Careers," (an inbox word adopted as a
+    # contact name, 12 Oct 2026). The greeting test is the same word lists
+    # the drafter now refuses, applied to the first line of the stored body.
+    from services.outreach_service import GENERIC_GREETING_WORDS, _NOT_A_FIRST_NAME
+    bad_words = sorted(GENERIC_GREETING_WORDS | _NOT_A_FIRST_NAME)
+    greeting_sql = ("LOWER(REGEXP_EXTRACT(outreach_draft_body, r'^\\s*(?:Hi|Hello|Dear)\\s+([A-Za-z][A-Za-z-]*)\\s*,')) IN UNNEST(@bad)")
     phrase_sql = "" if include_all else (
-        " AND (" + " OR ".join(f"LOWER(outreach_draft_body) LIKE '%{p}%'" for p in STALE_DRAFT_PHRASES) + ")")
+        " AND (" + " OR ".join(f"LOWER(outreach_draft_body) LIKE '%{p}%'" for p in STALE_DRAFT_PHRASES)
+        + f" OR {greeting_sql})")
     rows = bq_handler._run_query(f"""
         SELECT name, status, outreach_draft_to, SUBSTR(outreach_draft_body, 1, 120) AS head
         FROM `{bq_handler.table_id}`
@@ -4086,7 +4094,7 @@ async def redraft_stale_outreach(request: Request, dry_run: int = Query(1), limi
           AND (outreach_sent_at IS NULL OR outreach_drafted_at > outreach_sent_at)
           {phrase_sql}
         ORDER BY outreach_drafted_at DESC
-    """)
+    """, params=[bq_lib.ArrayQueryParameter("bad", "STRING", bad_words)])
     if dry_run:
         return {"status": "Preview", "stale_drafts": len(rows), "would_redraft": min(len(rows), limit),
                 "companies": [r["name"] for r in rows[:200]],
