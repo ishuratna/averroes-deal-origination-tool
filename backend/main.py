@@ -4631,33 +4631,49 @@ async def admin_rescore_fit(request: Request,
             return {"status": "Preview", "dry_run": True, **summary,
                     "message": "Nothing was changed. Re-run with dry_run=0 to apply."}
 
-        applied, failures = [], []
-        for p in plan:
-            u = p["upd"]
+        # ONE statement per chunk, never one per row (CLAUDE.md 2c, "bulk
+        # writes are one statement"): 813 row-by-row UPDATEs ran past Cloud
+        # Run's 300s cut on 14 Oct 2026 and left the book half rescored.
+        # BigQuery arrays cannot hold NULL, so a missing score travels as -1
+        # (scores live in 0..1) and is turned back into NULL in SQL.
+        def _f(v):
+            return -1.0 if v is None else float(v)
+
+        applied, failures = 0, []
+        chunk = 500
+        for i in range(0, len(plan), chunk):
+            part = plan[i:i + chunk]
             try:
-                bq_handler.client.query(
-                    f"""UPDATE `{bq_handler.table_id}` SET
-                            averroes_fit_score = @fit,
-                            score_revenue_size = @rs,
-                            score_revenue_growth = @rg,
-                            score_employee_growth = @eg,
-                            score_details = @sd
-                        WHERE name = @name""",
+                job = bq_handler.client.query(
+                    f"""UPDATE `{bq_handler.table_id}` t SET
+                            averroes_fit_score = IF(u.fit < 0, NULL, u.fit),
+                            score_revenue_size = IF(u.rs < 0, NULL, u.rs),
+                            score_revenue_growth = IF(u.rg < 0, NULL, u.rg),
+                            score_employee_growth = IF(u.eg < 0, NULL, u.eg),
+                            score_details = u.sd
+                        FROM (
+                            SELECT @names[OFFSET(o)] AS name, @fits[OFFSET(o)] AS fit,
+                                   @rss[OFFSET(o)] AS rs, @rgs[OFFSET(o)] AS rg,
+                                   @egs[OFFSET(o)] AS eg, @sds[OFFSET(o)] AS sd
+                            FROM UNNEST(GENERATE_ARRAY(0, ARRAY_LENGTH(@names) - 1)) AS o
+                        ) u
+                        WHERE t.name = u.name""",
                     job_config=bq_lib.QueryJobConfig(query_parameters=[
-                        bq_lib.ScalarQueryParameter("fit", "FLOAT64", u["averroes_fit_score"]),
-                        bq_lib.ScalarQueryParameter("rs", "FLOAT64", u["score_revenue_size"]),
-                        bq_lib.ScalarQueryParameter("rg", "FLOAT64", u["score_revenue_growth"]),
-                        bq_lib.ScalarQueryParameter("eg", "FLOAT64", u["score_employee_growth"]),
-                        bq_lib.ScalarQueryParameter("sd", "STRING", u["score_details"]),
-                        bq_lib.ScalarQueryParameter("name", "STRING", p["name"]),
-                    ])).result()
-                applied.append(p["name"])
+                        bq_lib.ArrayQueryParameter("names", "STRING", [p["name"] for p in part]),
+                        bq_lib.ArrayQueryParameter("fits", "FLOAT64", [_f(p["upd"]["averroes_fit_score"]) for p in part]),
+                        bq_lib.ArrayQueryParameter("rss", "FLOAT64", [_f(p["upd"]["score_revenue_size"]) for p in part]),
+                        bq_lib.ArrayQueryParameter("rgs", "FLOAT64", [_f(p["upd"]["score_revenue_growth"]) for p in part]),
+                        bq_lib.ArrayQueryParameter("egs", "FLOAT64", [_f(p["upd"]["score_employee_growth"]) for p in part]),
+                        bq_lib.ArrayQueryParameter("sds", "STRING", [p["upd"]["score_details"] or "" for p in part]),
+                    ]))
+                job.result()
+                applied += job.num_dml_affected_rows or len(part)
             except Exception as e:
-                failures.append(f"{p['name']}: {e}")
+                failures.append(f"chunk {i // chunk}: {e}")
         return {"status": "Success", "dry_run": False, **summary,
-                "updated": len(applied), "failed": failures,
-                "message": f"Rescored {len(applied)} companies under the v4 rules."
-                           + (f" {len(failures)} FAILED." if failures else "")}
+                "updated": applied, "failed": failures,
+                "message": f"Rescored {applied} companies under the current weights."
+                           + (f" {len(failures)} chunk(s) FAILED." if failures else "")}
 
     return _stream_json(_run)
 
