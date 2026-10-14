@@ -23,6 +23,7 @@ import AuthGate from '../../components/AuthGate';
 import CompanyProfile from '../../components/CompanyProfile';
 import OwnerTag from '../../components/OwnerTag';
 import ReplyRuleButton from '../../components/ReplyRuleButton';
+import SyncCallsButton from '../../components/SyncCallsButton';
 import { dealApi } from '../../services/api';
 import {
   RESPONDED_SECTIONS, RESPONDED_PARKED, CALL_ASSOCIATES, CALL_PARTNERS, PARK_REASONS,
@@ -390,6 +391,7 @@ function RespondedInner() {
             {/* Same component as the Pipeline header: one implementation of the
                 reply rule, so this page's total and the board's Responded
                 column can never drift apart. */}
+            <SyncCallsButton onSynced={load} />
             <ReplyRuleButton onDone={load} />
             <button className="rsp-btn" onClick={load} disabled={loading}>
               {loading ? 'Loading…' : 'Reload'}

@@ -7129,6 +7129,33 @@ async def last_email_sync():
     return {"run": bq_handler.last_sync_run()}
 
 
+# ── Call notes: Granola meetings onto the company card ──────────────────────
+
+@app.post("/calls/sync")            # browser: Google sign-in (the UI button)
+@app.get("/admin/calls/sync")       # scheduler: a URL with ?token= is enough
+@app.post("/admin/calls/sync")      # terminal: WATCH_TOKEN (ops, sign-in exempt)
+async def calls_sync(request: Request,
+                     days: int = Query(7, description="How many days of Granola notes to scan"),
+                     dry_run: int = Query(1, description="1 = preview only (default), 0 = write")):
+    """Read Granola (official API, read-only) and attach every meeting about a
+    Responded-or-later company to its card. Matching is PURE (ai/call_match):
+    participant email domain, name in the title, or the real name inside the
+    notes (titles are often 'Project X'). A strong match on a Responded
+    company promotes it to Meeting through the one status writer. Dry run by
+    default; the scheduler and the button pass dry_run=0."""
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
+    from services.call_notes_sync import sync_call_notes
+    d = max(1, min(int(days), 365))
+    return _stream_json(lambda: sync_call_notes(bq_handler, days=d, dry_run=bool(int(dry_run))))
+
+
+@app.get("/company/{company_name}/call-notes")
+async def list_call_notes(company_name: str):
+    """Every Granola meeting matched to this company, newest first."""
+    return {"company": company_name, "notes": bq_handler.get_call_notes(company_name)}
+
+
 async def _sync_emails_impl(days: int, deep: bool):
     """
     Sync Beatrice's Gmail (IMAP, same App Password as sending) against known

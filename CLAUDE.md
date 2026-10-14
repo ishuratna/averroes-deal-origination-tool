@@ -465,6 +465,40 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - The email states NO cheque figure, deliberately: it is a door opener, and a
   number invites a decision before a conversation.
 
+## 2e. CALL NOTES (Granola meetings onto the card; Ishu, 15 Oct 2026)
+
+- Source: Granola's official read-only REST API (`services/granola_service.py`,
+  key `GRANOLA_API_KEY` on Cloud Run, Business plan or above). Three endpoints
+  exist; we use list notes + get note. No webhooks: the 7 AM job polls with
+  `updated_after` and skips notes whose `updated_at` we already hold. The API
+  returns a note only once its AI summary is done, so a late call may surface
+  the next morning. We store summary + the owner's private notes (returned
+  only for the key owner's own notes), NEVER the transcript (Ishu's choice).
+- THE MATCHER IS PURE (`ai/call_match.py`, zero AI) and reads THREE things in
+  order: participant email domain (= website or contact domain, near-unique),
+  the company name as a whole phrase in the title, then the name in the BODY,
+  because titles are often "Project X" (Ishu: "make sure you read the real
+  name in the notes"). Our own domain, public mail hosts and advisers never
+  match (a Cavendish banker on the Cyjax call is not Cavendish's meeting). A
+  one-word dictionary name ("Bounce") needs the title or two body mentions;
+  one mention is `weak`, reported in the sync result and never written.
+  Substring matches are forbidden ("arcus" in "Marcus"): whole-word only.
+- CANDIDATES are Responded and later only (`call_note_candidates`, one SQL,
+  Internal Test excluded). A call before a reply is not something the tool
+  can see; the Responded page owns that gate.
+- `call_notes` table, MERGE on (granola_id, company), `meeting_at` = the
+  calendar event's scheduled start (doctrine 3), activity `note` row stamped at
+  that time. Two people's notes of the same meeting are two Granola ids and
+  both are kept (they differ).
+- STAGE: a strong match PROMOTES Responded -> Meeting through
+  `update_company_status` (the one writer, logs status_change). Meeting and
+  later are never touched. Ishu chose promotion over notes-only.
+- Routes: `POST /calls/sync` (button) + `/admin/calls/sync` GET/POST (token,
+  the scheduler URL carries `?token=&dry_run=0`), ONE handler, dry run by
+  default. `GET /company/{name}/call-notes` feeds the card. `SyncCallsButton`
+  is the single component on Pipeline + Responded headers.
+  `tests_call_match.py` pins the matcher and the sync rules.
+
 ## 2d. THE RESPONDED FLOW (one flow, two calls; the letters keep their values)
 
 - Ishu (Nurture) -> associates, THURSDAY call -> partners, MONDAY call (Ishu,

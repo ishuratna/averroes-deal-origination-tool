@@ -1,4 +1,4 @@
-import { CompanyTarget, ActivityEntry, DealOwner, DealTrack, EmailDoc, RespondedResponse, ReplyRuleResult } from "../types";
+import { CompanyTarget, ActivityEntry, CallNote, DealOwner, DealTrack, EmailDoc, RespondedResponse, ReplyRuleResult } from "../types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://averroes-deal-backend-890361705054.europe-west1.run.app';
 
@@ -139,6 +139,22 @@ export const dealApi = {
     const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/email-docs`);
     if (!response.ok) return { documents: [] };
     return await response.json();
+  },
+
+  // ── Call notes: Granola meetings matched to the company ─────────────────
+  async getCallNotes(name: string): Promise<{ notes: CallNote[] }> {
+    const response = await apiFetch(`${API_BASE_URL}/company/${encodeURIComponent(name)}/call-notes`);
+    if (!response.ok) return { notes: [] };
+    return await response.json();
+  },
+
+  // Pull Granola now (same sync the 7 AM job runs). Writes, never a dry run
+  // from the button: the preview is for the terminal.
+  async syncCallNotes(days: number = 7): Promise<any> {
+    const response = await apiFetch(`${API_BASE_URL}/calls/sync?days=${days}&dry_run=0`, { method: 'POST' });
+    const text = await response.text();
+    const last = text.trim().split('\n').pop() || '{}';
+    return JSON.parse(last);
   },
 
   // The NEWS section: one grounded search (~1p), results cached on the

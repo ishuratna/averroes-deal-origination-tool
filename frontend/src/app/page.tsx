@@ -9,6 +9,7 @@ import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
 import SyncEmailsButton from "../components/SyncEmailsButton";
+import SyncCallsButton from "../components/SyncCallsButton";
 import ReplyRuleButton from "../components/ReplyRuleButton";
 import { outreachButtonState, owesReply, hasFollowedUp, lastSentAt } from "../lib/outreach";
 import SideNav from '../components/SideNav';
@@ -352,6 +353,7 @@ function HomeInner() {
               </button>
             )}
             <SyncEmailsButton onSynced={loadData} />
+            <SyncCallsButton onSynced={loadData} />
             <ReplyRuleButton onDone={loadData} />
             <div className="view-toggle">
               <button className={`toggle-btn ${viewMode === 'kanban' ? 'active' : ''}`} onClick={() => setViewMode('kanban')}>

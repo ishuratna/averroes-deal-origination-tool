@@ -390,6 +390,20 @@ export interface EmailDoc {
   read_error?: string;   // why the AI read failed, '' when it succeeded
 }
 
+// A Granola meeting matched to this company by the call-notes sync.
+export interface CallNote {
+  granola_id: string;
+  title: string;
+  meeting_at: string;
+  participants: string;
+  body: string;             // Granola's AI summary (markdown) + Ishu's own notes
+  web_url: string;
+  owner_email: string;
+  match_confidence: 'domain' | 'title' | 'body' | string;
+  match_evidence: string;
+  synced_at: string;
+}
+
 // One figure in company_financials: (period_end, metric, segment) -> value.
 export interface FinCell {
   period_end: string;     // YYYY-MM-DD

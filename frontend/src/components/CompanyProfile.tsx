@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, EmailDoc, NewsItem, DocReviewItem, FinCell, FinancialsResponse, FinYear, EMPTY_FINANCIALS, FIN_METRIC_LABELS, FIN_METRIC_ORDER, fiscalYearOf, fyLabel, periodEndShort, yearEndShort, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, CallNote, EmailDoc, NewsItem, DocReviewItem, FinCell, FinancialsResponse, FinYear, EMPTY_FINANCIALS, FIN_METRIC_LABELS, FIN_METRIC_ORDER, fiscalYearOf, fyLabel, periodEndShort, yearEndShort, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -459,6 +459,8 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     (TABS as readonly string[]).includes(initialTab || '') ? (initialTab as typeof TABS[number]) : 'Summary');
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [emailDocs, setEmailDocs] = useState<EmailDoc[]>([]);
+  const [callNotes, setCallNotes] = useState<CallNote[]>([]);
+  const [openCall, setOpenCall] = useState<string | null>(null);
   const [fin, setFin] = useState<FinancialsResponse>(EMPTY_FINANCIALS);
   // Document SmartFill review: the document disagreed with stored values and
   // Ishu decides, per field, which to keep. Opens right after an upload or
@@ -498,7 +500,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
 
   useEffect(() => {
     if (!baseCompany) return;
-    setActivity([]); setEmails([]); setEmailDocs([]); setFin(EMPTY_FINANCIALS); setConnections({ investors: [], siblings: [] });
+    setActivity([]); setEmails([]); setEmailDocs([]); setCallNotes([]); setOpenCall(null); setFin(EMPTY_FINANCIALS); setConnections({ investors: [], siblings: [] });
     setFullCompany(null);
     dealApi.getCompanyFull(baseCompany.name).then(r => {
       if (r && r.name) {
@@ -510,6 +512,7 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
     dealApi.getCompanyActivity(baseCompany.name).then(r => setActivity(r.activity || [])).catch(() => {});
     dealApi.getCompanyEmails(baseCompany.name).then(r => setEmails(r.emails || [])).catch(() => {});
     dealApi.getEmailDocs(baseCompany.name).then(r => setEmailDocs(r.documents || [])).catch(() => {});
+    dealApi.getCallNotes(baseCompany.name).then(r => setCallNotes(r.notes || [])).catch(() => {});
     dealApi.getFinancials(baseCompany.name).then(setFin).catch(() => {});
     dealApi.getCompanyConnections(baseCompany.name).then(r => setConnections(r || { investors: [], siblings: [] })).catch(() => {});
   }, [baseCompany?.name]);
@@ -830,6 +833,35 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                           </button>
                         )}
                         {d.ai_summary && <p className="cp-doc-summary">{d.ai_summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Call notes: Granola meetings the 7 AM sync matched to this
+                  company (participant domain, name in the title, or the real
+                  name inside an anonymised "Project X" note). Newest first;
+                  one open at a time; the full note is one click away. */}
+              {callNotes.length > 0 && (
+                <>
+                  <div className="cp-section-title">Call notes</div>
+                  <div className="cp-card">
+                    {callNotes.map(n => (
+                      <div className="cp-doc-row" key={n.granola_id}>
+                        <button type="button" className="cp-doc-name"
+                          style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit' }}
+                          onClick={() => setOpenCall(openCall === n.granola_id ? null : n.granola_id)}>
+                          {openCall === n.granola_id ? '▾' : '▸'} {n.title || 'Meeting'}
+                        </button>
+                        <span className="cp-doc-meta">
+                          {fmtDate(n.meeting_at)}{n.participants ? ` · ${n.participants}` : ''}
+                          {' · '}<span title={n.match_evidence}>matched by {n.match_confidence === 'domain' ? 'attendee' : n.match_confidence === 'title' ? 'title' : 'notes'}</span>
+                          {n.web_url && <> · <a href={n.web_url} target="_blank" rel="noreferrer">open in Granola ↗</a></>}
+                        </span>
+                        {openCall === n.granola_id && (
+                          <pre className="cp-doc-summary" style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', maxHeight: '28rem', overflow: 'auto' }}>{n.body}</pre>
+                        )}
                       </div>
                     ))}
                   </div>

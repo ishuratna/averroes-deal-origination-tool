@@ -1935,6 +1935,105 @@ class BigQueryHandler:
             logger.warning(f"last_sync_run failed: {e}")
             return None
 
+    # ── Call notes (Granola meetings matched to a company) ───────────────────
+    # One row per (granola_id, company). The note text is a COPY of what
+    # Granola holds, keyed by Granola's id and stamped with Granola's
+    # updated_at, so a re-sync refreshes it in place and never duplicates it.
+    # The meeting time is the EVENT time (doctrine 3), never the sync time.
+
+    def _ensure_call_notes_table(self) -> str:
+        t = f"{self.project_id}.{self.dataset_id}.call_notes"
+        if getattr(self, "_call_notes_ok", False):
+            return t
+        try:
+            self.client.get_table(t)
+        except Exception:
+            self.client.create_table(bigquery.Table(t, schema=[bigquery.SchemaField(n, ty) for n, ty in [
+                ("granola_id", "STRING"), ("entity_type", "STRING"), ("entity_name", "STRING"),
+                ("title", "STRING"), ("meeting_at", "TIMESTAMP"), ("participants", "STRING"),
+                ("body", "STRING"), ("web_url", "STRING"), ("owner_email", "STRING"),
+                ("match_confidence", "STRING"), ("match_evidence", "STRING"),
+                ("granola_updated_at", "TIMESTAMP"), ("synced_at", "TIMESTAMP"),
+            ]]))
+            logger.info("Created call_notes table")
+        self._call_notes_ok = True
+        return t
+
+    def call_note_versions(self) -> Dict[str, str]:
+        """granola_id -> granola_updated_at (ISO) for every stored note, so the
+        sync skips a note that has not changed since we copied it."""
+        if not self.client:
+            return {}
+        t = self._ensure_call_notes_table()
+        rows = self._run_query(f"""SELECT granola_id, CAST(MAX(granola_updated_at) AS STRING) AS u
+                                   FROM `{t}` GROUP BY granola_id""")
+        return {r["granola_id"]: (r.get("u") or "") for r in rows}
+
+    def upsert_call_note(self, note: Dict) -> bool:
+        """MERGE on (granola_id, entity_name). `note` keys mirror the columns."""
+        if not self.client:
+            return False
+        t = self._ensure_call_notes_table()
+        try:
+            self.client.query(f"""
+                MERGE `{t}` T
+                USING (SELECT @gid AS granola_id, @ename AS entity_name) S
+                ON T.granola_id = S.granola_id AND T.entity_name = S.entity_name
+                WHEN MATCHED THEN UPDATE SET
+                    title = @title, meeting_at = @mat, participants = @parts, body = @body,
+                    web_url = @url, owner_email = @owner, match_confidence = @conf,
+                    match_evidence = @ev, granola_updated_at = @gupd, synced_at = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN INSERT
+                    (granola_id, entity_type, entity_name, title, meeting_at, participants, body,
+                     web_url, owner_email, match_confidence, match_evidence, granola_updated_at, synced_at)
+                VALUES (@gid, @etype, @ename, @title, @mat, @parts, @body, @url, @owner, @conf, @ev,
+                        @gupd, CURRENT_TIMESTAMP())
+            """, job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("gid", "STRING", note["granola_id"]),
+                bigquery.ScalarQueryParameter("etype", "STRING", note.get("entity_type") or "company"),
+                bigquery.ScalarQueryParameter("ename", "STRING", note["entity_name"]),
+                bigquery.ScalarQueryParameter("title", "STRING", (note.get("title") or "")[:1000]),
+                bigquery.ScalarQueryParameter("mat", "TIMESTAMP", note.get("meeting_at")),
+                bigquery.ScalarQueryParameter("parts", "STRING", (note.get("participants") or "")[:4000]),
+                bigquery.ScalarQueryParameter("body", "STRING", (note.get("body") or "")[:200000]),
+                bigquery.ScalarQueryParameter("url", "STRING", note.get("web_url") or ""),
+                bigquery.ScalarQueryParameter("owner", "STRING", note.get("owner_email") or ""),
+                bigquery.ScalarQueryParameter("conf", "STRING", note.get("match_confidence") or ""),
+                bigquery.ScalarQueryParameter("ev", "STRING", (note.get("match_evidence") or "")[:1000]),
+                bigquery.ScalarQueryParameter("gupd", "TIMESTAMP", note.get("granola_updated_at")),
+            ])).result()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_call_note failed for {note.get('granola_id')}: {e}")
+            return False
+
+    def get_call_notes(self, entity_name: str, entity_type: str = "company") -> List[Dict]:
+        if not self.client:
+            return []
+        t = self._ensure_call_notes_table()
+        return self._run_query(f"""
+            SELECT granola_id, title, CAST(meeting_at AS STRING) AS meeting_at, participants, body,
+                   web_url, owner_email, match_confidence, match_evidence,
+                   CAST(synced_at AS STRING) AS synced_at
+            FROM `{t}` WHERE entity_type = @t AND LOWER(entity_name) = LOWER(@n)
+            ORDER BY meeting_at DESC
+        """, params=[bigquery.ScalarQueryParameter("t", "STRING", entity_type),
+                     bigquery.ScalarQueryParameter("n", "STRING", entity_name)])
+
+    def call_note_candidates(self) -> List[Dict]:
+        """Every company a call could belong to: Responded and later (Ishu,
+        15 Oct 2026: 'responded companies with which I have had calls').
+        Slim columns only; the matcher needs name, domains and status."""
+        if not self.client:
+            return []
+        return self._run_query(f"""
+            SELECT name, IFNULL(website, '') AS website, IFNULL(contact_email, '') AS contact_email,
+                   IFNULL(status, '') AS status
+            FROM `{self.table_id}`
+            WHERE status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost')
+              AND IFNULL(source, '') != 'Internal Test'
+        """)
+
     def get_message_id_entity_map(self) -> Dict[str, Dict]:
         """Every real logged Message-ID -> its entity, for thread matching in
         the sync. Synthetic dedup ids (no '<' prefix) are excluded: they never
