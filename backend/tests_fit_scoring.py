@@ -99,8 +99,19 @@ u = rescore_company_local(company)
 chk("size rescored under v4 (15M: 1.0 -> 0.7)", u["score_revenue_size"], 0.7)
 chk("declining revenue rescored to 0", u["score_revenue_growth"], 0.0)
 chk("employee growth upgraded from web to CH filings", u["score_employee_growth"], 0.9)
-chk("composite is the mean of the five",
-    u["averroes_fit_score"], round((0.7 + 0.0 + 0.9 + 0.9 + 0.6) / 5, 3))
+chk("composite is WEIGHTED (13 Oct 2026): size .7x.3 + fit .9x.3 + emp .9x.2 + sent .6x.1 + growth 0x.1",
+    u["averroes_fit_score"], round(0.7*0.3 + 0.9*0.3 + 0.9*0.2 + 0.6*0.1 + 0.0*0.1, 3))
+from ai.scoring import composite_fit, FIT_WEIGHTS
+chk("weights sum to one", round(sum(FIT_WEIGHTS.values()), 6), 1.0)
+chk("no revenue size -> unscored, however good the rest",
+    composite_fit({"business_fit": 1, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), None)
+chk("no business fit -> unscored",
+    composite_fit({"revenue_size": 1, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), None)
+chk("a missing minor dimension renormalises over what is present",
+    composite_fit({"revenue_size": 1, "business_fit": 1, "employee_growth": 0.5, "market_sentiment": 0.5}),
+    round((0.3 + 0.3 + 0.1 + 0.05) / 0.9, 3))
+chk("thin revenue and weak model cannot be rescued by press and growth",
+    composite_fit({"revenue_size": 0.2, "business_fit": 0.2, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), 0.52)
 chk("details JSON updated for the profile",
     json.loads(u["score_details"])["revenue_size"]["score"], 0.7)
 

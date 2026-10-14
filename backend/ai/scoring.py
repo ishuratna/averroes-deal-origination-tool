@@ -12,7 +12,7 @@ Rules:
   - Only scored if company is already qualified (UK/Ireland + Tech + Size)
   - Minimum 4 of 5 metrics must be assessable
   - Missing metrics are excluded (NOT scored as 0) — normalize across available
-  - Composite = average of available metric scores
+  - Composite = WEIGHTED over available metrics (FIT_WEIGHTS; revenue size + business fit required)
 """
 
 import os
@@ -391,6 +391,36 @@ def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
     return "Too Large"
 
 
+# THE FIT WEIGHTS (Ishu, 13 Oct 2026). The composite was a plain mean, so a
+# company with thin revenue but good press scored like one with the right
+# revenue and a weak model. Revenue size and business fit now carry 60% between
+# them; headcount growth 20%; sentiment and revenue growth 10% each. Defined
+# ONCE here; fresh scoring and the zero-AI rescore both use `composite_fit`.
+FIT_WEIGHTS = {
+    "revenue_size": 0.30,
+    "business_fit": 0.30,
+    "employee_growth": 0.20,
+    "market_sentiment": 0.10,
+    "revenue_growth": 0.10,
+}
+# The two 30% dimensions must BOTH be present for a score to exist at all: a
+# company whose revenue or business model we cannot judge is unscored, not
+# flattered by the dimensions it happens to have. A missing minor dimension
+# renormalises over what is present (same 4-of-5 floor as before).
+FIT_REQUIRED = ("revenue_size", "business_fit")
+FIT_MIN_METRICS = 4
+
+
+def composite_fit(scores: Dict[str, float]) -> Optional[float]:
+    """Weighted composite over the available 0-1 metric scores, or None when
+    the row does not clear the bar. PURE."""
+    present = {k: v for k, v in scores.items() if v is not None and k in FIT_WEIGHTS}
+    if len(present) < FIT_MIN_METRICS or any(k not in present for k in FIT_REQUIRED):
+        return None
+    wsum = sum(FIT_WEIGHTS[k] for k in present)
+    return round(sum(FIT_WEIGHTS[k] * v for k, v in present.items()) / wsum, 3)
+
+
 def score_company(company: dict, skip_qualitative_if_too_large: bool = False) -> Dict:
     """
     Score a qualified company on the 5 Averroes fit metrics.
@@ -486,8 +516,10 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
     # ── Compute composite ──
     available = len(scores)
     logger.info(f"[Scoring] '{company_name}' has {available}/5 metrics: {list(scores.keys())}")
-    if available < 4:
-        logger.warning(f"[Scoring] Only {available}/5 metrics for '{company_name}' — insufficient (need 4+)")
+    composite = composite_fit(scores)
+    if composite is None:
+        logger.warning(f"[Scoring] '{company_name}' unscored: {available}/5 metrics, "
+                       f"required {FIT_REQUIRED} present={[k for k in FIT_REQUIRED if k in scores]}")
         return {
             "averroes_fit_score": None,
             "score_employee_growth": scores.get("employee_growth"),
@@ -501,11 +533,11 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
             "revenue_source": revenue_source,
             "revenue_confidence": revenue_confidence,
             "metrics_available": available,
-            "error": f"Insufficient data: only {available}/5 metrics available (need 4+)",
+            "error": (f"Insufficient data: {available}/5 metrics (need {FIT_MIN_METRICS}+ and both "
+                      f"revenue size and business fit)"),
         }
 
-    composite = sum(scores.values()) / available
-    logger.info(f"[Scoring] '{company_name}' scored {composite:.3f} ({available}/5 metrics)")
+    logger.info(f"[Scoring] '{company_name}' scored {composite:.3f} ({available}/5 metrics, weighted)")
 
     return {
         "averroes_fit_score": round(composite, 3),
@@ -576,7 +608,7 @@ def rescore_company_local(company: dict) -> Optional[Dict]:
         if company.get(col) is not None:
             scores[key] = float(company[col])
 
-    composite = round(sum(scores.values()) / len(scores), 3) if len(scores) >= 4 else None
+    composite = composite_fit(scores)
     return {
         "averroes_fit_score": composite,
         "score_revenue_size": scores.get("revenue_size"),

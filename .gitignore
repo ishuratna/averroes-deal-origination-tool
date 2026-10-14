@@ -28,3 +28,4 @@ Thumbs.db
 
 # Ishu's private weekly pack - has the admin token baked in, must never enter git
 docs/Weekly_Review_private.html
+backend/tmp_seeds.json

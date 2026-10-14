@@ -533,6 +533,22 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - `tests_smartfill_stage_guard.py` enforces all of the above against the real
   handler source.
 
+## 4ag. The fit score is weighted, and two dimensions are required
+
+- Ishu (13 Oct 2026): "it's allowing very high scores to companies that
+  shouldn't be scored that high". The composite was a plain mean of
+  whichever of the five dimensions were present, so press and growth could
+  carry a company with thin revenue and a weak model. `FIT_WEIGHTS` in
+  `ai/scoring.py`: revenue size 0.30, business fit 0.30, employee growth
+  0.20, market sentiment 0.10, revenue growth 0.10. `composite_fit` is the
+  ONE derivation, used by fresh scoring and by the zero-AI rescore alike.
+- `FIT_REQUIRED`: revenue size and business fit must both be present or the
+  row is UNSCORED (None), never flattered by what it happens to have. A
+  missing minor dimension renormalises over the present weights; the
+  4-of-5 floor stays. Changing weights means rerunning
+  `POST /admin/rescore-fit` (dry run first); stored scores are derived,
+  never edited.
+
 ## 4aa. The officer gate (a person we know, found on the register)
 
 - A one-word company name is UNMATCHABLE by string similarity: "foundit" sits
