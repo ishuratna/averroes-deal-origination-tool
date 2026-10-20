@@ -12,6 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Optional
 from datetime import datetime
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +38,14 @@ def find_news_hook(company_name: str, website: str = "") -> str:
     Returns a short factual sentence or "" - never invents.
     Costs 1 grounded call; the caller enforces the daily budget.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key or not company_name:
         return ""
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = f"""Search for recent news (last 60 days) about the company "{company_name}"{f' ({website})' if website else ''}.
 
 Look for ONE specific, verifiable item a private equity partner could naturally
@@ -242,7 +243,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
     plus an optional recent-news hook (found separately - see find_news_hook).
     Returns: {"subject": "...", "body": "...", "to": "..."}
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key:
         return _fallback_template(company_data)
 
@@ -431,7 +432,7 @@ def draft_outreach_email(company_data: Dict, news_hook: str = "") -> Dict[str, s
         from google import genai
         from google.genai.types import GenerateContentConfig
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
 
         # No Google Search - just Gemini with the data we already have.
         # Higher temperature for structural variety between drafts.
@@ -629,7 +630,7 @@ def draft_lp_outreach_email(investor: Dict) -> Dict[str, str]:
     """Draft the LP door opener (structure v3). The only AI-written part is the
     personal WHY THEM line; intro, GCC line, audience sentence and the ask are
     fixed house copy. No Google Search. Falls back to a fully fixed template."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     prof = sender_profile(investor_sender_kind(investor))
     role_line = _lp_role_line(prof)
     recipient_warning = lp_recipient_warning(investor)
@@ -711,7 +712,7 @@ Return ONLY valid JSON: {{"why_them": "..."}}"""
     try:
         from google import genai
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         text = (response.text or "").strip()
         if text.startswith("```"):

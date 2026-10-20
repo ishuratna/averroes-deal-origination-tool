@@ -20,6 +20,7 @@ import json
 import logging
 import math
 from typing import Dict, List, Optional, Tuple
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,7 @@ def read_tabular(data: bytes, filename: str) -> Tuple[Optional["object"], str]:
 def analyze_mapping(headers: List[str], sample_rows: List[dict], filename: str,
                     kind: str = "companies") -> Dict:
     """ONE ungrounded call: headers + samples -> column mapping. {} on failure."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
     fields = _fields_for(kind)
@@ -214,7 +215,7 @@ Return ONLY valid JSON:
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         resp = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(temperature=0.1, response_mime_type="application/json"))
@@ -277,7 +278,7 @@ def extract_pdf_companies(data: bytes, filename: str, kind: str = "companies") -
     """PDF -> entities. Detects list PDFs (broker books, brochures, LP
     directories) vs a single-entity document and extracts accordingly."""
     import base64
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
     if len(data) > 18 * 1024 * 1024:
@@ -306,13 +307,7 @@ Return ONLY valid JSON:
 {{"shape": "list" or "single", "dataset_guess": "one line",
  "companies": [{{"name": "...", "<target_field>": "...", "extra": {{"label": "value"}}}}]}}"""
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        resp = model.generate_content(
-            [{"mime_type": "application/pdf", "data": base64.b64encode(data).decode()}, prompt],
-            generation_config={"response_mime_type": "application/json"})
-        text = (resp.text or "").strip()
+        text = _gemini_client.generate_json([_gemini_client.pdf_part(data), prompt]).strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         parsed = json.loads(text[text.find("{"):text.rfind("}") + 1])

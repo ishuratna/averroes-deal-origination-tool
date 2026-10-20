@@ -805,6 +805,35 @@ mistake is both visible and correctable. This one logged nothing, which is why
   "not defined" / "has no attribute" too: a silent fault is usually older
   than the loud one you came for.
 
+## 4ai. Gemini reaches us through ONE factory, billed post-paid on Vertex
+
+- 20 Oct 2026: every AI call returned `402 RESOURCE_EXHAUSTED: prepayment
+  credits are depleted`. Google moved the Gemini Developer API (API keys,
+  AI Studio) to a PREPAID wallet on 23 Mar 2026; the card on the GCP
+  billing account is never charged after use there, only when credits are
+  bought. The tool had run three months on the wallet it had and went
+  blind the day it emptied, silently: enrichment returned nothing, the
+  qualifier fell back to keywords, Inndex was marked Not a Fit on no
+  evidence.
+- `ai/gemini_client.py` is now the only place a client is built.
+  `GEMINI_BACKEND=vertex` -> Vertex AI with the Cloud Run service account
+  (ADC), project `GEMINI_VERTEX_PROJECT` (defaults to the BigQuery
+  project), location `GEMINI_VERTEX_LOCATION` (default `global`), billed to
+  the GCP account post-paid. Anything else -> the Developer API with
+  `GEMINI_API_KEY` (local runs). `credential()` replaces every
+  `os.getenv("GEMINI_API_KEY")` availability guard so the no-AI paths are
+  unchanged; `make_client()` replaces every `genai.Client(api_key=...)`;
+  `generate_json()` + `pdf_part()` replaced the six old-SDK
+  (`google.generativeai`) sites, which is now removed from requirements.
+  `tests_gemini_client.py` fails on any direct client, old-SDK import or
+  raw key read outside the factory (auth.py's session seed excepted; keep
+  `GEMINI_API_KEY` set or set `SESSION_SECRET`, or every session drops).
+- A 402 from the Developer API is a BILLING state, not a code fault, and
+  the enrichment catch logs it as a warning. `tests_contact_finder_imports`
+  style AST checks do not see it; a daily grep of the logs for
+  `RESOURCE_EXHAUSTED` would have. The cost guards (doctrine 4) still apply
+  on Vertex; set a GCP budget alert on the Vertex AI SKU.
+
 ## 4ac. An address must be a mailbox, not a template
 
 - The crawler stored xyz@example.com as a company's contact (Ishu, 16 Sep

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 from typing import Dict, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +67,11 @@ def _clean_json(text: str) -> Dict:
 
 def identify_from_text(material: str) -> Dict:
     """Company identity from pasted text / a typed description. One ungrounded call."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
     from google import genai
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client.make_client()
     resp = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=_IDENTIFY_PROMPT.format(material=material[:60000]))
@@ -87,7 +88,7 @@ def identify_from_document(data: bytes, filename: str) -> Dict:
     tabular files are read locally first, then identified as text.
     """
     lower = (filename or "").lower()
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
 
@@ -97,7 +98,7 @@ def identify_from_document(data: bytes, filename: str) -> Dict:
         import base64
         from google import genai
         from google.genai import types as gt
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[

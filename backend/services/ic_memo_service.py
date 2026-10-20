@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import date, datetime, timezone
 from typing import List, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +269,7 @@ def _narrative(company: dict, emails: List[dict]) -> dict:
     """One grounded Gemini call for the prose sections. Facts only; the model
     is told that inventing a number that is not in the record or its cited
     search results is a failure."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     empty = {"executive_summary": "", "recommendation_action": "", "investment_thesis": [],
              "company_overview": {}, "market": {}, "diligence_open_questions": {},
              "value_creation": [], "risks": [], "recommendation": "",
@@ -307,7 +308,7 @@ Return ONLY valid JSON with exactly those keys."""
         from google import genai
         from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())], temperature=0.2),

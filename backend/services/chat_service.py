@@ -9,6 +9,7 @@ import logging
 import os
 import re
 from typing import Dict, List
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ Return ONLY valid JSON: {"reply": "your answer", "needs_web_search": true or fal
 def chat_answer(message: str, history: List[Dict], universe: List[dict], investors: List[dict],
                 links: List[dict] = None) -> Dict:
     """Data-only answer. Returns {reply, needs_web_search, matched}."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     context = build_chat_context(message, universe, investors, links=links)
     fallback = {"reply": "The AI service is not configured (GEMINI_API_KEY missing).", "needs_web_search": False}
     if not api_key:
@@ -216,7 +217,7 @@ USER QUESTION: {message}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(temperature=0.2, response_mime_type="application/json"),
@@ -255,7 +256,7 @@ def chat_web_search(message: str, history: List[Dict], universe: List[dict], inv
     Grounded answer, run ONLY when the user explicitly pressed 'Run web search'.
     Caller (main.py) enforces the daily grounding budget before invoking this.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"reply": "The AI service is not configured (GEMINI_API_KEY missing).", "needs_web_search": False}
     context = build_chat_context(message, universe, investors, links=links)
@@ -285,7 +286,7 @@ Return ONLY valid JSON: {{"reply": "your answer"}}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())]),

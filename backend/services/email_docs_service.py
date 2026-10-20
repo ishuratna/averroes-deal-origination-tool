@@ -25,6 +25,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
+from ai import gemini_client as _gemini_client
 from services.doc_smartfill import (
     COLUMN_TYPES, MIN_PDF_TEXT_CHARS, extraction_prompt, merge_writes, office_kind,
     office_to_text, pdf_pages_to_images, pdf_to_text, plan_updates,
@@ -241,14 +242,14 @@ def analyse_document(company: Dict, filename: str, content_type: str,
         pdf_pages = pdf_pages_to_images(data)
     elif content_type not in _AI_READABLE:
         return {}
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"_error": "GEMINI_API_KEY not configured"}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, Part
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = extraction_prompt(company, filename)
         contents: list = []
         path_bits = []

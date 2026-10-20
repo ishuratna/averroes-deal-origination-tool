@@ -17,6 +17,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -359,13 +360,13 @@ def assess_sender_relation(company_name: str, sender_name: str, sender_email: st
     logged either way; only the adoption hangs on this answer, so 'unknown'
     (and any failure) safely means do not adopt.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key or not snippet:
         return "unknown"
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = f"""We emailed the company "{company_name}". A reply arrived from an address
 whose domain we do not recognise.
 
@@ -408,14 +409,14 @@ def classify_reply(subject: str, snippet: str, entity_name: str) -> dict:
     Returns {"classification": ..., "summary": ...} or {} on failure.
     Classes: interested / not_now / declined / question / other
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key or not snippet:
         return {}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = f"""An investor emailed the founder of "{entity_name}". This is the founder's reply.
 
 Subject: {subject}

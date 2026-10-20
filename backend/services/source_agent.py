@@ -18,6 +18,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ Return ONLY valid JSON:
 def ai_extract(page_text: str, url: str, kind: str = "companies") -> Dict:
     """One ungrounded call: read the page, return the entities it lists.
     kind: 'companies' (deal targets) or 'investors' (LPs)."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
     template = _INVESTOR_PROMPT if kind == "investors" else _COMPANY_PROMPT
@@ -135,7 +136,7 @@ def ai_extract(page_text: str, url: str, kind: str = "companies") -> Dict:
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         resp = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(temperature=0.1, response_mime_type="application/json"))

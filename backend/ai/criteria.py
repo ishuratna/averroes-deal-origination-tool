@@ -3,16 +3,17 @@ import json
 import logging
 from pydantic import BaseModel
 from typing import Optional, List, Dict, ClassVar
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
 # --- Load Gemini SDK if available ---
 try:
-    import google.generativeai as genai
+    from google import genai  # noqa: F401  (google-genai; Vertex or API key via ai.gemini_client)
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    logger.warning("google-generativeai not installed. Falling back to keyword qualification.")
+    logger.warning("google-genai not installed. Falling back to keyword qualification.")
 
 
 class AverroesPhilosophy(BaseModel):
@@ -258,7 +259,7 @@ def qualify_company_with_gemini(company: dict, criteria: dict = None) -> Dict[st
     when local data is sparse. Falls back to keyword qualification if
     Gemini unavailable.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     c = criteria or _cached_criteria
 
     if not api_key or not GEMINI_AVAILABLE:
@@ -268,17 +269,8 @@ def qualify_company_with_gemini(company: dict, criteria: dict = None) -> Dict[st
     logger.info(f"Qualifying '{company.get('name')}' via Gemini...")
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-
         prompt = _build_qualification_prompt(company, c)
-
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
-        )
-
-        result = json.loads(response.text)
+        result = json.loads(_gemini_client.generate_json(prompt))
 
         # Extract Gemini's assessment
         is_uk_ire = bool(result.get("is_uk_ireland", False))

@@ -30,6 +30,7 @@ import os
 import re
 from datetime import date, datetime, timedelta
 from typing import Dict, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -233,14 +234,14 @@ def _ai_return_date(subject: str, body: str, received_on: date) -> Optional[date
     model is told to return an empty string rather than guess, and anything
     outside a sane window is discarded.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key:
         return None
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = f"""This is an out-of-office automatic email reply, received on {received_on.isoformat()}.
 
 Subject: {subject}

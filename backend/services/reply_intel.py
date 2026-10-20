@@ -17,6 +17,7 @@ import json
 import logging
 from datetime import date
 from typing import List, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def bucket_reply(company: dict, reply_subject: str, reply_text: str,
       {"bucket", "label", "rationale", "follow_up_date" ("" if none),
        "reply_subject", "reply_body" ("" when no response is warranted)}
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key or not (reply_text or "").strip():
         return {}
 
@@ -160,7 +161,7 @@ Return ONLY valid JSON:
         from google import genai
         from google.genai.types import GenerateContentConfig
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(temperature=0.2, response_mime_type="application/json"),

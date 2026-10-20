@@ -32,6 +32,7 @@ import re
 import json
 import logging
 from typing import Dict, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ def investor_fill(name: str, context: Dict = None, target_brief: str = "") -> Di
     head of private markets. Getting this wrong wastes the one email we get,
     so the ladder is passed in rather than left to the model's instincts.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {"error": "GEMINI_API_KEY not configured"}
 
@@ -153,7 +154,7 @@ def investor_fill(name: str, context: Dict = None, target_brief: str = "") -> Di
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
 
         prompt = f"""You are an investor-relations analyst at Averroes Capital, a London technology
 investor that buys and backs software companies in the UK and Ireland.

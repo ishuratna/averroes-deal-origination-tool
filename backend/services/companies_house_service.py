@@ -20,6 +20,7 @@ import re as _re
 import requests
 from difflib import SequenceMatcher as _SequenceMatcher
 from typing import Dict, Optional, List, Tuple
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -608,19 +609,11 @@ def _parse_accounts_pdf_with_gemini(
     Send the actual accounts PDF to Gemini and extract structured financial data.
     This is the key step — we're parsing the REAL document, not asking Gemini to guess.
     """
-    gemini_key = os.getenv("GEMINI_API_KEY")
+    gemini_key = _gemini_client.credential()
     if not gemini_key:
         return {"error": "GEMINI_API_KEY not set"}
 
     try:
-        import google.generativeai as genai
-
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-
-        # Encode PDF as base64 for Gemini
-        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
         prompt = f"""You are a UK chartered accountant. I am giving you the ACTUAL filed accounts PDF
 for company "{company_name}" (Companies House #{company_number}, filing date: {filing_date}).
 
@@ -707,16 +700,8 @@ Return ONLY valid JSON:
     "notes": "Brief summary of what's in the accounts, e.g. 'Micro-entity accounts, Balance Sheet only, no P&L'"
 }}"""
 
-        # Send PDF as file data to Gemini
-        response = model.generate_content(
-            [
-                {"mime_type": "application/pdf", "data": pdf_b64},
-                prompt,
-            ],
-            generation_config={"response_mime_type": "application/json"},
-        )
-
-        text = response.text
+        # Send the PDF itself to Gemini (ai.gemini_client: Vertex or API key)
+        text = _gemini_client.generate_json([_gemini_client.pdf_part(pdf_bytes), prompt])
         if not text:
             return {"error": "Gemini returned empty response for PDF parsing"}
 
@@ -1016,7 +1001,7 @@ def extract_ch_financials(
     Returns structured dict with CH company info + extracted financial data.
     """
     ch_key = os.getenv("COMPANIES_HOUSE_API_KEY", "")
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_key = _gemini_client.credential()
 
     if not ch_key:
         return {"error": "COMPANIES_HOUSE_API_KEY not set — register free at developer.company-information.service.gov.uk"}
@@ -1488,13 +1473,13 @@ def get_filing_intel(company_number: str) -> Dict:
 
 def _parse_cs01_pdf(pdf: bytes) -> Dict:
     """One CS01 PDF -> shareholder + share-class data (v3 prompt). {} on failure."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return {}
     try:
         from google import genai
         from google.genai.types import Part
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = """This is a UK Companies House confirmation statement (CS01) PDF. Extract the
 shareholder information AND the statement of capital (share classes with their
 prescribed particulars of rights) if present.
@@ -1727,14 +1712,10 @@ def get_filings_since(company_number: str, since_date: str) -> List[dict]:
 def _parse_sh01_pdf(pdf: bytes, company_name: str) -> Dict:
     """One SH01 PDF -> {"allottees": [{"name","shares"}], "names_listed": bool}. {} on failure."""
     import base64
-    gemini_key = os.getenv("GEMINI_API_KEY")
+    gemini_key = _gemini_client.credential()
     if not gemini_key:
         return {}
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        pdf_b64 = base64.b64encode(pdf).decode()
         prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) or similar
 capital filing for {company_name}. Extract the names of the allottees (the people or
 entities the new shares were allotted to) if the document lists them. Many SH01 forms
@@ -1742,11 +1723,7 @@ do NOT name allottees - in that case return an empty list. NEVER guess names.
 
 Return ONLY valid JSON:
 {{"allottees": [{{"name": "...", "shares": null or number}}], "names_listed": true or false}}"""
-        response = model.generate_content(
-            [{"mime_type": "application/pdf", "data": pdf_b64}, prompt],
-            generation_config={"response_mime_type": "application/json"},
-        )
-        text = (response.text or "").strip()
+        text = _gemini_client.generate_json([_gemini_client.pdf_part(pdf), prompt]).strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         return json.loads(text[text.find("{"):text.rfind("}") + 1])

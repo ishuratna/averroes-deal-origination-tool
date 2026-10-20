@@ -50,6 +50,7 @@ import logging
 import re
 from datetime import date
 from typing import Dict, List, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -425,13 +426,10 @@ def _ai_read(pdf: bytes, company_name: str) -> Dict:
     """Fallback for a scanned SH01: one ungrounded Gemini call, structured."""
     import base64
     import os
-    key = os.getenv("GEMINI_API_KEY")
+    key = _gemini_client.credential()
     if not key:
         return {}
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
         prompt = f"""This is a UK Companies House SH01 (return of allotment of shares) for {company_name}.
 Read the form's own figures. NEVER guess. Return ONLY JSON:
 {{"allotment_date": "YYYY-MM-DD or null",
@@ -442,10 +440,7 @@ Read the form's own figures. NEVER guess. Return ONLY JSON:
 small decimal such as 1.6258, never the total). "aggregate_paid" is the TOTAL consideration for the
 class if the form states one, else null. "total_shares_after" is the total number of shares in the
 statement of capital after the allotment (the Totals line, all classes)."""
-        resp = model.generate_content(
-            [{"mime_type": "application/pdf", "data": base64.b64encode(pdf).decode()}, prompt],
-            generation_config={"response_mime_type": "application/json"})
-        text = (resp.text or "").strip()
+        text = _gemini_client.generate_json([_gemini_client.pdf_part(pdf), prompt]).strip()
         data = json.loads(text[text.find("{"):text.rfind("}") + 1])
         allots = [a for a in (data.get("allotments") or []) if isinstance(a, dict) and (a.get("shares") or 0) > 0]
         if not allots:

@@ -58,6 +58,7 @@ app = FastAPI(title="Averroes Deal Origination API")
 # (compresses actual responses); makes the 13k-row universe a few MB on the
 # wire instead of tens.
 from fastapi.middleware.gzip import GZipMiddleware
+from ai import gemini_client as _gemini_client
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Google Sign-In authentication (enforced only when GOOGLE_OAUTH_CLIENT_ID is set).
@@ -223,7 +224,7 @@ async def root():
         "project": GCP_PROJECT,
         "bucket": GCS_BUCKET,
         "bq_dataset": BQ_DATASET,
-        "gemini_enabled": bool(os.getenv("GEMINI_API_KEY")),
+        "gemini_enabled": bool(_gemini_client.credential()),
         "companies_house_enabled": bool(os.getenv("COMPANIES_HOUSE_API_KEY"))
     }
 
@@ -6303,14 +6304,14 @@ async def company_news_refresh(company_name: str):
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
     items = []
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         prompt = f"""Find recent news and information pieces about the company "{company_name}"
 ({company.get('sector') or 'B2B software'}, {company.get('hq_city') or 'UK'},
 website: {company.get('website') or 'unknown'}).
@@ -8529,21 +8530,14 @@ async def chat_criteria(req: CriteriaChatRequest):
     Interpret a natural-language criteria change via Gemini.
     Returns proposed new criteria JSON + preview impact counts.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         raise HTTPException(status_code=503, detail="Gemini API key not configured.")
-
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise HTTPException(status_code=503, detail="google-generativeai not installed.")
 
     # Get current criteria
     current = bq_handler.get_criteria()
 
-    # Ask Gemini to interpret the change
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    # Ask Gemini to interpret the change (ai.gemini_client: Vertex or API key)
 
     prompt = f"""You are a Private Equity deal origination assistant for Averroes Capital.
 
@@ -8569,11 +8563,7 @@ RETURN FORMAT — JSON only:
 """
 
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
-        )
-        result = json.loads(response.text)
+        result = json.loads(_gemini_client.generate_json(prompt))
     except Exception as e:
         logger.error(f"Gemini criteria chat failed: {e}")
         raise HTTPException(status_code=500, detail=f"AI interpretation failed: {str(e)}")

@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from typing import Dict, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class EnrichmentAgent:
         """
         logger.info(f"Agents Hunting: Enriching founder details for '{company_name}'...")
 
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = _gemini_client.credential()
         if not api_key:
             return {"contact_name": "", "contact_email": "", "linkedin_url": "", "website": "", "description": ""}
 
@@ -27,7 +28,7 @@ class EnrichmentAgent:
             from google import genai
             from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-            client = genai.Client(api_key=api_key)
+            client = _gemini_client.make_client()
 
             # Identity constraints (per Ishu, 27 Aug 2026): company names
             # collide, so the search is anchored to what the SEED ROW already
@@ -146,12 +147,12 @@ class EnrichmentAgent:
 
     def retry_email_search(self, company_name: str, website: str, contact_name: str) -> dict:
         """Public entry for the retry ladder — creates its own client."""
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = _gemini_client.credential()
         if not api_key:
             return {}
         try:
             from google import genai
-            client = genai.Client(api_key=api_key)
+            client = _gemini_client.make_client()
             return self._retry_email_search(client, company_name, website, contact_name)
         except Exception as e:
             logger.warning(f"[Enrichment] retry entry failed for {company_name}: {e}")

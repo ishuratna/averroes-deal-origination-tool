@@ -20,6 +20,7 @@ import re
 import json
 import logging
 from typing import Dict, List, Optional, Tuple
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -209,14 +210,14 @@ def extract_candidates(company: dict) -> List[Dict]:
 def ai_classify_batch(names: List[str]) -> Dict[str, Dict]:
     """One ungrounded call per ~60 unknowns: canonical name + type.
     Returns {raw_name: {"name": canonical, "type": t}}. Empty dict on failure."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     if not api_key or not names:
         return {}
     out = {}
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         for i in range(0, len(names), 60):
             chunk = names[i:i + 60]
             prompt = ("These strings were extracted as investors/shareholders of UK and Ireland software companies. "

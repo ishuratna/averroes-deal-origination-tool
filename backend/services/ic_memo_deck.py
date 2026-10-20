@@ -24,6 +24,7 @@ import json
 import logging
 import os
 from typing import Dict, List, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ _SCHEMA_HINT = """{
 def compose_deck(company: Dict, emails: List[dict], doc_summaries: List[str],
                  facts_block: str, email_block: str) -> Dict:
     """The written sections. Numbers only from the record; research is tagged."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = _gemini_client.credential()
     empty = {"screening": {"tag": "", "rating": "Mixed", "note": ""},
              "business_description": [], "alignment": {}, "market_overview": [],
              "thesis": [], "value_creation": [], "deal_structuring": [],
@@ -176,7 +177,7 @@ Return ONLY valid JSON exactly in this shape:
     try:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
         response = client.models.generate_content(
             model="gemini-2.5-flash", contents=prompt,
             config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())], temperature=0.2))

@@ -19,6 +19,7 @@ import os
 import json
 import logging
 from typing import Dict, Optional
+from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -628,7 +629,7 @@ def _gemini_qualitative_scoring(company: dict) -> Optional[Dict]:
 
     Returns dict with scored metrics or None on failure.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         logger.warning("[Scoring] No GEMINI_API_KEY — skipping qualitative scoring")
         return None
@@ -637,7 +638,7 @@ def _gemini_qualitative_scoring(company: dict) -> Optional[Dict]:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
 
         # Build context from company data
         name = company.get("name", "Unknown")
@@ -784,7 +785,7 @@ def _gemini_revenue_estimate(company: dict) -> Optional[float]:
     Last-resort revenue estimation using Gemini + Google Search.
     Returns estimated revenue in £ millions, or None.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_client.credential()
     if not api_key:
         return None
 
@@ -796,7 +797,7 @@ def _gemini_revenue_estimate(company: dict) -> Optional[float]:
         from google import genai
         from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
-        client = genai.Client(api_key=api_key)
+        client = _gemini_client.make_client()
 
         website = company.get("website", "")
         sector = company.get("sector", "")
