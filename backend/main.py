@@ -3546,6 +3546,83 @@ async def smartfill_company_admin(request: Request, company_name: str):
     return await smartfill_company(company_name)
 
 
+@app.post("/admin/companies/add-by-number")
+async def admin_add_companies_by_number(
+        request: Request,
+        numbers: str = Query(..., description="comma-separated CH numbers, each optionally 'NUMBER:Display Name'"),
+        smartfill: int = Query(1, description="1 = run SmartFill on each new row right away (qualifies or marks Not a Fit)")):
+    """Ops: put a company into the universe straight from its Companies House
+    number (Ishu, 20 Oct 2026: Teachmate 14972646, Inndex 11003736), then
+    SmartFill it. The number is stored as `registration_number`, so SmartFill's
+    register step trusts it and never name-searches (doctrine 4a). The hard
+    filters inside SmartFill decide Qualified or Not a Fit, as for any source.
+    Merge-only: an existing row is gap-filled, never overwritten. Token."""
+    _require_token(request)
+    from services.companies_house_service import _get_company_profile
+    items = []
+    for part in numbers.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        num, _, disp = part.partition(":")
+        items.append((num.strip().upper(), disp.strip()))
+
+    async def _run():
+        added, filled, failed = [], [], []
+        for num, disp in items:
+            prof = _get_company_profile(num)
+            if not prof:
+                failed.append(f"{num}: not found on Companies House")
+                continue
+            legal = (prof.get("company_name") or "").strip()
+            name = disp or re.sub(r"\s+(ltd|limited|plc|llp)\.?$", "", legal, flags=re.I).title()
+            addr = prof.get("registered_office_address") or {}
+            city = (addr.get("locality") or addr.get("post_town") or "").strip().title()
+            country = (addr.get("country") or "United Kingdom").strip()
+            row = {
+                "name": name, "legal_name": legal, "registration_number": num,
+                "ch_company_number": num, "hq_city": city,
+                "hq_location": ", ".join(x for x in (city, country) if x),
+                "hq_country": country, "region": "UK",
+                "year_founded": int(str(prof.get("date_of_creation") or "0000")[:4]) or None,
+                "source": "Manual (CH number)", "status": "Uploaded", "match_score": 0.0,
+            }
+            row = {k: v for k, v in row.items() if v not in (None, "")}
+            existed = bool(bq_handler.get_company_full(name))
+            bq_handler.save_targets([row])
+            added.append({"name": name, "legal_name": legal, "number": num, "existed": existed})
+            if smartfill:
+                try:
+                    res = await smartfill_company(name, bulk=False)
+                    after = bq_handler.get_company_full(name) or {}
+                    filled.append({"name": name, "status": after.get("status"),
+                                   "fit_score": after.get("averroes_fit_score"),
+                                   "unfit_reason": after.get("unfit_reason") or "",
+                                   "website": after.get("website") or "",
+                                   "message": (res or {}).get("message", "") if isinstance(res, dict) else ""})
+                except HTTPException as e:
+                    failed.append(f"{name}: SmartFill {e.status_code} {e.detail}")
+                except Exception as e:
+                    failed.append(f"{name}: SmartFill {str(e)[:120]}")
+        return {"status": "Success", "added": added, "smartfilled": filled, "failed": failed}
+
+    import asyncio as _asyncio
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    async def _gen():
+        task = _asyncio.create_task(_run())
+        while not task.done():
+            await _asyncio.sleep(10)
+            yield " "
+        try:
+            res = task.result()
+        except Exception as e:
+            res = {"status": "Error", "detail": str(e)}
+        yield "\n" + _json.dumps(res, default=str)
+    return StreamingResponse(_gen(), media_type="text/plain")
+
+
 @app.get("/admin/company")
 async def admin_company(request: Request, name: str = Query(...)):
     """One company's full row plus its year store, for a parity check from
