@@ -52,6 +52,19 @@ _JUNK_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js
 _GENERIC_PREFIXES = ("hello", "info", "contact", "team", "enquiries", "inquiries",
                      "office", "admin", "support", "sales", "press", "hi")
 
+def _clean_domain(website: str) -> Optional[str]:
+    """'https://www.Foo.co.uk/x' -> 'foo.co.uk'. Used by the site scrape and
+    the AI-email cross-check. DELETED BY MISTAKE on 16 Sep 2026 (commit
+    64866b8) while both callers kept using it; the waterfall then raised
+    NameError on every SmartFill, logged as "non-fatal", and no website
+    contact was found for a month. `tests_contact_finder_imports.py` now
+    exercises both callers so a missing helper fails loudly."""
+    if not website:
+        return None
+    host = urlparse(website if website.startswith("http") else f"https://{website}").netloc
+    return host.replace("www.", "").lower() or None
+
+
 # ── Is this an address anyone actually reads? ────────────────────────────────
 # The crawler once returned xyz@example.com for a real company (Ishu, 16 Sep
 # 2026): the string sat in a contact form's greyed-out placeholder, the regex

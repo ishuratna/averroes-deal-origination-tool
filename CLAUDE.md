@@ -789,6 +789,22 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - The whole directory goes in, all sectors. Fit is decided afterwards by the
   hard filters and SmartFill, as with every source (doctrine 4).
 
+## 4ah. "Non-fatal" is where regressions hide
+
+- `_clean_domain` in `services/contact_finder.py` was deleted on 16 Sep 2026
+  by the placeholder commit (64866b8) while two callers kept using it. The
+  call site in SmartFill wraps the waterfall in `except Exception: warning
+  (non-fatal)`, so every SmartFill for a month logged a NameError and
+  returned no website contact, and nothing failed. Found only because the
+  Gemini-credit outage (20 Oct 2026) made someone read the logs.
+- Rule: a `non-fatal` catch must never swallow a NameError/TypeError/
+  AttributeError (a code fault, not a data fault). `tests_contact_finder_imports.py`
+  walks the module's AST and fails if an underscore helper is called but not
+  defined; copy that pattern for any module whose errors are caught broadly.
+- When reading Cloud Run logs for one problem, grep WARNING lines for
+  "not defined" / "has no attribute" too: a silent fault is usually older
+  than the loud one you came for.
+
 ## 4ac. An address must be a mailbox, not a template
 
 - The crawler stored xyz@example.com as a company's contact (Ishu, 16 Sep
