@@ -2308,6 +2308,9 @@ async def _run_migrations():
 # is enforced before any AI run. Both knobs are env vars (change with
 # --update-env-vars, never --set-env-vars):
 DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))      # SmartFill/Enrich runs per day
+# Sources where a PERSON asked about one company: enrich first, judge on the
+# evidence after (never gate an empty row). See smartfill_company.
+EVIDENCE_FIRST_SOURCES = ("Quick Research", "Manual (CH number)")
 
 # All outreach for the Internal Test company goes to this inbox — always.
 TEST_RECIPIENT = "admin@averroescapital.com"
@@ -2581,7 +2584,9 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # about one company is the opposite case. Enrichment then finds the real
     # geography and sector, and the user judges fit with evidence in front of
     # them instead of the gate guessing from an empty row.
-    if company_data.get("source") == "Quick Research":
+    # MANUAL (CH NUMBER) rows take the same route (Ishu, 20 Oct 2026: Inndex,
+    # a bare name-and-number row, was gated Not a Fit with nothing on it).
+    if company_data.get("source") in EVIDENCE_FIRST_SOURCES:
         # A husk left by an earlier gated run sits at Not a Fit with the gate's
         # no-evidence reason. Re-running Quick Research must wipe that verdict,
         # or the bypass would enrich the row and then faithfully keep the wrong
@@ -3121,12 +3126,21 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # actual evidence. Not a Fit stays Not a Fit - but as a researched verdict
     # sitting on a populated row in the Master Universe, not a guess stamped on
     # an empty one. Data is never removed by the verdict.
-    if company_data.get("source") == "Quick Research":
+    if company_data.get("source") in EVIDENCE_FIRST_SOURCES:
         try:
             fresh = bq_handler.get_company_full(company_name) or {}
             _ensure_criteria()
             verdict = qualify_company_with_gemini(fresh)
-            if not verdict.get("qualified"):
+            if verdict.get("qualified") and company_data.get("source") == "Manual (CH number)" \
+                    and (fresh.get("status") or "") in ("Uploaded", "Scraped", "", None):
+                # A person added this company by its register number and asked
+                # for it to be qualified automatically: the evidence passed the
+                # hard filters, so it joins the Qualified queue through the one
+                # status writer (status_change logged). Quick Research rows are
+                # left for the person to judge, as before.
+                if bq_handler.update_company_status(company_name, "Qualified", created_by="add-by-number"):
+                    new_status = "Qualified"
+            elif not verdict.get("qualified"):
                 from google.cloud import bigquery as bq_lib
                 bq_handler.client.query(
                     # Same rule as the main write: a verdict never undoes work
@@ -3549,7 +3563,7 @@ async def smartfill_company_admin(request: Request, company_name: str):
 @app.post("/admin/companies/add-by-number")
 async def admin_add_companies_by_number(
         request: Request,
-        numbers: str = Query(..., description="comma-separated CH numbers, each optionally 'NUMBER:Display Name'"),
+        numbers: str = Query(..., description="comma-separated CH numbers, each optionally 'NUMBER:Display Name:website'"),
         smartfill: int = Query(1, description="1 = run SmartFill on each new row right away (qualifies or marks Not a Fit)")):
     """Ops: put a company into the universe straight from its Companies House
     number (Ishu, 20 Oct 2026: Teachmate 14972646, Inndex 11003736), then
@@ -3564,12 +3578,14 @@ async def admin_add_companies_by_number(
         part = part.strip()
         if not part:
             continue
-        num, _, disp = part.partition(":")
-        items.append((num.strip().upper(), disp.strip()))
+        bits = part.split(":", 2)
+        items.append((bits[0].strip().upper(), bits[1].strip() if len(bits) > 1 else "",
+                      bits[2].strip() if len(bits) > 2 else ""))
 
     async def _run():
         added, filled, failed = [], [], []
-        for num, disp in items:
+        from google.cloud import bigquery as bq_lib
+        for num, disp, site in items:
             prof = _get_company_profile(num)
             if not prof:
                 failed.append(f"{num}: not found on Companies House")
@@ -3587,9 +3603,37 @@ async def admin_add_companies_by_number(
                 "year_founded": int(str(prof.get("date_of_creation") or "0000")[:4]) or None,
                 "source": "Manual (CH number)", "status": "Uploaded", "match_score": 0.0,
             }
+            if site:
+                row["website"] = site if site.startswith("http") else f"https://{site}"
             row = {k: v for k, v in row.items() if v not in (None, "")}
             existed = bool(bq_handler.get_company_full(name))
             bq_handler.save_targets([row])
+            # The register number and legal name come from a person and the
+            # register itself: they OVERRIDE whatever a research seed guessed
+            # (merge alone leaves an empty-string column untouched). A website
+            # given explicitly replaces a wrong one and reseeds the identity
+            # anchor; the source becomes manual so SmartFill enriches first
+            # and judges after. A stale gate verdict is cleared.
+            sets = ["registration_number = @num", "legal_name = @legal",
+                    "source = 'Manual (CH number)'",
+                    "unfit_reason = CASE WHEN status = 'Not a Fit' THEN NULL ELSE unfit_reason END",
+                    "status = CASE WHEN status = 'Not a Fit' THEN 'Uploaded' ELSE status END"]
+            params = [bq_lib.ScalarQueryParameter("num", "STRING", num),
+                      bq_lib.ScalarQueryParameter("legal", "STRING", legal),
+                      bq_lib.ScalarQueryParameter("n", "STRING", name)]
+            if site:
+                sets += ["website = @site", "seed_website = @site"]
+                params.append(bq_lib.ScalarQueryParameter("site", "STRING", row["website"]))
+            try:
+                bq_handler.client.query(
+                    f"UPDATE `{bq_handler.table_id}` SET {', '.join(sets)} WHERE name = @n",
+                    job_config=bq_lib.QueryJobConfig(query_parameters=params)).result()
+                bq_handler.add_activity_note(
+                    name, f"Added by Companies House number {num} ({legal})"
+                          + (f"; website set to {row['website']}" if site else ""),
+                    created_by="add-by-number")
+            except Exception as e:
+                failed.append(f"{name}: row update {str(e)[:120]}")
             added.append({"name": name, "legal_name": legal, "number": num, "existed": existed})
             if smartfill:
                 try:
