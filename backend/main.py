@@ -5422,9 +5422,12 @@ class NoteRequest(BaseModel):
     created_by: Optional[str] = "Ishu Ratna"
 
 
-@app.put("/company/{company_name}/status")
-async def update_company_status(company_name: str, req: StatusUpdateRequest):
+@app.put("/company/{company_name}/status")          # browser: Google sign-in
+@app.put("/admin/company/{company_name}/status")    # terminal: WATCH_TOKEN (ops alias, doctrine 6a)
+async def update_company_status(request: Request, company_name: str, req: StatusUpdateRequest):
     """Update a company's deal stage and log the change."""
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
     valid_stages = bq_handler.DEAL_STAGES
     if req.status not in valid_stages:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_stages}")
