@@ -3130,6 +3130,15 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
         try:
             fresh = bq_handler.get_company_full(company_name) or {}
             _ensure_criteria()
+            if not (fresh.get("description") or "").strip():
+                # The research wrote nothing. A verdict on an empty row is the
+                # guess this whole branch exists to avoid: leave the stage
+                # alone and say so on the card.
+                bq_handler.add_activity_note(
+                    company_name, "Research returned no description; fit verdict deferred "
+                                  "(nothing to judge). Re-run SmartFill or fill the row by hand.",
+                    created_by="smartfill")
+                raise RuntimeError("empty research result; verdict deferred")
             verdict = qualify_company_with_gemini(fresh)
             if verdict.get("qualified") and company_data.get("source") == "Manual (CH number)" \
                     and (fresh.get("status") or "") in ("Uploaded", "Scraped", "", None):
@@ -3606,7 +3615,34 @@ async def admin_add_companies_by_number(
             if site:
                 row["website"] = site if site.startswith("http") else f"https://{site}"
             row = {k: v for k, v in row.items() if v not in (None, "")}
-            existed = bool(bq_handler.get_company_full(name))
+            # ONE row per company. get_company_full matches case-insensitively
+            # but save_targets dedups on the exact string, so "Teachmate" next
+            # to an existing "TeachMate" inserted an empty twin (20 Oct 2026).
+            # Adopt the stored spelling, and retire an empty twin this endpoint
+            # made earlier (same number, nothing researched, never emailed).
+            prior = bq_handler.get_company_full(name)
+            if prior and prior.get("name") != name:
+                name = prior["name"]
+                row["name"] = name
+            existed = bool(prior)
+            try:
+                twins = bq_handler._run_query(
+                    f"""SELECT name FROM `{bq_handler.table_id}`
+                        WHERE LOWER(name) = LOWER(@n) AND name != @n
+                          AND IFNULL(source, '') = 'Manual (CH number)'
+                          AND IFNULL(description, '') = '' AND IFNULL(contact_email, '') = ''
+                          AND IFNULL(outreach_sent_at, NULL) IS NULL""",
+                    params=[bq_lib.ScalarQueryParameter("n", "STRING", name)])
+                for t in twins:
+                    bq_handler.client.query(
+                        f"DELETE FROM `{bq_handler.table_id}` WHERE name = @t",
+                        job_config=bq_lib.QueryJobConfig(query_parameters=[
+                            bq_lib.ScalarQueryParameter("t", "STRING", t["name"])])).result()
+                    bq_handler.add_activity_note(
+                        name, f"Removed empty duplicate row '{t['name']}' created by add-by-number",
+                        created_by="add-by-number")
+            except Exception as e:
+                failed.append(f"{name}: twin check {str(e)[:120]}")
             bq_handler.save_targets([row])
             # The register number and legal name come from a person and the
             # register itself: they OVERRIDE whatever a research seed guessed
@@ -3676,11 +3712,12 @@ async def admin_company(request: Request, name: str = Query(...)):
     if not row:
         raise HTTPException(status_code=404, detail=f"Company '{name}' not found")
     cells = bq_handler.get_financials(name)
+    activity = bq_handler.get_activity_log(name, 30)
     # Long free text is truncated: this is a numbers check, not a read.
     for k in ("description", "ic_memo", "outreach_draft_body", "action_reply_body", "action_rationale"):
         if isinstance(row.get(k), str) and len(row[k]) > 300:
             row[k] = row[k][:300] + "..."
-    return {"company": row, "financial_cells": cells}
+    return {"company": row, "financial_cells": cells, "activity": activity}
 
 
 @app.post("/smartenrich/{company_name}")
