@@ -481,8 +481,13 @@ mistake is both visible and correctable. This one logged nothing, which is why
   name in the notes"). Our own domain, public mail hosts and advisers never
   match (a Cavendish banker on the Cyjax call is not Cavendish's meeting). A
   one-word dictionary name ("Bounce") needs the title or two body mentions;
-  one mention is `weak`, reported in the sync result and never written.
-  Substring matches are forbidden ("arcus" in "Marcus"): whole-word only.
+  A DICTIONARY-WORD NAME NEVER MATCHES ON THE BODY (first live preview,
+  21 Oct 2026: "Send" matched eleven internal meetings on "send the deck",
+  "Sessions" two): `_GENERIC_WORDS` names are reported as `weak` for a person
+  and reach the card only by title or attendee domain. ISP mailboxes
+  (btinternet, sky, virginmedia ...) are public domains: a founder's home
+  address matched ReadyGo to a Glacier Finance call. Substring matches are
+  forbidden ("arcus" in "Marcus"): whole-word only.
 - CANDIDATES are Responded and later only (`call_note_candidates`, one SQL,
   Internal Test excluded). A call before a reply is not something the tool
   can see; the Responded page owns that gate.
@@ -492,7 +497,9 @@ mistake is both visible and correctable. This one logged nothing, which is why
   both are kept (they differ).
 - STAGE: a strong match PROMOTES Responded -> Meeting through
   `update_company_status` (the one writer, logs status_change). Meeting and
-  later are never touched. Ishu chose promotion over notes-only.
+  later are never touched, and neither is a PARKED company (`track` kill or
+  later): it takes the notes, a person closed it. Ishu chose promotion over
+  notes-only.
 - Routes: `POST /calls/sync` (button) + `/admin/calls/sync` GET/POST (token,
   the scheduler URL carries `?token=&dry_run=0`), ONE handler, dry run by
   default. `GET /company/{name}/call-notes` feeds the card. `SyncCallsButton`

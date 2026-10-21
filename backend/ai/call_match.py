@@ -30,8 +30,13 @@ OWN_DOMAINS = {"averroescapital.com"}
 # Mail hosts a founder may use; a shared domain says nothing about the company.
 PUBLIC_MAIL_DOMAINS = {
     "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk",
-    "live.com", "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "mac.com",
+    "live.com", "live.co.uk", "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "mac.com",
     "protonmail.com", "proton.me", "aol.com", "msn.com", "group.calendar.google.com",
+    # UK ISP mailboxes: a founder's personal address, never the company's.
+    # btinternet.com matched ReadyGo to a Glacier Finance call (21 Oct 2026).
+    "btinternet.com", "btopenworld.com", "sky.com", "virginmedia.com", "ntlworld.com",
+    "talktalk.net", "blueyonder.co.uk", "plus.net", "plusnet.com", "tiscali.co.uk",
+    "eircom.net", "mail.com", "ymail.com", "zoho.com",
 }
 
 # Words that make a one-word company name too generic to match on a single
@@ -39,6 +44,7 @@ PUBLIC_MAIL_DOMAINS = {
 _GENERIC_WORDS = {
     "bounce", "beryl", "journey", "glow", "stream", "send", "record", "quantum",
     "fusion", "edge", "open", "dynamic", "charity", "criminal", "games", "capital",
+    "sessions", "session", "journey", "glow", "ready", "go",
     "group", "global", "digital", "tech", "software", "systems", "solutions",
     "cloud", "data", "labs", "studio", "media", "works", "project",
 }
@@ -118,6 +124,18 @@ def _is_generic(core: str) -> bool:
     return len(core) < 4 or core in _GENERIC_WORDS
 
 
+def _proper_mentions(text: str, name: str) -> int:
+    """Case-SENSITIVE mentions of a one-word name as written on the row,
+    not at the start of a sentence, line or bullet. "Send" and "Sessions"
+    are companies AND ordinary words: "send the deck" and "Send the deck"
+    both say nothing, "we met Send last week" does (21 Oct 2026, the first
+    live preview matched Send to eleven internal meetings)."""
+    if not text or not name:
+        return 0
+    pat = r"(?<=[a-z0-9,;:)'\"] )" + re.escape(name) + r"(?![a-z0-9])"
+    return len(re.findall(pat, text))
+
+
 def match_meeting(meeting: Meeting, companies: Iterable[CompanyRef]) -> List[Match]:
     """Every company the meeting is evidence for, best first. Callers act on
     `confidence in ('domain', 'title', 'body')`; `weak` is report-only."""
@@ -143,8 +161,13 @@ def match_meeting(meeting: Meeting, companies: Iterable[CompanyRef]) -> List[Mat
         in_body = _mentions(body, core)
         if not in_body:
             continue
-        if _is_generic(core) and in_body < 2:
-            out.append(Match(c.name, "weak", f"one mention of '{c.name}' in the notes", 20))
+        if _is_generic(core):
+            # A dictionary-word name ("Send", "Sessions", "Bounce") NEVER
+            # matches on the body: "send the deck" says nothing, and even a
+            # proper-noun use is reported as weak for a person to judge.
+            proper = _proper_mentions(meeting.body or "", c.name.strip())
+            out.append(Match(c.name, "weak",
+                             f"'{c.name}' is a common word; named {proper}x, appears {in_body}x", 25 if proper else 20))
         else:
             out.append(Match(c.name, "body", f"'{c.name}' mentioned {in_body}x in the notes", 60))
     out.sort(key=lambda m: -m.score)

@@ -49,9 +49,15 @@ def test_generic_one_word_name_needs_more_than_one_mention():
     ms = match_meeting(m, BOOK)
     assert strong(ms) == []
     assert [(x.company, x.confidence) for x in ms] == [("Bounce", "weak")]
+    # even as a proper noun twice, a dictionary-word name stays weak: the
+    # sync lists it for a person and never writes it (21 Oct 2026, "Send").
     m2 = Meeting("5", title="Project Glow team call", participant_emails=[],
-                 body="Bounce call. Bounce want a term sheet by Friday.")
-    assert strong(match_meeting(m2, BOOK)) == [("Bounce", "body")]
+                 body="We met Bounce on Monday, and Bounce want a term sheet by Friday.")
+    assert strong(match_meeting(m2, BOOK)) == []
+    assert [(x.company, x.confidence) for x in match_meeting(m2, BOOK)] == [("Bounce", "weak")]
+    # title or attendee domain is how such a company gets matched
+    m3 = Meeting("5b", title="Bounce <> Averroes", participant_emails=[], body="")
+    assert strong(match_meeting(m3, BOOK)) == [("Bounce", "title")]
 
 
 def test_no_substring_matches():
@@ -79,6 +85,38 @@ def test_sync_rules_in_source():
     bsrc = inspect.getsource(b.BigQueryHandler.call_note_candidates)
     assert "'Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost'" in bsrc
     assert "Internal Test" in bsrc
+
+
+
+
+def test_dictionary_word_names_never_match_on_body():
+    # 21 Oct 2026: "Send" matched eleven internal meetings on "send the deck".
+    send = CompanyRef("Send", website="send.co", status="Responded")
+    sess = CompanyRef("Sessions", website="sessions.io", status="Responded")
+    m = Meeting("8", title="Weekly Cashflow update", participant_emails=[],
+                body="Send the deck to Bea. We should send the model too. Sessions with the team were long.")
+    assert strong(match_meeting(m, [send, sess])) == []
+    # named mid-sentence twice as a proper noun: a real reference, but still
+    # only weak for a common word; a distinctive one-word name passes.
+    zut = CompanyRef("Zutec", website="zutec.com", status="Responded")
+    m2 = Meeting("9", title="Project Glow", participant_emails=[],
+                 body="Zutec update: they want a term sheet.")
+    assert strong(match_meeting(m2, [zut])) == [("Zutec", "body")]
+    m3 = Meeting("10", title="Project Glow", participant_emails=[],
+                 body="We met Send on Monday, and Send want a term sheet.")
+    assert strong(match_meeting(m3, [send])) == []
+
+
+def test_isp_mailbox_is_not_a_company_domain():
+    rg = CompanyRef("ReadyGo (Diagnostic Equipment)", contact_email="bob@btinternet.com", status="Lost")
+    m = Meeting("11", title="Glacier Finance Weekly Catch up", participant_emails=["bob@btinternet.com"], body="")
+    assert strong(match_meeting(m, [rg])) == []
+
+
+def test_parked_companies_are_never_promoted():
+    from services import call_notes_sync as s
+    src = inspect.getsource(s)
+    assert 'in ("kill", "later")' in src and "m.company not in parked" in src
 
 
 if __name__ == "__main__":

@@ -2028,7 +2028,7 @@ class BigQueryHandler:
             return []
         return self._run_query(f"""
             SELECT name, IFNULL(website, '') AS website, IFNULL(contact_email, '') AS contact_email,
-                   IFNULL(status, '') AS status
+                   IFNULL(status, '') AS status, IFNULL(track, '') AS track
             FROM `{self.table_id}`
             WHERE status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost')
               AND IFNULL(source, '') != 'Internal Test'

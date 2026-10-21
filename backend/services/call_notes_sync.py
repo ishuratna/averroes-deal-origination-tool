@@ -72,11 +72,15 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
                 "message": "GRANOLA_API_KEY is not set on this service."}
 
     started = datetime.now(timezone.utc)
+    cand_rows = bq_handler.call_note_candidates()
     companies = [CompanyRef(name=r["name"], website=r.get("website") or "",
                             contact_email=r.get("contact_email") or "",
                             status=r.get("status") or "")
-                 for r in bq_handler.call_note_candidates()]
+                 for r in cand_rows]
     status_of = {c.name: c.status for c in companies}
+    # Parked (Talk later / Not interested) companies take the notes but are
+    # never promoted: a person closed them (doctrine 2d).
+    parked = {r["name"] for r in cand_rows if (r.get("track") or "") in ("kill", "later")}
     held = bq_handler.call_note_versions()   # granola_id -> updated_at we already copied
 
     listed = fetched = skipped_unchanged = 0
@@ -125,7 +129,7 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
                 "match_confidence": m.confidence, "match_evidence": m.evidence,
                 "granola_updated_at": _iso_to_dt(gupd),
             }
-            will_promote = status_of.get(m.company) == PROMOTE_FROM
+            will_promote = status_of.get(m.company) == PROMOTE_FROM and m.company not in parked
             matched.append({"company": m.company, "title": meeting.title, "meeting_at": when,
                             "confidence": m.confidence, "evidence": m.evidence,
                             "promote": will_promote, "new": gid not in held})
