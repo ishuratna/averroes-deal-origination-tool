@@ -17,6 +17,7 @@ Rules:
 
 import os
 import json
+import re
 import logging
 from typing import Dict, Optional
 from ai import gemini_client as _gemini_client
@@ -201,11 +202,57 @@ _GROSS_MARGINS = {"software": 0.80, "services": 0.50, "unknown": 0.70, "asset_he
 _ASSET_MULTIPLIERS = {"software": 3.0, "services": 2.5, "unknown": 2.0}
 
 
+def filed_revenue_m(company: dict) -> Optional[Dict]:
+    """RUNG 1 of the revenue waterfall (Ishu, 25 Oct 2026): a Companies House
+    figure wins outright. Read from ch_history (every parsed period), newest
+    period first; falls back to revenue_y1 when its date is a real period end
+    (an import label such as "latest (Inven)" is not Companies House)."""
+    raw = company.get("ch_history")
+    years = []
+    if raw:
+        try:
+            years = (json.loads(raw) if isinstance(raw, str) else raw).get("years") or []
+        except (ValueError, TypeError, AttributeError):
+            years = []
+    filed = [(str(y.get("period_end") or ""), _safe_float(y.get("revenue")))
+             for y in years if y.get("period_end") and _safe_float(y.get("revenue")) is not None]
+    if filed:
+        period, rev = sorted(filed, reverse=True)[0]
+        return {"rev_m": rev / 1_000_000, "source": f"Companies House (FY to {period})",
+                "confidence": "high", "is_estimate": False}
+    rev = _safe_float(company.get("revenue_y1"))
+    date = str(company.get("revenue_y1_date") or "")
+    if rev is not None and rev > 0 and _ISO_DATE.match(date):
+        return {"rev_m": rev / 1_000_000, "source": f"Companies House (FY to {date})",
+                "confidence": "high", "is_estimate": False}
+    return None
+
+
+def recorded_revenue_m(company: dict) -> Optional[Dict]:
+    """RUNG 2: a revenue figure already on the record from any source (Gain,
+    PitchBook, Inven, a document). Used only when Companies House has none."""
+    rev = _safe_float(company.get("revenue_y1"))
+    if rev is not None and rev > 0:
+        label = str(company.get("revenue_y1_date") or "").strip() or "on record"
+        return {"rev_m": rev / 1_000_000, "source": f"reported ({label})", "confidence": "high", "is_estimate": False}
+    rev = _safe_float(company.get("revenue_m"))
+    if rev is not None and rev > 0:
+        return {"rev_m": rev, "source": "PitchBook", "confidence": "high", "is_estimate": False}
+    return None
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
 def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dict]:
     """
-    Estimate annual revenue in £M. Business rules (agreed with IC, 2026-07):
+    Annual revenue in £M. THE WATERFALL (Ishu, 25 Oct 2026):
 
-      1. Filed/reported revenue wins outright (CH turnover, then PitchBook) → HIGH.
+      1. Companies House filed revenue wins outright (`filed_revenue_m`).
+      2. Else a revenue figure already on the record (`recorded_revenue_m`).
+      3. Else the estimation below (gross profit, proxies, Gemini).
+
+    Estimation rules (agreed with IC, 2026-07):
       2. Filed GROSS PROFIT overrides all inference: revenue = GP ÷ sector gross
          margin (software 80%, services 50%, unknown 70%) → MEDIUM (filed data +
          one assumption). Proxy median still computed as a sanity check and any
@@ -222,14 +269,10 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
 
     Returns {"rev_m", "source", "confidence", "is_estimate"} or None.
     """
-    # ── Rule 1: actual revenue ──
-    rev = _safe_float(company.get("revenue_y1"))
-    if rev is not None:
-        return {"rev_m": rev / 1_000_000, "source": "CH filings", "confidence": "high", "is_estimate": False}
-
-    rev = _safe_float(company.get("revenue_m"))
-    if rev is not None:
-        return {"rev_m": rev, "source": "PitchBook", "confidence": "high", "is_estimate": False}
+    # ── Rungs 1 and 2: a real figure beats every estimate ──
+    known = filed_revenue_m(company) or recorded_revenue_m(company)
+    if known:
+        return known
 
     sector = _classify_sector(company)
 
@@ -588,9 +631,24 @@ def rescore_company_local(company: dict) -> Optional[Dict]:
 
     scores: Dict[str, float] = {}
 
+    # Revenue size is RE-RESOLVED from the row, never from the stored value:
+    # Intelligent Motoring (25 Oct 2026) scored full marks on a £2.0M proxy
+    # estimate while the row held £11.8M of filed revenue that arrived after
+    # the first scoring. The waterfall (filed, recorded, estimate) is the
+    # same one fresh scoring uses; Gemini is off here (zero-AI rescore).
     rs = details.get("revenue_size") or {}
-    if rs.get("value") is not None:
-        rs["score"] = round(_revenue_size_score(float(rs["value"])), 3)
+    est = estimate_revenue_m(company, allow_gemini=False)
+    if est is None and rs.get("value") is not None:
+        est = {"rev_m": float(rs["value"]), "source": rs.get("source") or "stored",
+               "confidence": rs.get("confidence") or "low", "is_estimate": True}
+    if est is not None:
+        rev_m = float(est["rev_m"])
+        rs.update({
+            "score": round(_revenue_size_score(rev_m), 3), "value": round(rev_m, 2),
+            "revenue_band": compute_revenue_band(rev_m), "is_estimate": est["is_estimate"],
+            "confidence": est["confidence"], "source": est["source"],
+            "explanation": f"Revenue {'~' if est['is_estimate'] else ''}£{rev_m:.1f}M ({est['source']}, {est['confidence']} confidence)",
+        })
         details["revenue_size"] = rs
         scores["revenue_size"] = rs["score"]
 
@@ -613,7 +671,7 @@ def rescore_company_local(company: dict) -> Optional[Dict]:
             scores[key] = float(company[col])
 
     composite = composite_fit(scores)
-    return {
+    out = {
         "averroes_fit_score": composite,
         "score_revenue_size": scores.get("revenue_size"),
         "score_revenue_growth": scores.get("revenue_growth"),
@@ -621,6 +679,15 @@ def rescore_company_local(company: dict) -> Optional[Dict]:
         "score_details": json.dumps(details),
         "metrics_available": len(scores),
     }
+    # The card's band chip and "estimate" line are their own columns; they
+    # must agree with the revenue the score was built on (Intelligent
+    # Motoring showed TOO EARLY on £11.8M filed revenue, 25 Oct 2026).
+    if est is not None:
+        out["revenue_band"] = compute_revenue_band(float(est["rev_m"]))
+        out["revenue_estimate_m"] = round(float(est["rev_m"]), 2) if est["is_estimate"] else None
+        out["revenue_source"] = est["source"]
+        out["revenue_confidence"] = est["confidence"]
+    return out
 
 
 def _gemini_qualitative_scoring(company: dict) -> Optional[Dict]:

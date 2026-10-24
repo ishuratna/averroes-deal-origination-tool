@@ -646,6 +646,19 @@ mistake is both visible and correctable. This one logged nothing, which is why
   The Pipeline board sorts EVERY column best fit first (Ishu: "resort
   everything so the companies that follow this are on top"); Contacted
   breaks ties on the action bucket, every column then on latest entry.
+- THE REVENUE WATERFALL (Ishu, 25 Oct 2026), ONE resolver in
+  `estimate_revenue_m`: (1) `filed_revenue_m`, a Companies House figure
+  (newest `ch_history` period, or `revenue_y1` whose date is a real period
+  end) wins outright; (2) `recorded_revenue_m`, any figure already on the
+  record (`revenue_y1` with an import label such as "latest (Inven)",
+  `revenue_m` from PitchBook; a zero is not a figure); (3) only then the
+  estimate (gross profit, proxies, Gemini). `rescore_company_local`
+  RE-RESOLVES revenue from the row on every run and never reuses the value
+  stored with the old score: Intelligent Motoring scored 1.0 on a GBP 2.0M
+  proxy while the row held GBP 11.8M of filed revenue that arrived after
+  the first scoring. The rescore also rewrites `revenue_band`,
+  `revenue_estimate_m`, `revenue_source`, `revenue_confidence` so the card's
+  chip cannot disagree with the score.
 - `FIT_REQUIRED`: revenue size and business fit must both be present or the
   row is UNSCORED (None), never flattered by what it happens to have. A
   missing minor dimension renormalises over the present weights; the

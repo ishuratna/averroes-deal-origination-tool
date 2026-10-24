@@ -4844,7 +4844,8 @@ async def admin_rescore_fit(request: Request,
             if old is None and new is None:
                 continue
             if old is not None and new is not None and abs(float(old) - new) < 0.0005 \
-                    and (upd["score_details"] == (c.get("score_details") or "")):
+                    and (upd["score_details"] == (c.get("score_details") or "")) \
+                    and (upd.get("revenue_band") or c.get("revenue_band") or "") == (c.get("revenue_band") or ""):
                 continue
             plan.append({"name": c["name"], "old": old, "new": new, "upd": upd})
 
@@ -4885,11 +4886,17 @@ async def admin_rescore_fit(request: Request,
                             score_revenue_size = IF(u.rs < 0, NULL, u.rs),
                             score_revenue_growth = IF(u.rg < 0, NULL, u.rg),
                             score_employee_growth = IF(u.eg < 0, NULL, u.eg),
-                            score_details = u.sd
+                            score_details = u.sd,
+                            revenue_band = IF(u.band = '', revenue_band, u.band),
+                            revenue_estimate_m = IF(u.band = '', revenue_estimate_m, IF(u.rem < 0, NULL, u.rem)),
+                            revenue_source = IF(u.band = '', revenue_source, u.rsrc),
+                            revenue_confidence = IF(u.band = '', revenue_confidence, u.rconf)
                         FROM (
                             SELECT @names[OFFSET(o)] AS name, @fits[OFFSET(o)] AS fit,
                                    @rss[OFFSET(o)] AS rs, @rgs[OFFSET(o)] AS rg,
-                                   @egs[OFFSET(o)] AS eg, @sds[OFFSET(o)] AS sd
+                                   @egs[OFFSET(o)] AS eg, @sds[OFFSET(o)] AS sd,
+                                   @bands[OFFSET(o)] AS band, @rems[OFFSET(o)] AS rem,
+                                   @rsrcs[OFFSET(o)] AS rsrc, @rconfs[OFFSET(o)] AS rconf
                             FROM UNNEST(GENERATE_ARRAY(0, ARRAY_LENGTH(@names) - 1)) AS o
                         ) u
                         WHERE t.name = u.name""",
@@ -4900,6 +4907,10 @@ async def admin_rescore_fit(request: Request,
                         bq_lib.ArrayQueryParameter("rgs", "FLOAT64", [_f(p["upd"]["score_revenue_growth"]) for p in part]),
                         bq_lib.ArrayQueryParameter("egs", "FLOAT64", [_f(p["upd"]["score_employee_growth"]) for p in part]),
                         bq_lib.ArrayQueryParameter("sds", "STRING", [p["upd"]["score_details"] or "" for p in part]),
+                        bq_lib.ArrayQueryParameter("bands", "STRING", [p["upd"].get("revenue_band") or "" for p in part]),
+                        bq_lib.ArrayQueryParameter("rems", "FLOAT64", [_f(p["upd"].get("revenue_estimate_m")) for p in part]),
+                        bq_lib.ArrayQueryParameter("rsrcs", "STRING", [p["upd"].get("revenue_source") or "" for p in part]),
+                        bq_lib.ArrayQueryParameter("rconfs", "STRING", [p["upd"].get("revenue_confidence") or "" for p in part]),
                     ]))
                 job.result()
                 applied += job.num_dml_affected_rows or len(part)

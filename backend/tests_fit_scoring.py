@@ -89,18 +89,39 @@ company = {
     "score_market_sentiment": 0.6,
     "score_employee_growth": 0.5,   # old web-search judgement
     "score_details": json.dumps({
-        # Old v3 scores stored; values are what matter.
+        # Old v3 scores stored; the revenue VALUE is re-resolved from the row.
         "revenue_size": {"score": 1.0, "value": 15.0},
         "revenue_growth": {"score": 0.15, "value": -8.0},
     }),
-    "ch_history": hist,             # now yields +50% -> 0.9, beats the web 0.5
+    "revenue_y1": 15_000_000, "revenue_y1_date": "latest (Inven)",   # recorded, NOT filed
+    "ch_history": hist,             # filed FY25 revenue 8M wins; +50% staff -> 0.9
 }
 u = rescore_company_local(company)
-chk("size rescored under v5 (15M: 1.0 -> 0.0)", u["score_revenue_size"], 0.0)
+
+print()
+print("── Revenue waterfall (25 Oct 2026): filed > recorded > estimate ──")
+from ai.scoring import estimate_revenue_m
+im = {"revenue_y1": 11_839_828, "revenue_y1_date": "latest (Inven)", "revenue_m": 0, "employees": 9,
+      "estimated_ebitda": 3.03,
+      "ch_history": json.dumps({"years": [{"period_end": "2024-12-31", "revenue": 11_839_828},
+                                          {"period_end": "2023-12-31", "revenue": 11_411_912}]}),
+      "score_details": json.dumps({"revenue_size": {"score": 1.0, "value": 2.0, "source": "median of 3 proxies"}}),
+      "averroes_fit_score": 0.939, "score_business_fit": 0.9, "score_market_sentiment": 0.8, "score_employee_growth": 0.9}
+chk("Companies House revenue wins over the stored proxy estimate",
+    estimate_revenue_m(im, allow_gemini=False)["source"], "Companies House (FY to 2024-12-31)")
+chk("rescore re-resolves the value from the row (11.8M -> size 0), never from the stored 2.0",
+    rescore_company_local(im)["score_revenue_size"], 0.0)
+chk("a recorded figure (Inven label) is used when no filing exists",
+    estimate_revenue_m({"revenue_y1": 3_000_000, "revenue_y1_date": "latest (Inven)"}, allow_gemini=False)["source"],
+    "reported (latest (Inven))")
+chk("PitchBook revenue is a recorded figure", estimate_revenue_m({"revenue_m": 4.2}, allow_gemini=False)["source"], "PitchBook")
+chk("a zero is not a figure: the estimate waterfall runs",
+    estimate_revenue_m({"revenue_m": 0, "employees": 30}, allow_gemini=False)["is_estimate"], True)
+chk("size re-resolved from the FILED 8M (not the stored 15M): v5 -> 0.5", u["score_revenue_size"], 0.5)
 chk("declining revenue rescored to 0", u["score_revenue_growth"], 0.0)
 chk("employee growth upgraded from web to CH filings", u["score_employee_growth"], 0.9)
-chk("composite is WEIGHTED (v5, 25 Oct 2026): size 0x.40 + fit .9x.25 + growth 0x.15 + emp .9x.10 + sent .6x.10",
-    u["averroes_fit_score"], round(0.0*0.40 + 0.9*0.25 + 0.0*0.15 + 0.9*0.10 + 0.6*0.10, 3))
+chk("composite is WEIGHTED (v5, 25 Oct 2026): size .5x.40 + fit .9x.25 + growth 0x.15 + emp .9x.10 + sent .6x.10",
+    u["averroes_fit_score"], round(0.5*0.40 + 0.9*0.25 + 0.0*0.15 + 0.9*0.10 + 0.6*0.10, 3))
 from ai.scoring import composite_fit, FIT_WEIGHTS
 chk("weights sum to one", round(sum(FIT_WEIGHTS.values()), 6), 1.0)
 chk("no revenue size -> unscored, however good the rest",
@@ -113,7 +134,9 @@ chk("a missing minor dimension renormalises over what is present",
 chk("thin revenue and weak model cannot be rescued by press and growth",
     composite_fit({"revenue_size": 0.2, "business_fit": 0.2, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), 0.48)
 chk("details JSON updated for the profile",
-    json.loads(u["score_details"])["revenue_size"]["score"], 0.0)
+    json.loads(u["score_details"])["revenue_size"]["score"], 0.5)
+chk("details name the filing as the source",
+    json.loads(u["score_details"])["revenue_size"]["source"], "Companies House (FY to 2025-12-31)")
 
 # The 4-of-5 rule still guards the composite.
 thin = {"name": "Thin", "averroes_fit_score": None,
