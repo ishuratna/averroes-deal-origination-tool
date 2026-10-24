@@ -317,22 +317,25 @@ def estimate_revenue_m(company: dict, allow_gemini: bool = True) -> Optional[Dic
     return None
 
 
+# Ishu, 25 Oct 2026 (v5): GBP 2M to 6M is the whole target, full marks;
+# 6M to 10M and under 2M are half marks; above 10M is zero.
+REVENUE_SWEET_MIN_M = 2.0
+REVENUE_SWEET_MAX_M = 6.0
+REVENUE_HALF_MAX_M = 10.0
+
+
 def _revenue_size_score(rev_m: float) -> float:
-    """Revenue (£M) → fit score, Ishu's v4 step table. Kept as its own pure
-    function so the local rescore and fresh SmartFill scoring share one
-    definition and the steps are directly testable."""
-    if rev_m < 1:
-        return 0.3
-    if rev_m < 2.5:
+    """Revenue (GBP M) -> fit score, Ishu's v5 step table (25 Oct 2026).
+    Kept as its own pure function so the local rescore and fresh SmartFill
+    scoring share one definition and the steps are directly testable."""
+    if rev_m < 0:
+        return 0.0
+    if rev_m < REVENUE_SWEET_MIN_M:
         return 0.5
-    if rev_m < 5:
-        return 0.8
-    if rev_m <= 10:
+    if rev_m <= REVENUE_SWEET_MAX_M:
         return 1.0
-    if rev_m <= 20:
-        return 0.7
-    if rev_m <= 40:
-        return 0.2
+    if rev_m <= REVENUE_HALF_MAX_M:
+        return 0.5
     return 0.0
 
 
@@ -356,14 +359,11 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
     # Score v4 — Ishu's step table (19 Aug 2026). Flat steps, deliberately not
     # interpolated: the bands ARE the judgement, and a step function makes two
     # companies in the same band score identically instead of manufacturing
-    # false precision between £6.2M and £7.9M. Sweet spot £5-10M.
-    #   < £1M     = 0.3   (too early, but visible)
-    #   £1-2.5M   = 0.5
-    #   £2.5-5M   = 0.8   (approaching)
-    #   £5-10M    = 1.0   (core sweet spot)
-    #   £10-20M   = 0.7
-    #   £20-40M   = 0.2   (stretching the cheque)
-    #   > £40M    = 0.0   (beyond the mandate)
+    # false precision between £6.2M and £7.9M. v5 (Ishu, 25 Oct 2026):
+    #   < £2M     = 0.5   (too early, half marks)
+    #   £2-6M     = 1.0   (the target, full marks)
+    #   £6-10M    = 0.5   (half marks)
+    #   > £10M    = 0.0   (beyond the mandate)
     score = _revenue_size_score(rev_m)
 
     return {
@@ -392,17 +392,20 @@ def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
     return "Too Large"
 
 
-# THE FIT WEIGHTS (Ishu, 13 Oct 2026). The composite was a plain mean, so a
-# company with thin revenue but good press scored like one with the right
-# revenue and a weak model. Revenue size and business fit now carry 60% between
-# them; headcount growth 20%; sentiment and revenue growth 10% each. Defined
-# ONCE here; fresh scoring and the zero-AI rescore both use `composite_fit`.
+# THE FIT WEIGHTS. 13 Oct 2026: the composite was a plain mean, so a company
+# with thin revenue but good press scored like one with the right revenue and
+# a weak model; it became weighted. 25 Oct 2026 (v5): revenue size is the
+# heaviest dimension. Defined ONCE here; fresh scoring and the zero-AI
+# rescore both use `composite_fit`.
+# v5 (Ishu, 25 Oct 2026): revenue SIZE is the heaviest dimension at 40%,
+# then business-model fit 25%, revenue growth 15%, employee growth 10%,
+# market sentiment 10%.
 FIT_WEIGHTS = {
-    "revenue_size": 0.30,
-    "business_fit": 0.30,
-    "employee_growth": 0.20,
+    "revenue_size": 0.40,
+    "business_fit": 0.25,
+    "revenue_growth": 0.15,
+    "employee_growth": 0.10,
     "market_sentiment": 0.10,
-    "revenue_growth": 0.10,
 }
 # The two 30% dimensions must BOTH be present for a score to exist at all: a
 # company whose revenue or business model we cannot judge is unscored, not

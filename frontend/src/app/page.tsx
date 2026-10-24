@@ -530,20 +530,16 @@ function HomeInner() {
           <section className="kanban-board">
             {PIPELINE_STAGES.map(stage => {
               const stageDeals = filteredPipeline.filter(c => c.status === stage);
-              // Qualified: best fit first. All other stages: latest entry first
-              // (stage_entered_at, falling back to ingested_at for legacy rows).
-              if (stage === 'Qualified') {
-                stageDeals.sort((a, b) => (b.averroes_fit_score ?? -1) - (a.averroes_fit_score ?? -1));
-              } else if (stage === 'Contacted') {
-                // Responded: action bucket priority first (act-now on top),
-                // then latest entry. Unbucketed rows sink below bucketed ones.
-                const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
-                const prio = (c: CompanyTarget) => actionBucketInfo(c.action_bucket)?.priority ?? 99;
-                stageDeals.sort((a, b) => prio(a) - prio(b) || entered(b) - entered(a));
-              } else {
-                const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
-                stageDeals.sort((a, b) => entered(b) - entered(a));
-              }
+              // Every column: best fit first (Ishu, 25 Oct 2026: "resort
+              // everything in the pipeline so the companies that follow the
+              // new fit score are on top"). Unscored rows sink. Ties: on
+              // Contacted the action bucket (act-now first), then latest entry.
+              const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
+              const prio = (c: CompanyTarget) => actionBucketInfo(c.action_bucket)?.priority ?? 99;
+              const fit = (c: CompanyTarget) => c.averroes_fit_score ?? -1;
+              stageDeals.sort((a, b) => fit(b) - fit(a)
+                || (stage === 'Contacted' ? prio(a) - prio(b) : 0)
+                || entered(b) - entered(a));
 
               // Per-stage paging (same reasoning as Master Universe's table
               // pager): Qualified alone can hold hundreds of cards, so only

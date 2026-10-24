@@ -636,9 +636,16 @@ mistake is both visible and correctable. This one logged nothing, which is why
   shouldn't be scored that high". The composite was a plain mean of
   whichever of the five dimensions were present, so press and growth could
   carry a company with thin revenue and a weak model. `FIT_WEIGHTS` in
-  `ai/scoring.py`: revenue size 0.30, business fit 0.30, employee growth
-  0.20, market sentiment 0.10, revenue growth 0.10. `composite_fit` is the
-  ONE derivation, used by fresh scoring and by the zero-AI rescore alike.
+  `ai/scoring.py` (v5, Ishu, 25 Oct 2026): revenue size 0.40, business fit
+  0.25, revenue growth 0.15, employee growth 0.10, market sentiment 0.10.
+  `composite_fit` is the ONE derivation, used by fresh scoring and by the
+  zero-AI rescore alike.
+- REVENUE SIZE v5 (`_revenue_size_score`, 25 Oct 2026): GBP 2M to 6M is
+  the target and scores 1.0; under 2M and 6M to 10M score 0.5; over 10M
+  scores 0. Constants `REVENUE_SWEET_MIN_M / MAX_M`, `REVENUE_HALF_MAX_M`.
+  The Pipeline board sorts EVERY column best fit first (Ishu: "resort
+  everything so the companies that follow this are on top"); Contacted
+  breaks ties on the action bucket, every column then on latest entry.
 - `FIT_REQUIRED`: revenue size and business fit must both be present or the
   row is UNSCORED (None), never flattered by what it happens to have. A
   missing minor dimension renormalises over the present weights; the

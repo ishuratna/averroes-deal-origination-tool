@@ -28,11 +28,11 @@ def chk(label, got, want):
         fails += 1
 
 
-print("── Revenue size: the v4 step table, boundaries included ──")
-for rev, want in [(0.5, 0.3), (0.99, 0.3), (1.0, 0.5), (2.0, 0.5), (2.49, 0.5),
-                  (2.5, 0.8), (4.9, 0.8), (5.0, 1.0), (8.0, 1.0), (10.0, 1.0),
-                  (10.01, 0.7), (15.0, 0.7), (20.0, 0.7), (20.01, 0.2),
-                  (40.0, 0.2), (40.01, 0.0), (100.0, 0.0)]:
+print("── Revenue size: the v5 step table (25 Oct 2026), boundaries included ──")
+# GBP 2M to 6M full marks; under 2M and 6M to 10M half; over 10M zero.
+for rev, want in [(0.1, 0.5), (0.99, 0.5), (1.99, 0.5), (2.0, 1.0), (4.0, 1.0),
+                  (6.0, 1.0), (6.01, 0.5), (8.0, 0.5), (10.0, 0.5),
+                  (10.01, 0.0), (15.0, 0.0), (40.0, 0.0), (100.0, 0.0)]:
     chk(f"£{rev}M -> {want}", _revenue_size_score(rev), want)
 
 print()
@@ -96,11 +96,11 @@ company = {
     "ch_history": hist,             # now yields +50% -> 0.9, beats the web 0.5
 }
 u = rescore_company_local(company)
-chk("size rescored under v4 (15M: 1.0 -> 0.7)", u["score_revenue_size"], 0.7)
+chk("size rescored under v5 (15M: 1.0 -> 0.0)", u["score_revenue_size"], 0.0)
 chk("declining revenue rescored to 0", u["score_revenue_growth"], 0.0)
 chk("employee growth upgraded from web to CH filings", u["score_employee_growth"], 0.9)
-chk("composite is WEIGHTED (13 Oct 2026): size .7x.3 + fit .9x.3 + emp .9x.2 + sent .6x.1 + growth 0x.1",
-    u["averroes_fit_score"], round(0.7*0.3 + 0.9*0.3 + 0.9*0.2 + 0.6*0.1 + 0.0*0.1, 3))
+chk("composite is WEIGHTED (v5, 25 Oct 2026): size 0x.40 + fit .9x.25 + growth 0x.15 + emp .9x.10 + sent .6x.10",
+    u["averroes_fit_score"], round(0.0*0.40 + 0.9*0.25 + 0.0*0.15 + 0.9*0.10 + 0.6*0.10, 3))
 from ai.scoring import composite_fit, FIT_WEIGHTS
 chk("weights sum to one", round(sum(FIT_WEIGHTS.values()), 6), 1.0)
 chk("no revenue size -> unscored, however good the rest",
@@ -109,11 +109,11 @@ chk("no business fit -> unscored",
     composite_fit({"revenue_size": 1, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), None)
 chk("a missing minor dimension renormalises over what is present",
     composite_fit({"revenue_size": 1, "business_fit": 1, "employee_growth": 0.5, "market_sentiment": 0.5}),
-    round((0.3 + 0.3 + 0.1 + 0.05) / 0.9, 3))
+    round((0.40 + 0.25 + 0.05 + 0.05) / 0.85, 3))
 chk("thin revenue and weak model cannot be rescued by press and growth",
-    composite_fit({"revenue_size": 0.2, "business_fit": 0.2, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), 0.52)
+    composite_fit({"revenue_size": 0.2, "business_fit": 0.2, "employee_growth": 1, "market_sentiment": 1, "revenue_growth": 1}), 0.48)
 chk("details JSON updated for the profile",
-    json.loads(u["score_details"])["revenue_size"]["score"], 0.7)
+    json.loads(u["score_details"])["revenue_size"]["score"], 0.0)
 
 # The 4-of-5 rule still guards the composite.
 thin = {"name": "Thin", "averroes_fit_score": None,
