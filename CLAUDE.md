@@ -495,11 +495,14 @@ mistake is both visible and correctable. This one logged nothing, which is why
   calendar event's scheduled start (doctrine 3), activity `note` row stamped at
   that time. Two people's notes of the same meeting are two Granola ids and
   both are kept (they differ).
-- STAGE: a strong match PROMOTES Responded -> Meeting through
+- STAGE: a meeting WITH the company (`PROMOTE_ON`: attendee domain or the
+  name in the title) PROMOTES Responded -> Meeting through
   `update_company_status` (the one writer, logs status_change). Meeting and
   later are never touched, and neither is a PARKED company (`track` kill or
-  later): it takes the notes, a person closed it. Ishu chose promotion over
-  notes-only.
+  later): it takes the notes, a person closed it. A BODY match is usually
+  our own internal call about them ("[Internal] Deal Origination Call",
+  24 Oct 2026): notes on the card, stage untouched. Ishu chose promotion
+  over notes-only.
 - Routes: `POST /calls/sync` (button) + `/admin/calls/sync` GET/POST (token,
   the scheduler URL carries `?token=&dry_run=0`), ONE handler, dry run by
   default. `GET /company/{name}/call-notes` feeds the card. `SyncCallsButton`

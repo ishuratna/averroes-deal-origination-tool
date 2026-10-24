@@ -30,6 +30,11 @@ from services import granola_service as granola
 logger = logging.getLogger(__name__)
 
 STRONG = ("domain", "title", "body")
+# Only a meeting WITH the company moves it: someone from the company on the
+# call (domain) or the company named in the title. A body match is usually
+# our own internal discussion about them ("[Internal] Deal Origination
+# Call", 24 Oct 2026): the notes go on the card, the stage does not move.
+PROMOTE_ON = ("domain", "title")
 PROMOTE_FROM = "Responded"
 PROMOTE_TO = "Meeting"
 CREATED_BY = "granola-sync"
@@ -129,7 +134,8 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
                 "match_confidence": m.confidence, "match_evidence": m.evidence,
                 "granola_updated_at": _iso_to_dt(gupd),
             }
-            will_promote = status_of.get(m.company) == PROMOTE_FROM and m.company not in parked
+            will_promote = (status_of.get(m.company) == PROMOTE_FROM and m.company not in parked
+                            and m.confidence in PROMOTE_ON)
             matched.append({"company": m.company, "title": meeting.title, "meeting_at": when,
                             "confidence": m.confidence, "evidence": m.evidence,
                             "promote": will_promote, "new": gid not in held})

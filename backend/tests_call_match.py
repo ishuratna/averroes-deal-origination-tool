@@ -117,6 +117,9 @@ def test_parked_companies_are_never_promoted():
     from services import call_notes_sync as s
     src = inspect.getsource(s)
     assert 'in ("kill", "later")' in src and "m.company not in parked" in src
+    # an internal discussion that names the company attaches notes but never
+    # moves the stage: only a meeting with them present does (24 Oct 2026)
+    assert s.PROMOTE_ON == ("domain", "title") and "m.confidence in PROMOTE_ON" in src
 
 
 if __name__ == "__main__":
