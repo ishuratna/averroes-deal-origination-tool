@@ -77,11 +77,15 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
                 "message": "GRANOLA_API_KEY is not set on this service."}
 
     started = datetime.now(timezone.utc)
+    from services.thread_signals import parse_aliases
     cand_rows = bq_handler.call_note_candidates()
-    companies = [CompanyRef(name=r["name"], website=r.get("website") or "",
-                            contact_email=r.get("contact_email") or "",
-                            status=r.get("status") or "")
-                 for r in cand_rows]
+    companies = []
+    for r in cand_rows:
+        al = parse_aliases(r.get("aliases"))
+        companies.append(CompanyRef(name=r["name"], website=r.get("website") or "",
+                                    contact_email=r.get("contact_email") or "",
+                                    status=r.get("status") or "",
+                                    codenames=al["codenames"], adviser_domains=al["adviser_domains"]))
     status_of = {c.name: c.status for c in companies}
     # Parked (Talk later / Not interested) companies take the notes but are
     # never promoted: a person closed them (doctrine 2d).

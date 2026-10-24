@@ -481,6 +481,43 @@ mistake is both visible and correctable. This one logged nothing, which is why
   A new automation that writes `status` must honour `stage_set_by` or it
   will undo a decision someone made on the board.
 
+## 2g. THE EMAIL CHAIN KNOWS THE DEAL (codenames, advisers, booked calls)
+
+- Ishu, 24 Oct 2026: "whenever there's Project Rise, an advisor is already
+  involved ... read the email chain about the company and see if a call
+  started, but sometimes the advisor would do a different email chain."
+  `services/thread_signals.py` is PURE (zero AI) and learns three things
+  from mail the sync files anyway; `_learn_thread_signals` in main.py
+  writes them, `targets.aliases` (JSON: codenames, advisers,
+  adviser_domains) holds them, `bq_handler.alias_index()` serves them.
+- CODENAME: `Project <TitleCase>` in a subject, attachment filename or
+  snippet of a thread already linked to the company (Placecube's thread
+  carried "Project Rise - Teaser Live.pdf" on 16 Oct and nobody read it as
+  an alias). `_NOT_CODENAMES` keeps "Project Update/Plan/Manager" out.
+- ADVISER: the counterparty on a linked thread who is not us, not the
+  company's domain, not a personal mailbox, matched by thread/codename/
+  adviser (never by address, which would make the founder an adviser).
+- THE FOURTH MATCHING RUNG (`link_by_alias`, after address, domain,
+  thread): a codename in subject/body links the message; a known adviser
+  links when the text names the company or codename (`matched_by=adviser`);
+  a known adviser for exactly ONE company naming neither links as
+  `adviser-unconfirmed`, classification `unconfirmed_link`, which is in
+  `NON_REPLY_CLASSES`: filed on the card, flagged, never a reply, never a
+  stage move. An adviser on several deals never links on the address alone.
+- INVITE: a text/calendar part (DTSTART, SUMMARY, METHOD) or a Gmail
+  "Invitation: ... @ Tue 28 Oct 2026 3pm" subject stamps
+  `meeting_scheduled_at` / `meeting_invite_title` ("Call booked" on the
+  card); a cancellation clears it. It never moves the stage: a cancelled
+  invite must never leave a phantom Meeting. The stage moves when the call
+  HAPPENED (Granola, 2e) or a person moves it (2f).
+- GRANOLA USES THE ALIASES (`CompanyRef.codenames/adviser_domains`): the
+  codename in a title is as strong as the name in a title; the adviser
+  present AND the codename or name in the notes is promotion-grade
+  (`domain`); the adviser present with the deal unnamed is `weak`.
+- Retro: `POST /admin/thread-signals/backfill` (token, dry run default)
+  reads email_log + email_documents for Responded-and-later companies.
+  `tests_thread_signals.py` pins every rule above.
+
 ## 2e. CALL NOTES (Granola meetings onto the card; Ishu, 15 Oct 2026)
 
 - Source: Granola's official read-only REST API (`services/granola_service.py`,

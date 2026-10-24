@@ -3705,6 +3705,81 @@ async def admin_add_companies_by_number(
     return StreamingResponse(_gen(), media_type="text/plain")
 
 
+@app.post("/admin/thread-signals/backfill")
+async def thread_signals_backfill(request: Request,
+                                  dry_run: int = Query(1, description="1 = preview (default), 0 = store"),
+                                  days: int = Query(365, description="how far back in email_log to read")):
+    """Retro pass of doctrine 2g over mail ALREADY filed: learn codenames
+    ("Project Rise" on Placecube's thread), advisers (the third party on the
+    thread) and booked calls (invitation subjects) for every Responded-or-
+    later company, from email_log subjects/snippets and email_documents
+    filenames. Zero AI. Token. Dry run by default."""
+    _require_token(request)
+    from services.thread_signals import codenames_in, is_adviser_address, invite_from_subject
+    from ai.call_match import domain_of
+    from google.cloud import bigquery as bq_lib
+
+    def _run():
+        t_log = bq_handler._ensure_email_log_table()
+        t_docs = bq_handler._ensure_email_docs_table()
+        rows = bq_handler._run_query(f"""
+            SELECT l.entity_name, l.direction, l.counterparty_email, l.subject, l.snippet,
+                   CAST(l.sent_at AS STRING) AS sent_at
+            FROM `{t_log}` l
+            WHERE l.entity_type = 'company'
+              AND l.sent_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @d DAY)""",
+            params=[bq_lib.ScalarQueryParameter("d", "INT64", int(days))])
+        docs = bq_handler._run_query(f"SELECT company_name, filename FROM `{t_docs}`")
+        cands = {r["name"]: r for r in bq_handler.call_note_candidates()}
+        full = {}
+        for name in cands:
+            full[name] = bq_handler.get_company_full(name) or {}
+        found = {}
+        for r in rows:
+            name = r.get("entity_name")
+            if name not in cands:
+                continue
+            b = found.setdefault(name, {"codenames": set(), "advisers": set(), "invite": None})
+            text = f"{r.get('subject') or ''} {r.get('snippet') or ''}"
+            b["codenames"].update(codenames_in(text))
+            row = full.get(name) or {}
+            cdoms = {d for d in (domain_of(row.get("website")), domain_of(row.get("contact_email")),
+                                 domain_of(row.get("outreach_draft_to"))) if d}
+            ce = (r.get("counterparty_email") or "").lower()
+            if ce and is_adviser_address(ce, cdoms):
+                b["advisers"].add(ce)
+            inv = invite_from_subject(r.get("subject") or "")
+            if inv and inv.get("start"):
+                if not b["invite"] or (r.get("sent_at") or "") > b["invite"]["_at"]:
+                    b["invite"] = {**inv, "_at": r.get("sent_at") or ""}
+        for d in docs:
+            name = d.get("company_name")
+            if name in cands:
+                found.setdefault(name, {"codenames": set(), "advisers": set(), "invite": None})
+                found[name]["codenames"].update(codenames_in(d.get("filename") or ""))
+        report, stored = [], 0
+        for name, b in found.items():
+            if not (b["codenames"] or b["advisers"] or b["invite"]):
+                continue
+            item = {"company": name, "codenames": sorted(b["codenames"]), "advisers": sorted(b["advisers"]),
+                    "call_booked": (b["invite"]["start"].isoformat() if b["invite"] and b["invite"].get("start") else None),
+                    "call_title": (b["invite"] or {}).get("title")}
+            report.append(item)
+            if dry_run:
+                continue
+            if b["codenames"] or b["advisers"]:
+                if bq_handler.learn_aliases(name, sorted(b["codenames"]), sorted(b["advisers"]), created_by="thread-backfill"):
+                    stored += 1
+            if b["invite"] and b["invite"].get("start"):
+                bq_handler.stamp_meeting_invite(name, b["invite"]["start"], b["invite"].get("title") or "",
+                                                "booked", created_by="thread-backfill")
+        return {"status": "Preview" if dry_run else "Success", "dry_run": bool(dry_run),
+                "messages_read": len(rows), "documents_read": len(docs),
+                "companies_with_signals": len(report), "stored": stored, "signals": report}
+
+    return _stream_json(_run)
+
+
 @app.get("/admin/company")
 async def admin_company(request: Request, name: str = Query(...)):
     """One company's full row plus its year store, for a parity check from
@@ -7319,6 +7394,54 @@ async def list_call_notes(company_name: str):
     return {"company": company_name, "notes": bq_handler.get_call_notes(company_name)}
 
 
+def _learn_thread_signals(entries: list, companies_by_name: dict) -> dict:
+    """Doctrine 2g. From the messages just filed against a company, learn:
+      codenames  'Project Rise' in a subject, attachment name or snippet
+      advisers   a third-party counterparty on the company's chain (not us,
+                 not the company's domain, not a personal mailbox) who got
+                 there by thread/codename/adviser matching
+      invites    a calendar invitation: the call is booked (or cancelled)
+    Each is stored on the row with an activity note; nothing moves a stage."""
+    from services.thread_signals import codenames_in, is_adviser_address
+    from ai.call_match import domain_of
+    learnt = {"codenames": 0, "advisers": 0, "invites": 0}
+    per_company: dict = {}
+    for e in entries:
+        if e.get("entity_type") != "company":
+            continue
+        name = e.get("entity_name")
+        row = companies_by_name.get(name) or {}
+        if row.get("source") == "Internal Test":
+            continue
+        bucket = per_company.setdefault(name, {"codenames": set(), "advisers": set(), "invite": None})
+        text = " ".join([e.get("subject") or "", e.get("snippet") or ""]
+                        + [a.get("filename") or "" for a in (e.get("attachments") or []) if isinstance(a, dict)])
+        bucket["codenames"].update(codenames_in(text))
+        company_domains = {d for d in (domain_of(row.get("website")), domain_of(row.get("contact_email")),
+                                       domain_of(row.get("outreach_draft_to"))) if d}
+        if e.get("matched_by") in ("thread", "codename", "adviser", "adviser-unconfirmed") \
+                and is_adviser_address(e.get("counterparty_email") or "", company_domains):
+            bucket["advisers"].add((e.get("counterparty_email") or "").lower())
+        inv = e.get("invite")
+        if inv and (inv.get("start") or inv.get("status") == "cancelled"):
+            prev = bucket["invite"]
+            if not prev or (e.get("sent_at") or "") > (prev.get("_at") or ""):
+                bucket["invite"] = {**inv, "_at": e.get("sent_at") or ""}
+    for name, b in per_company.items():
+        try:
+            if b["codenames"] or b["advisers"]:
+                if bq_handler.learn_aliases(name, sorted(b["codenames"]), sorted(b["advisers"])):
+                    learnt["codenames"] += len(b["codenames"])
+                    learnt["advisers"] += len(b["advisers"])
+            if b["invite"]:
+                bq_handler.stamp_meeting_invite(name, b["invite"].get("start"), b["invite"].get("title") or "",
+                                                b["invite"].get("status") or "booked")
+                learnt["invites"] += 1
+        except Exception as ex:
+            logger.warning(f"[EmailSync] thread signals for {name} failed (non-fatal): {ex}")
+    return learnt
+
+
 async def _sync_emails_impl(days: int, deep: bool):
     """
     Sync Beatrice's Gmail (IMAP, same App Password as sending) against known
@@ -7422,10 +7545,17 @@ async def _sync_emails_impl(days: int, deep: bool):
     # Already-logged Message-IDs are read BEFORE the mailbox so the fetch can
     # skip downloading them (only the header round trip is paid for those).
     seen = bq_handler.get_logged_message_ids()
+    # ALIAS INDEX: codenames and advisers learnt from earlier chains, the
+    # fourth matching rung (services/thread_signals, doctrine 2g).
+    try:
+        alias_index = bq_handler.alias_index()
+    except Exception as e:
+        logger.warning(f"[EmailSync] alias index unavailable: {e}")
+        alias_index = {}
     try:
         entries = sync_mailbox(known, days=days, known_domains=known_domains, deep=deep,
                                deep_addresses=deep_addresses, thread_map=thread_map,
-                               skip_ids=None if deep else seen)
+                               skip_ids=None if deep else seen, alias_index=alias_index)
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -7443,9 +7573,20 @@ async def _sync_emails_impl(days: int, deep: bool):
     # then kept OUT of `replies` so none of the reply machinery touches it.
     from services.ooo_detect import detect as _ooo_detect, followup_days as _ooo_followup_days
 
+    # ── What the chain teaches (codenames, advisers, booked calls) ──────────
+    # Pure signals from mail we are filing anyway (services/thread_signals).
+    # An adviser-unconfirmed link is filed but classified so it is never read
+    # as a reply; the card says a person should confirm it.
+    thread_learnt = _learn_thread_signals(new_entries, companies_by_name)
+
     received_new = [e for e in new_entries if e["direction"] == "received"]
     ooo_hits, replies = [], []
     for e in received_new:
+        if e.get("matched_by") == "adviser-unconfirmed":
+            e["classification"] = "unconfirmed_link"
+            e["summary"] = ("Filed here because the sender is a known adviser for this company; "
+                            "the message names neither the company nor its codename. Confirm on the card.")
+            continue
         try:
             got = _ooo_detect(e.get("subject", ""), e.get("snippet", ""),
                               headers=e.get("headers", ""),
@@ -7843,6 +7984,7 @@ async def _sync_emails_impl(days: int, deep: bool):
         "reclassified": reclassified,
         "action_buckets": bucketed,
         "bucket_errors": bucket_errors[:10],
+        "thread_signals": thread_learnt,
         "message": f"Logged {inserted} new messages ({len(replies)} replies, {classified} classified"
                    + (f", {len(reclassified)} reclassified" if reclassified else "")
                    + (f", {len(bucketed)} action-bucketed" if bucketed else "")

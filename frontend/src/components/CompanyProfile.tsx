@@ -7,7 +7,7 @@
 // Styling: ALL classes live in globals.css (cp-*) — deliberately no styled-jsx.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { CompanyTarget, ActivityEntry, CallNote, EmailDoc, NewsItem, DocReviewItem, FinCell, FinancialsResponse, FinYear, EMPTY_FINANCIALS, FIN_METRIC_LABELS, FIN_METRIC_ORDER, fiscalYearOf, fyLabel, periodEndShort, yearEndShort, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo } from '../types';
+import { CompanyTarget, ActivityEntry, CallNote, EmailDoc, NewsItem, DocReviewItem, FinCell, FinancialsResponse, FinYear, EMPTY_FINANCIALS, FIN_METRIC_LABELS, FIN_METRIC_ORDER, fiscalYearOf, fyLabel, periodEndShort, yearEndShort, parsePendingReview, displayStatus, getRevenueBand, actionBucketInfo, parseAliases } from '../types';
 import { dealApi } from '../services/api';
 import OutreachModal from './OutreachModal';
 import { outreachButtonState } from '../lib/outreach';
@@ -838,6 +838,38 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
                   </div>
                 </>
               )}
+
+              {/* Deal signals the email chain taught us (doctrine 2g): the
+                  codename an adviser uses, who the adviser is, and whether a
+                  call is booked. Read from the row; written by the sync. */}
+              {(() => {
+                const al = parseAliases(company.aliases);
+                const booked = company.meeting_scheduled_at;
+                if (!al.codenames.length && !al.advisers.length && !booked) return null;
+                return (
+                  <>
+                    <div className="cp-section-title">Deal signals</div>
+                    <div className="cp-card">
+                      {al.codenames.length > 0 && (
+                        <div className="cp-doc-row"><span className="cp-doc-name">Codename</span>
+                          <span className="cp-doc-meta">{al.codenames.join(', ')} · learnt from the email chain; calls and emails using it link here</span></div>
+                      )}
+                      {al.advisers.length > 0 && (
+                        <div className="cp-doc-row"><span className="cp-doc-name">Adviser on the thread</span>
+                          <span className="cp-doc-meta">{al.advisers.join(', ')}</span></div>
+                      )}
+                      {booked && (
+                        <div className="cp-doc-row"><span className="cp-doc-name">Call booked</span>
+                          <span className="cp-doc-meta">{new Date(booked).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}{company.meeting_invite_title ? ` · ${company.meeting_invite_title}` : ''}</span></div>
+                      )}
+                      {!booked && company.meeting_invite_title?.startsWith('Cancelled') && (
+                        <div className="cp-doc-row"><span className="cp-doc-name">Call</span>
+                          <span className="cp-doc-meta">{company.meeting_invite_title}</span></div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
 
               {/* Call notes: Granola meetings the 7 AM sync matched to this
                   company (participant domain, name in the title, or the real

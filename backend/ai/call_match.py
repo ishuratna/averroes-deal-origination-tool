@@ -90,6 +90,12 @@ class CompanyRef:
     website: str = ""
     contact_email: str = ""
     status: str = ""
+    # Learnt from the email chain (services/thread_signals, doctrine 2g):
+    # "Project Rise" IS Placecube, and chris@barnsgatesolutions.com is the
+    # adviser running it. A call titled "Project Rise" with the adviser on
+    # it is a meeting WITH the company, which no domain rule could see.
+    codenames: Sequence[str] = field(default_factory=list)
+    adviser_domains: Sequence[str] = field(default_factory=list)
 
     @property
     def domains(self) -> set:
@@ -154,9 +160,32 @@ def match_meeting(meeting: Meeting, companies: Iterable[CompanyRef]) -> List[Mat
         if hit:
             out.append(Match(c.name, "domain", f"participant at {sorted(hit)[0]}", 100))
             continue
+        # Codename: the title is the deal's cover name. As strong as the real
+        # name in the title. In the body, as strong as the real name there.
+        code_title = next((cn for cn in (c.codenames or []) if _mentions(title, cn.lower())), "")
+        adv_hit = set(c.adviser_domains or []) & part_domains
+        if code_title:
+            out.append(Match(c.name, "title", f"'{code_title}' (codename) in the meeting title"
+                             + (f", adviser at {sorted(adv_hit)[0]} present" if adv_hit else ""), 85))
+            continue
         in_title = _mentions(title, core)
         if in_title:
             out.append(Match(c.name, "title", f"'{c.name}' in the meeting title", 80))
+            continue
+        code_body = next((cn for cn in (c.codenames or []) if _mentions(body, cn.lower())), "")
+        if adv_hit and code_body:
+            # the adviser is on the call and the notes name the deal: a
+            # meeting with the company's side, promotion-grade
+            out.append(Match(c.name, "domain", f"adviser at {sorted(adv_hit)[0]} present and '{code_body}' in the notes", 90))
+            continue
+        if code_body:
+            out.append(Match(c.name, "body", f"'{code_body}' (codename) in the notes", 60))
+            continue
+        if adv_hit and _mentions(body, core):
+            out.append(Match(c.name, "domain", f"adviser at {sorted(adv_hit)[0]} present and '{c.name}' in the notes", 90))
+            continue
+        if adv_hit:
+            out.append(Match(c.name, "weak", f"adviser at {sorted(adv_hit)[0]} present, deal not named", 30))
             continue
         in_body = _mentions(body, core)
         if not in_body:

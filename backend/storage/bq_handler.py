@@ -139,6 +139,11 @@ class BigQueryHandler:
         # human action supersedes everything"). Stamped by update_company_status
         # from created_by; automations read it and never move a human-placed row.
         ("stage_set_by", "STRING"),
+        # What the email chain taught us (services/thread_signals): codenames
+        # ("Project Rise"), advisers on the thread, and a booked call.
+        ("aliases", "STRING"),
+        ("meeting_scheduled_at", "TIMESTAMP"),
+        ("meeting_invite_title", "STRING"),
         # Did the outreach actually reach a human? 'delivered' = an outbound
         # message for this company exists in the mailbox and nothing bounced.
         # 'bounced' = the address is dead. 'not_sent' = SMTP reported success but
@@ -517,7 +522,12 @@ class BigQueryHandler:
     # Neither may ever count as a reply. A bounce counting as one was a real bug:
     # it is inbound and not an autoresponder, so it promoted the company to
     # Responded on the strength of a mailer-daemon message.
-    NON_REPLY_CLASSES = ("out_of_office", "bounce")
+    #   unconfirmed_link -> a known adviser wrote a NEW chain naming neither
+    #                    the company nor its codename (thread_signals); it is
+    #                    filed against the one company they are known for and
+    #                    flagged for a person. Not evidence of a reply until
+    #                    confirmed.
+    NON_REPLY_CLASSES = ("out_of_office", "bounce", "unconfirmed_link")
 
     def _genuine_reply_sql(self, entity_type: str = "company") -> str:
         """The one definition of 'they replied'. Returns a subquery yielding one
@@ -550,7 +560,7 @@ class BigQueryHandler:
     MACHINE_ACTORS = ("email-sync", "reply-rule", "delivery-check", "granola-sync", "smartfill",
                       "smartenrich", "quick-research", "add-by-number", "identity-repair",
                       "identity-guard", "outreach-send", "followup-run", "contact-sync",
-                      "email-docs", "investor-gate", "migration", "system")
+                      "email-docs", "investor-gate", "thread-backfill", "migration", "system")
 
     @classmethod
     def stage_actor_kind(cls, created_by: str) -> str:
@@ -2040,6 +2050,75 @@ class BigQueryHandler:
         """, params=[bigquery.ScalarQueryParameter("t", "STRING", entity_type),
                      bigquery.ScalarQueryParameter("n", "STRING", entity_name)])
 
+    # ── Aliases: codenames and advisers learnt from email ───────────────────
+    def alias_index(self) -> Dict:
+        """{codenames: {codename_lower -> company}, advisers: {email -> [companies]},
+        entities: {company -> entry}} for the sync's fourth matching rung.
+        Read once per sync from the rows that hold aliases (a handful)."""
+        from services.thread_signals import parse_aliases
+        if not self.client:
+            return {}
+        rows = self._run_query(f"""
+            SELECT name, status, aliases, IFNULL(source, '') AS source
+            FROM `{self.table_id}` WHERE aliases IS NOT NULL AND aliases != ''""")
+        idx = {"codenames": {}, "advisers": {}, "entities": {}}
+        for r in rows:
+            a = parse_aliases(r.get("aliases"))
+            idx["entities"][r["name"]] = {"type": "company", "name": r["name"], "status": r.get("status"),
+                                          "is_test": r.get("source") == "Internal Test", "stored_cls": ""}
+            for c in a["codenames"]:
+                idx["codenames"][c.lower()] = r["name"]
+            for e in a["advisers"]:
+                idx["advisers"].setdefault(e.lower(), [])
+                if r["name"] not in idx["advisers"][e.lower()]:
+                    idx["advisers"][e.lower()].append(r["name"])
+        return idx
+
+    def learn_aliases(self, company_name: str, codenames=(), advisers=(), created_by: str = "email-sync") -> bool:
+        """Union new codenames/advisers into the row's aliases. Returns True
+        when something new was stored (and notes it on the card)."""
+        from services.thread_signals import merge_aliases
+        if not self.client:
+            return False
+        row = self._run_query(f"SELECT aliases FROM `{self.table_id}` WHERE name = @n LIMIT 1",
+                              params=[bigquery.ScalarQueryParameter("n", "STRING", company_name)])
+        current = row[0].get("aliases") if row else None
+        merged, changed = merge_aliases(current, codenames, advisers)
+        if not changed:
+            return False
+        self.client.query(f"UPDATE `{self.table_id}` SET aliases = @a WHERE name = @n",
+                          job_config=bigquery.QueryJobConfig(query_parameters=[
+                              bigquery.ScalarQueryParameter("a", "STRING", json.dumps(merged)),
+                              bigquery.ScalarQueryParameter("n", "STRING", company_name)])).result()
+        bits = []
+        if codenames:
+            bits.append("codename " + ", ".join(codenames))
+        if advisers:
+            bits.append("adviser " + ", ".join(advisers))
+        self.add_activity_note(company_name, "Learnt from the email chain: " + "; ".join(bits), created_by=created_by)
+        return True
+
+    def stamp_meeting_invite(self, company_name: str, start, title: str, status: str, created_by: str = "email-sync") -> bool:
+        """A calendar invite in the company's chain: the call is BOOKED (or
+        cancelled). Stamps the row, never the stage."""
+        if not self.client:
+            return False
+        if status == "cancelled":
+            q = f"UPDATE `{self.table_id}` SET meeting_scheduled_at = NULL, meeting_invite_title = @t WHERE name = @n"
+            params = [bigquery.ScalarQueryParameter("t", "STRING", f"Cancelled: {title or ''}"[:300]),
+                      bigquery.ScalarQueryParameter("n", "STRING", company_name)]
+        else:
+            q = f"UPDATE `{self.table_id}` SET meeting_scheduled_at = @s, meeting_invite_title = @t WHERE name = @n"
+            params = [bigquery.ScalarQueryParameter("s", "TIMESTAMP", start),
+                      bigquery.ScalarQueryParameter("t", "STRING", (title or "")[:300]),
+                      bigquery.ScalarQueryParameter("n", "STRING", company_name)]
+        self.client.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+        when = start.strftime("%d %b %Y %H:%M") if start else "date not stated"
+        self.add_activity_note(company_name,
+                               ("Call cancelled: " if status == "cancelled" else "Call booked: ")
+                               + f"{title or 'meeting'} ({when})", created_by=created_by)
+        return True
+
     def call_note_candidates(self) -> List[Dict]:
         """Every company a call could belong to: Responded and later (Ishu,
         15 Oct 2026: 'responded companies with which I have had calls').
@@ -2049,7 +2128,7 @@ class BigQueryHandler:
         return self._run_query(f"""
             SELECT name, IFNULL(website, '') AS website, IFNULL(contact_email, '') AS contact_email,
                    IFNULL(status, '') AS status, IFNULL(track, '') AS track,
-                   IFNULL(stage_set_by, '') AS stage_set_by
+                   IFNULL(stage_set_by, '') AS stage_set_by, IFNULL(aliases, '') AS aliases
             FROM `{self.table_id}`
             WHERE status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost')
               AND IFNULL(source, '') != 'Internal Test'

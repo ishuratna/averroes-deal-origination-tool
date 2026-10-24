@@ -16,7 +16,7 @@ import imaplib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 from ai import gemini_client as _gemini_client
 
 logger = logging.getLogger(__name__)
@@ -114,10 +114,25 @@ def _prefetch_message_ids(mail, ids: List[bytes]) -> Dict[bytes, str]:
     return out
 
 
+def _invite_in(msg) -> Optional[dict]:
+    """A calendar invitation, from an .ics part first, else the subject."""
+    from services.thread_signals import invite_from_ics, invite_from_subject
+    try:
+        for part in msg.walk():
+            if part.get_content_type() == "text/calendar":
+                payload = part.get_payload(decode=True)
+                got = invite_from_ics((payload or b"").decode("utf-8", "ignore"))
+                if got:
+                    return got
+    except Exception:
+        pass
+    return invite_from_subject(_decode(msg.get("Subject")))
+
+
 def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, dict],
                   known_domains: Dict[str, dict] = None, addresses: List[str] = None,
                   max_fetch: int = 500, thread_map: Dict[str, dict] = None,
-                  skip_ids: set = None) -> List[dict]:
+                  skip_ids: set = None, alias_index: dict = None) -> List[dict]:
     """
     Fetch messages from one folder, keeping only known-contact exchanges.
     Direction is detected PER MESSAGE (From == our sender → 'sent', else
@@ -134,6 +149,13 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
          production: ReadyGo's reply came from a foreign domain and was
          invisible for a month. The reply headers are cryptographic-grade
          evidence of which conversation a message belongs to.
+      4. ALIAS (services/thread_signals): a codename ("Project Rise") in the
+         subject or body, or a known ADVISER writing a NEW chain that names
+         the company or its codename. An adviser is the third party who
+         appears on a company's thread ("Project Rise" means an adviser is
+         involved, and the adviser sometimes starts a different chain: Ishu,
+         24 Oct 2026). An adviser known for ONE company who names neither
+         links as 'adviser-unconfirmed' (flagged, never moves a stage).
     Thread-matched entries carry matched_by='thread' so the caller can apply
     the third-party guard before adopting the sender as the contact.
 
@@ -211,6 +233,15 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                         entity = thread_map[ref]
                         matched_by = "thread"
                         break
+            if not entity and alias_index:
+                from services.thread_signals import link_by_alias
+                subj = _decode(msg.get("Subject"))
+                company, how = link_by_alias(subj, _body_snippet(msg, limit=4000), counter_email,
+                                             alias_index.get("codenames") or {},
+                                             alias_index.get("advisers") or {})
+                if company:
+                    entity = (alias_index.get("entities") or {}).get(company) or {"type": "company", "name": company}
+                    matched_by = how
             if not entity:
                 continue
 
@@ -235,9 +266,11 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 # the docs pipeline, behind its SSRF safety check.
                 pdf_links = extract_pdf_links(_body_snippet(msg, limit=20000))
 
+            invite = _invite_in(msg) if entity.get("type") == "company" else None
             entries.append({
                 "attachments": attachments,
                 "pdf_links": pdf_links,
+                "invite": invite,
                 "message_id": _decode(msg.get("Message-ID")) or f"{folder}-{msg_id.decode()}",
                 "thread_id": _decode(msg.get("References", "")).split()[0] if msg.get("References") else _decode(msg.get("Message-ID")) or "",
                 "direction": direction,
@@ -266,7 +299,7 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
     return entries
 
 
-def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
+def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30, alias_index: dict = None,
                  known_domains: Dict[str, dict] = None, deep: bool = False,
                  deep_addresses: List[str] = None,
                  thread_map: Dict[str, dict] = None,
@@ -314,13 +347,13 @@ def sync_mailbox(known_contacts: Dict[str, dict], days: int = 30,
             # All Mail covers INBOX + Sent + archived + filtered/labelled mail in
             # one pass; direction is detected per message inside _fetch_folder.
             got = _fetch_folder(mail, "[Gmail]/All Mail", since, sender, known_contacts, known_domains,
-                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
+                                addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids, alias_index=alias_index)
             if not got:
                 # Fallback for non-Gmail IMAP layouts
                 got = _fetch_folder(mail, "INBOX", since, sender, known_contacts, known_domains,
-                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
+                                    addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids, alias_index=alias_index)
                 got += _fetch_folder(mail, "[Gmail]/Sent Mail", since, sender, known_contacts, known_domains,
-                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids)
+                                     addresses=addresses, max_fetch=max_fetch, thread_map=thread_map, skip_ids=skip_ids, alias_index=alias_index)
             for e in got:
                 e["mailbox"] = sender
             entries += got

@@ -194,6 +194,12 @@ export interface CompanyTarget {
   offer_at?: string;
   won_at?: string;
   lost_at?: string;
+  // Doctrine 2g: what the email chain taught us. aliases is JSON
+  // {codenames, advisers, adviser_domains}; the invite is a booked call.
+  aliases?: string | null;
+  meeting_scheduled_at?: string | null;
+  meeting_invite_title?: string | null;
+  stage_set_by?: 'human' | 'machine' | string | null;
 }
 
 export interface ActivityEntry {
@@ -684,4 +690,20 @@ export function isGcc(i: { hq_country?: string; region?: string; global_region?:
   const geo = `${i.hq_country || ''} ${i.region || ''}`.toLowerCase();
   if (GCC_COUNTRIES.some(c => geo.includes(c))) return true;
   return parseTags(i.network_tags).some(t => t.toLowerCase() === 'gcc');
+}
+
+
+// Doctrine 2g: parse the aliases JSON a company row carries (codenames such
+// as "Project Rise", advisers on the thread). Never throws.
+export function parseAliases(raw?: string | null): { codenames: string[]; advisers: string[]; adviser_domains: string[] } {
+  const base = { codenames: [] as string[], advisers: [] as string[], adviser_domains: [] as string[] };
+  if (!raw) return base;
+  try {
+    const d = JSON.parse(raw);
+    return {
+      codenames: Array.isArray(d.codenames) ? d.codenames : [],
+      advisers: Array.isArray(d.advisers) ? d.advisers : [],
+      adviser_domains: Array.isArray(d.adviser_domains) ? d.adviser_domains : [],
+    };
+  } catch { return base; }
 }
