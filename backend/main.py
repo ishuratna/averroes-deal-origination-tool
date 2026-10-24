@@ -3746,7 +3746,7 @@ async def thread_signals_backfill(request: Request,
             cdoms = {d for d in (domain_of(row.get("website")), domain_of(row.get("contact_email")),
                                  domain_of(row.get("outreach_draft_to"))) if d}
             ce = (r.get("counterparty_email") or "").lower()
-            if ce and is_adviser_address(ce, cdoms):
+            if ce and is_adviser_address(ce, cdoms, name):
                 b["advisers"].add(ce)
             inv = invite_from_subject(r.get("subject") or "")
             if inv and inv.get("start"):
@@ -7420,7 +7420,7 @@ def _learn_thread_signals(entries: list, companies_by_name: dict) -> dict:
         company_domains = {d for d in (domain_of(row.get("website")), domain_of(row.get("contact_email")),
                                        domain_of(row.get("outreach_draft_to"))) if d}
         if e.get("matched_by") in ("thread", "codename", "adviser", "adviser-unconfirmed") \
-                and is_adviser_address(e.get("counterparty_email") or "", company_domains):
+                and is_adviser_address(e.get("counterparty_email") or "", company_domains, name):
             bucket["advisers"].add((e.get("counterparty_email") or "").lower())
         inv = e.get("invite")
         if inv and (inv.get("start") or inv.get("status") == "cancelled"):

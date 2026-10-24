@@ -89,13 +89,21 @@ def mentions_company(text: str, company_name: str) -> bool:
     return bool(re.search(r"(?<![a-z0-9])" + re.escape(core) + r"(?![a-z0-9])", (text or "").lower()))
 
 
-def is_adviser_address(email_addr: str, company_domains: Iterable[str]) -> bool:
+def is_adviser_address(email_addr: str, company_domains: Iterable[str], company_name: str = "") -> bool:
     """Not us, not the company, not a personal mailbox: a third party on the
-    thread. An adviser, a lawyer, a banker; the rule treats them alike."""
+    thread. An adviser, a lawyer, a banker; the rule treats them alike.
+    A domain that carries the company's own name is the company on a sister
+    domain (flagstoneim.com for Flagstone, 24 Oct 2026) or a same-named
+    stranger (realtafusion.com for Realta), never an adviser."""
     d = domain_of(email_addr)
     if not d or d in OWN_DOMAINS or d in PUBLIC_MAIL_DOMAINS:
         return False
-    return d not in set(company_domains or [])
+    if d in set(company_domains or []):
+        return False
+    stem = core_name(company_name).split()[0] if core_name(company_name) else ""
+    if stem and len(stem) >= 4 and stem in d.split(".")[0]:
+        return False
+    return True
 
 
 def parse_aliases(raw) -> Dict[str, List[str]]:

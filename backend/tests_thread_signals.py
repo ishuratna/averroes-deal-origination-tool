@@ -20,6 +20,10 @@ def test_adviser_address():
     assert not is_adviser_address("jason.fahy@placecube.com", {"placecube.com"})
     assert not is_adviser_address("bcarrara@averroescapital.com", {"placecube.com"})
     assert not is_adviser_address("founder@gmail.com", {"placecube.com"})
+    # the company on a sister domain, or a same-named stranger, is never an adviser
+    assert not is_adviser_address("andrew.thatcher@flagstoneim.com", {"flagstone.com"}, "Flagstone International")
+    assert not is_adviser_address("kieran@realtafusion.com", {"realtarisk.com"}, "Realta")
+    assert is_adviser_address("chris@barnsgatesolutions.com", {"placecube.com"}, "Placecube")
 
 
 def test_merge_aliases():
