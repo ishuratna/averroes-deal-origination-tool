@@ -2644,7 +2644,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             gate_query = f"""UPDATE `{bq_handler.table_id}` SET
                 last_smartfill_at = CURRENT_TIMESTAMP(),
                 stage_entered_at = CASE WHEN IFNULL(status, '') != 'Not a Fit' THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
-                status = 'Not a Fit',
+                status = 'Not a Fit', stage_set_by = 'machine',
                 unfit_reason = @reason,
                 size_bucket = @size_bucket,
                 revenue_band = @revenue_band,
@@ -2867,6 +2867,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
             stage_entered_at = CASE WHEN status NOT IN UNNEST(@protected) AND IFNULL(status, '') != @status
                                     THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END,
             qualified_at = CASE WHEN @status = 'Qualified' THEN IFNULL(qualified_at, CURRENT_TIMESTAMP()) ELSE qualified_at END,
+            stage_set_by = CASE WHEN status IN UNNEST(@protected) OR IFNULL(status, '') = @status THEN stage_set_by ELSE 'machine' END,
             -- A stage that records real work is never rewritten by enrichment.
             status = CASE WHEN status IN UNNEST(@protected) THEN status ELSE @status END,
             unfit_reason = CASE WHEN status IN UNNEST(@protected) THEN unfit_reason ELSE '' END,
@@ -3157,7 +3158,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                     # already done. If we have emailed them or spoken to them,
                     # "not a fit" is a decision for a person to make.
                     f"""UPDATE `{bq_handler.table_id}` SET
-                            status = 'Not a Fit', unfit_reason = @r,
+                            status = 'Not a Fit', unfit_reason = @r, stage_set_by = 'machine',
                             stage_entered_at = CURRENT_TIMESTAMP()
                         WHERE name = @n AND status NOT IN UNNEST(@protected)""",
                     job_config=bq_lib.QueryJobConfig(query_parameters=[

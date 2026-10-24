@@ -465,6 +465,22 @@ mistake is both visible and correctable. This one logged nothing, which is why
 - The email states NO cheque figure, deliberately: it is a door opener, and a
   number invites a decision before a conversation.
 
+## 2f. A HUMAN ACTION SUPERSEDES EVERYTHING (stage_set_by)
+
+- Ishu, 24 Oct 2026: "if a drag action happens, the company's position
+  should be as is; a human action supersedes everything; it shouldn't go
+  back to the code-defined stage at sync." `targets.stage_set_by` is
+  `human` or `machine`, stamped by the ONE status writer
+  (`update_company_status`) from `created_by` via `stage_actor_kind` and
+  `MACHINE_ACTORS` (email-sync, reply-rule, delivery-check, granola-sync,
+  smartfill ...). The raw-SQL stage writes that remain (SmartFill's guarded
+  write, the gate, the delivery pull-back) stamp `machine` themselves.
+- Any automation that moves a stage reads it first: the call-notes sync
+  attaches notes to a human-placed row and never promotes it. The reply
+  rule already ASKS before moving an unattributed row (2a); that stays.
+  A new automation that writes `status` must honour `stage_set_by` or it
+  will undo a decision someone made on the board.
+
 ## 2e. CALL NOTES (Granola meetings onto the card; Ishu, 15 Oct 2026)
 
 - Source: Granola's official read-only REST API (`services/granola_service.py`,

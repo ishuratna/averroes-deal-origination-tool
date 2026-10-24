@@ -86,6 +86,10 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
     # Parked (Talk later / Not interested) companies take the notes but are
     # never promoted: a person closed them (doctrine 2d).
     parked = {r["name"] for r in cand_rows if (r.get("track") or "") in ("kill", "later")}
+    # A HUMAN placed these where they are (a drag on the board, a stage
+    # picker). A human action supersedes everything: the sync attaches notes
+    # and leaves the stage exactly as it was put (Ishu, 24 Oct 2026).
+    human_placed = {r["name"] for r in cand_rows if (r.get("stage_set_by") or "") == "human"}
     held = bq_handler.call_note_versions()   # granola_id -> updated_at we already copied
 
     listed = fetched = skipped_unchanged = 0
@@ -135,7 +139,7 @@ def sync_call_notes(bq_handler, days: int = 7, dry_run: bool = True,
                 "granola_updated_at": _iso_to_dt(gupd),
             }
             will_promote = (status_of.get(m.company) == PROMOTE_FROM and m.company not in parked
-                            and m.confidence in PROMOTE_ON)
+                            and m.company not in human_placed and m.confidence in PROMOTE_ON)
             matched.append({"company": m.company, "title": meeting.title, "meeting_at": when,
                             "confidence": m.confidence, "evidence": m.evidence,
                             "promote": will_promote, "new": gid not in held})

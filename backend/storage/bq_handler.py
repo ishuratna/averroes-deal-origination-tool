@@ -135,6 +135,10 @@ class BigQueryHandler:
         # never re-litigated on the next nightly run.
         ("reply_exempt_at", "TIMESTAMP"),
         ("reply_exempt_by", "STRING"),
+        # WHO last set the stage: 'human' or 'machine' (Ishu, 24 Oct 2026: "a
+        # human action supersedes everything"). Stamped by update_company_status
+        # from created_by; automations read it and never move a human-placed row.
+        ("stage_set_by", "STRING"),
         # Did the outreach actually reach a human? 'delivered' = an outbound
         # message for this company exists in the mailbox and nothing bounced.
         # 'bounced' = the address is dead. 'not_sent' = SMTP reported success but
@@ -541,8 +545,21 @@ class BigQueryHandler:
             GROUP BY entity_name
         """
 
+    # Actors that are code, not people. Any other created_by is a person (a
+    # drag on the board, a stage picker, a terminal call made on Ishu's say).
+    MACHINE_ACTORS = ("email-sync", "reply-rule", "delivery-check", "granola-sync", "smartfill",
+                      "smartenrich", "quick-research", "add-by-number", "identity-repair",
+                      "identity-guard", "outreach-send", "followup-run", "contact-sync",
+                      "email-docs", "investor-gate", "migration", "system")
+
+    @classmethod
+    def stage_actor_kind(cls, created_by: str) -> str:
+        return "machine" if (created_by or "").strip().lower() in cls.MACHINE_ACTORS else "human"
+
     def update_company_status(self, company_name: str, new_status: str, created_by: str = "Ishu Ratna") -> bool:
-        """Update a company's status and log the change in activity_log."""
+        """Update a company's status and log the change in activity_log.
+        Stamps stage_set_by = human|machine from created_by: the ONE place the
+        distinction is written, so every automation can honour it."""
         if not self.client:
             return False
         if new_status not in self.DEAL_STAGES:
@@ -564,6 +581,7 @@ class BigQueryHandler:
             set_clauses = [
                 "status = @new_status",
                 "stage_entered_at = CASE WHEN IFNULL(status, '') != @new_status THEN CURRENT_TIMESTAMP() ELSE stage_entered_at END",
+                "stage_set_by = @set_by",
             ]
             stage_col = self.STAGE_TIMESTAMP_COLS.get(new_status)
             if stage_col:
@@ -573,6 +591,7 @@ class BigQueryHandler:
                 query_parameters=[
                     bigquery.ScalarQueryParameter("new_status", "STRING", new_status),
                     bigquery.ScalarQueryParameter("name", "STRING", company_name),
+                    bigquery.ScalarQueryParameter("set_by", "STRING", self.stage_actor_kind(created_by)),
                 ]
             )).result()
 
@@ -1505,6 +1524,7 @@ class BigQueryHandler:
         clear_contact = bool(dead_address)
         sets = [
             "status = 'Qualified'",
+            "stage_set_by = 'machine'",
             "stage_entered_at = CURRENT_TIMESTAMP()",
             "outreach_sent_at = NULL",
             "contacted_at = NULL",
@@ -2028,7 +2048,8 @@ class BigQueryHandler:
             return []
         return self._run_query(f"""
             SELECT name, IFNULL(website, '') AS website, IFNULL(contact_email, '') AS contact_email,
-                   IFNULL(status, '') AS status, IFNULL(track, '') AS track
+                   IFNULL(status, '') AS status, IFNULL(track, '') AS track,
+                   IFNULL(stage_set_by, '') AS stage_set_by
             FROM `{self.table_id}`
             WHERE status IN ('Responded', 'Meeting', 'DD', 'Offer', 'Won', 'Lost')
               AND IFNULL(source, '') != 'Internal Test'

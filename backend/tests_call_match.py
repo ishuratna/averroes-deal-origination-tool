@@ -122,6 +122,20 @@ def test_parked_companies_are_never_promoted():
     assert s.PROMOTE_ON == ("domain", "title") and "m.confidence in PROMOTE_ON" in src
 
 
+def test_human_placed_rows_are_never_moved():
+    # Ishu, 24 Oct 2026: a drag on the board is a human action and
+    # supersedes everything; no sync may move that company back or forward.
+    from storage import bq_handler as b
+    from services import call_notes_sync as s
+    assert b.BigQueryHandler.stage_actor_kind("Ishu Ratna") == "human"
+    assert b.BigQueryHandler.stage_actor_kind("granola-sync") == "machine"
+    assert b.BigQueryHandler.stage_actor_kind("email-sync") == "machine"
+    src = inspect.getsource(b.BigQueryHandler.update_company_status)
+    assert "stage_set_by = @set_by" in src, "the one status writer must stamp who set the stage"
+    assert "m.company not in human_placed" in inspect.getsource(s)
+    assert "stage_set_by" in inspect.getsource(b.BigQueryHandler.call_note_candidates)
+
+
 if __name__ == "__main__":
     import sys
     fails = 0
