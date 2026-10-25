@@ -115,6 +115,16 @@ mistake is both visible and correctable. This one logged nothing, which is why
    Both guarded by `window_days` (only judge sends inside the scanned period —
    otherwise a shallow sync demotes the whole back catalogue) and `grace_hours`
    (Gmail files to Sent with a lag).
+   THE SCAN READS OLDEST FIRST AND REMEMBERS WHAT IT FILES (Oxford Semantic
+   Technologies, 25 Oct 2026). A bounce comes from mailer-daemon, which no
+   address or domain rung knows; it links only by the THREAD rung, through
+   our own Message-ID. `thread_map` is loaded from BigQuery before the
+   mailbox is read, and the send it answers is logged by this same sync, so
+   on the first sync after a send the bounce (newer, read first) matched
+   nothing and was dropped: the delivery check then saw a clean send. The
+   folder is now walked in date order and `_fetch_folder` adds each filed
+   Message-ID to the per-run `thread_map` as it goes.
+   `tests_sync_same_scan_thread.py` pins it with a fake mailbox.
 3. `NON_REPLY_CLASSES = ("out_of_office", "bounce")`. Neither may EVER count as
    a reply. A bounce counting as one was a real bug: it is inbound and not an
    autoresponder, so a mailer-daemon message promoted companies to Responded.

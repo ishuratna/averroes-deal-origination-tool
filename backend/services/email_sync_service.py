@@ -191,8 +191,22 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
             if status != "OK":
                 return []
             ids = data[0].split()
-        # Most recent first, bounded to keep runs fast
+        # The NEWEST max_fetch messages are the window, but they are READ
+        # OLDEST FIRST. The thread rung needs our own send in thread_map
+        # before the message that answers it is read, and on the first sync
+        # after a send only this scan holds that send. Oxford Semantic
+        # Technologies (25 Oct 2026): the bounce arrived a minute after the
+        # send, was read first, matched nothing (mailer-daemon is no known
+        # address and our Message-ID was not yet logged) and was dropped,
+        # so the delivery check saw a clean send and the card stayed in
+        # Contacted with a dead address.
         candidates = list(reversed(ids))[:max_fetch]
+        candidates.reverse()
+        # In-run thread map: Message-IDs filed by THIS scan, so a bounce or
+        # reply later in the same scan can thread-match. The caller's map is
+        # extended in place and is a per-run dict (never persisted).
+        if thread_map is None:
+            thread_map = {}
         # Already-logged mail is not downloaded again: one header round trip
         # tells us which of the ~500 candidates are new. A 30-day sync used to
         # pull every message in full every time (375s, 9 Sep 2026).
@@ -267,6 +281,9 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 pdf_links = extract_pdf_links(_body_snippet(msg, limit=20000))
 
             invite = _invite_in(msg) if entity.get("type") == "company" else None
+            real_mid = _decode(msg.get("Message-ID")) or ""
+            if real_mid.startswith("<") and real_mid not in thread_map:
+                thread_map[real_mid] = {"type": entity["type"], "name": entity["name"]}
             entries.append({
                 "attachments": attachments,
                 "pdf_links": pdf_links,
