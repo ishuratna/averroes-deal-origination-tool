@@ -180,6 +180,14 @@ chk("no send on record: bounce stands",
 chk("no bounce time: fail safe, not superseded",
     bounce_superseded("", "2026-08-24 10:00:00+00"), False)
 
+# Doctrine 2f: a human-placed row is never pulled back by the delivery check
+# (Oxford Semantic, 25 Oct 2026: re-sent from Ishu's own inbox, set Contacted
+# by hand; the stale bounce must not demote it again on every sync).
+import inspect
+import main  # noqa: E402
+_src = inspect.getsource(main._verify_delivery)
+chk("delivery pull-back skips stage_set_by = human", '!= "human"' in _src and "stage_set_by" in _src, True)
+
 print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

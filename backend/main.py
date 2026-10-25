@@ -6787,9 +6787,14 @@ def _verify_delivery(dry_run: bool = False, window_days: int = 30,
 
     def _eligible(name: str) -> bool:
         c = live.get(name) or {}
+        # A HUMAN placed this row (doctrine 2f). Oxford Semantic, 25 Oct 2026:
+        # the bounce pulled it back, Ishu re-sent from his own inbox (which
+        # the sync never reads) and set Contacted by hand; without this guard
+        # every later sync would demote it again on the same stale bounce.
         return (c.get("status") == "Contacted"
                 and c.get("source") != "Internal Test"
-                and not c.get("hidden_at"))
+                and not c.get("hidden_at")
+                and (c.get("stage_set_by") or "") != "human")
 
     plan = ([{**b, "kind": "bounced"} for b in bounces if _eligible(b["name"])]
             + [{"name": m["name"], "address": "", "kind": "not_sent",

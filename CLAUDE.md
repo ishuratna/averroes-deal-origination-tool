@@ -491,7 +491,11 @@ mistake is both visible and correctable. This one logged nothing, which is why
   smartfill ...). The raw-SQL stage writes that remain (SmartFill's guarded
   write, the gate, the delivery pull-back) stamp `machine` themselves.
 - Any automation that moves a stage reads it first: the call-notes sync
-  attaches notes to a human-placed row and never promotes it. The reply
+  attaches notes to a human-placed row and never promotes it; the delivery
+  check's `_eligible` skips a human-placed Contacted row (Oxford Semantic,
+  25 Oct 2026: the bounce pulled it back, Ishu re-sent from his OWN inbox,
+  which the sync never reads, and set Contacted by hand; the stale bounce
+  would otherwise have demoted it on every sync). The reply
   rule already ASKS before moving an unattributed row (2a); that stays.
   A new automation that writes `status` must honour `stage_set_by` or it
   will undo a decision someone made on the board.
