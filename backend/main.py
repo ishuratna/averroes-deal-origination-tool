@@ -3794,7 +3794,11 @@ async def admin_company(request: Request, name: str = Query(...)):
     for k in ("description", "ic_memo", "outreach_draft_body", "action_reply_body", "action_rationale"):
         if isinstance(row.get(k), str) and len(row[k]) > 300:
             row[k] = row[k][:300] + "..."
-    return {"company": row, "financial_cells": cells, "activity": activity}
+    # The email thread too (same query the card uses), so a delivery or
+    # reply question can be settled from a terminal (Oxford Semantic, 26 Oct
+    # 2026: "did the bounce get filed?" had no token-gated answer).
+    emails = (await get_company_emails(name, limit=30)).get("emails", [])
+    return {"company": row, "financial_cells": cells, "activity": activity, "emails": emails}
 
 
 @app.post("/smartenrich/{company_name}")

@@ -124,7 +124,12 @@ mistake is both visible and correctable. This one logged nothing, which is why
    nothing and was dropped: the delivery check then saw a clean send. The
    folder is now walked in date order and `_fetch_folder` adds each filed
    Message-ID to the per-run `thread_map` as it goes.
-   `tests_sync_same_scan_thread.py` pins it with a fake mailbox.
+   THE FIFTH RUNG, `bounce-address` (same day): an NDR with NO In-Reply-To
+   or References (Microsoft 365 writes them that way) can never thread-match,
+   but it quotes the address that failed, and that address is a known
+   contact. Only a daemon-style sender or a bounce subject qualifies, so a
+   human email mentioning a founder's address never links this way.
+   `tests_sync_same_scan_thread.py` pins both with a fake mailbox.
 3. `NON_REPLY_CLASSES = ("out_of_office", "bounce")`. Neither may EVER count as
    a reply. A bounce counting as one was a real bug: it is inbound and not an
    autoresponder, so a mailer-daemon message promoted companies to Responded.

@@ -256,6 +256,29 @@ def _fetch_folder(mail, folder: str, since: str, sender: str, known: Dict[str, d
                 if company:
                     entity = (alias_index.get("entities") or {}).get(company) or {"type": "company", "name": company}
                     matched_by = how
+            if not entity and direction == "received":
+                # 5. BOUNCE BY QUOTED ADDRESS. Some delivery reports (Microsoft
+                # 365 NDRs in particular) carry no In-Reply-To or References,
+                # so the thread rung cannot place them; but every report quotes
+                # the address that failed, and that address is a contact we
+                # know. Only a mailer-daemon style sender qualifies, so an
+                # ordinary email that happens to mention a founder's address
+                # never links through this rung.
+                from services.delivery_check import is_bounce, _DAEMON_ADDRESSES
+                local = counter_email.split("@")[0] if "@" in counter_email else counter_email
+                subj = _decode(msg.get("Subject"))
+                if any(d in local for d in _DAEMON_ADDRESSES) or is_bounce(subj, ""):
+                    # Raw bytes, not the snippet: the address usually sits in
+                    # the message/delivery-status part (Final-Recipient),
+                    # which has no decodable payload of its own.
+                    try:
+                        body_l = msg.as_bytes()[:200000].decode("utf-8", "ignore").lower()
+                    except Exception:
+                        body_l = _body_snippet(msg, limit=6000).lower()
+                    for addr, ent in (known or {}).items():
+                        if addr and addr in body_l:
+                            entity, matched_by = ent, "bounce-address"
+                            break
             if not entity:
                 continue
 

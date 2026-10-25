@@ -39,7 +39,7 @@ class FakeMail:
         return "OK", None
 
     def search(self, charset, query):
-        return "OK", [b"1 2"]
+        return "OK", [b" ".join(sorted(self.msgs.keys()))]
 
     def fetch(self, ids, what):
         if what.startswith("(BODY.PEEK"):
@@ -64,6 +64,40 @@ def test_bounce_links_to_send_in_same_scan():
     assert b["entity_name"] == "Oxford Semantic Technologies"
     assert b["matched_by"] == "thread", b["matched_by"]
     assert b["counterparty_email"] == "mailer-daemon@googlemail.com"
+
+
+def test_headerless_ndr_links_by_quoted_address():
+    """A Microsoft 365 style NDR: no In-Reply-To, no References, but the
+    dead address is quoted in the report. Fifth rung: bounce-address."""
+    known = {"p.crocker@oxfordsemantic.tech": {"type": "company", "name": "Oxford Semantic Technologies"}}
+    fm = FakeMail()
+    ndr = EmailMessage()
+    ndr["From"] = "Microsoft Outlook <postmaster@oxfordsemantic.tech>"
+    ndr["To"] = OUR
+    ndr["Subject"] = "Undeliverable: Averroes Capital, Oxford Semantic Technologies"
+    ndr["Message-ID"] = "<ndr-789@outlook.com>"
+    ndr["Date"] = "Sat, 25 Oct 2026 20:19:30 +0000"
+    ndr.set_content("Your message to p.crocker@oxfordsemantic.tech couldn't be delivered.\n"
+                    "p.crocker wasn't found at oxfordsemantic.tech.")
+    fm.msgs = {b"1": fm.msgs[b"1"], b"2": _raw(ndr)}
+    entries = _fetch_folder(fm, "[Gmail]/All Mail", "01-Oct-2026", OUR, known,
+                            known_domains={}, thread_map={}, skip_ids=set())
+    got = [e for e in entries if e["direction"] == "received"]
+    assert got and got[0]["entity_name"] == "Oxford Semantic Technologies"
+    assert got[0]["matched_by"] == "bounce-address", got[0]["matched_by"]
+
+    # An ordinary human email that merely mentions a founder's address does
+    # NOT link through this rung (sender is not a daemon, subject not a bounce).
+    chat = EmailMessage()
+    chat["From"] = "Someone <someone@elsewhere.org>"
+    chat["To"] = OUR
+    chat["Subject"] = "Intro"
+    chat["Message-ID"] = "<chat-1@elsewhere.org>"
+    chat["Date"] = "Sat, 25 Oct 2026 20:20:00 +0000"
+    chat.set_content("You should write to p.crocker@oxfordsemantic.tech, he is great.")
+    fm.msgs = {b"1": _raw(chat)}
+    assert _fetch_folder(fm, "[Gmail]/All Mail", "01-Oct-2026", OUR, known,
+                         known_domains={}, thread_map={}, skip_ids=set()) == []
 
 
 def test_oldest_first_order():
