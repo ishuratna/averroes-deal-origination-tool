@@ -150,6 +150,21 @@ chk("...but the per-metric scores still update", u2["score_revenue_size"], 1.0)
 chk("nothing stored -> None (no-op)",
     rescore_company_local({"name": "Blank", "averroes_fit_score": None}), None)
 
+# THE BAND CHIP (Ishu, 26 Oct 2026): Target Band is 1M to 8M, defined once in
+# scoring.py, mirrored in types/index.ts and built into SQL by band_case_sql.
+from ai.scoring import compute_revenue_band, band_case_sql, BAND_MIN_M, BAND_MAX_M
+chk("band: 0.9M Too Early", compute_revenue_band(0.9), "Too Early")
+chk("band: 1.0M Target", compute_revenue_band(1.0), "Target Band")
+chk("band: 8.0M Target", compute_revenue_band(8.0), "Target Band")
+chk("band: 8.1M Too Large", compute_revenue_band(8.1), "Too Large")
+chk("band: none", compute_revenue_band(None), None)
+sql = band_case_sql("x")
+chk("band SQL carries the same floor", f"x < {BAND_MIN_M}" in sql, True)
+chk("band SQL carries the same ceiling", f"x <= {BAND_MAX_M}" in sql, True)
+_ts = open(os.path.join(os.path.dirname(__file__), "..", "frontend", "src", "types", "index.ts")).read()
+chk("types/index.ts mirrors BAND_MIN_M", f"BAND_MIN_M = {BAND_MIN_M}" in _ts, True)
+chk("types/index.ts mirrors BAND_MAX_M", f"BAND_MAX_M = {BAND_MAX_M}" in _ts, True)
+
 print()
 print(f"{fails} FAILURES" if fails else "ALL PASS")
 sys.exit(1 if fails else 0)

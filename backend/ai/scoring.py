@@ -420,19 +420,34 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
     }
 
 
+# THE BAND CHIP (Ishu, 26 Oct 2026): Target Band is GBP 1M to 8M of revenue.
+# Under 1M is Too Early, over 8M is Too Large. The chip is a LABEL for the
+# card and the filters; the fit score's revenue-size dimension has its own,
+# tighter scale (`_revenue_size_score`, 2 to 6M full marks). Defined once
+# here; `band_case_sql` builds the SQL twin from the same two numbers and
+# `types/index.ts` mirrors them (tests_fit_scoring checks the mirror).
+BAND_MIN_M = 1.0
+BAND_MAX_M = 8.0
+
+
 def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
-    """
-    Classify revenue (£M) into the Averroes deal band.
-    Target Band = £2.5-40M for £15-40M equity cheques at 25-100% stakes
-    (core sweet spot £8-20M). Hard qualification cap: £40M.
-    """
+    """Classify revenue (GBP M) into the Averroes deal band chip."""
     if rev_m is None or rev_m <= 0:
         return None
-    if rev_m < 2.5:
+    if rev_m < BAND_MIN_M:
         return "Too Early"
-    if rev_m <= 40:
+    if rev_m <= BAND_MAX_M:
         return "Target Band"
     return "Too Large"
+
+
+def band_case_sql(rev_expr: str) -> str:
+    """The SQL twin of `compute_revenue_band` for a bulk refresh, built from
+    the same constants so the two can never disagree."""
+    return (f"CASE WHEN {rev_expr} IS NULL OR {rev_expr} <= 0 THEN NULL "
+            f"WHEN {rev_expr} < {BAND_MIN_M} THEN 'Too Early' "
+            f"WHEN {rev_expr} <= {BAND_MAX_M} THEN 'Target Band' "
+            f"ELSE 'Too Large' END")
 
 
 # THE FIT WEIGHTS. 13 Oct 2026: the composite was a plain mean, so a company

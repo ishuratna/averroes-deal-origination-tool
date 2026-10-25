@@ -669,6 +669,16 @@ mistake is both visible and correctable. This one logged nothing, which is why
   the first scoring. The rescore also rewrites `revenue_band`,
   `revenue_estimate_m`, `revenue_source`, `revenue_confidence` so the card's
   chip cannot disagree with the score.
+- THE BAND CHIP IS NOT THE SCORE (Ishu, 26 Oct 2026): `revenue_band` is
+  the broad envelope, Target Band = GBP 1M to 8M (`BAND_MIN_M` /
+  `BAND_MAX_M` in `ai/scoring.py`, mirrored in `types/index.ts`, SQL twin
+  `band_case_sql`, all pinned by `tests_fit_scoring.py`); the size
+  dimension keeps its tighter 2 to 6M sweet spot. The chip had sat at 2.5
+  to 40M from the old cheque mandate, so an 11.8M company read Target
+  Band while scoring zero. `POST /admin/rescore-fit` relabels every
+  stored chip: unscored rows in one statement from the SQL twin, scored
+  rows from the resolver. Change the two numbers, rerun the rescore,
+  never edit a chip by hand.
 - `FIT_REQUIRED`: revenue size and business fit must both be present or the
   row is UNSCORED (None), never flattered by what it happens to have. A
   missing minor dimension renormalises over the present weights; the

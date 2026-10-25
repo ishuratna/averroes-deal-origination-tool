@@ -637,11 +637,13 @@ export interface Investor {
 export const INVESTOR_STAGES = ['Identified', 'Researched', 'Contacted', 'Responded', 'Meeting', 'Committed', 'Passed', 'Talk Later'];
 export const INVESTOR_PARKED = ['Passed', 'Talk Later'];
 
-// Revenue band v3 — calibrated to the mandate: £15–40M equity cheques for
-// majority or significant minority (25%+) stakes → investable revenue
-// envelope £5–40M at 4–6x EV/revenue (core sweet spot £8–20M).
-// Uses the stored band (computed by SmartFill, incl. AI-estimated revenue);
-// falls back to deriving from raw revenue data for rows not yet re-SmartFilled.
+// Revenue band chip (Ishu, 26 Oct 2026): Target Band = £1M to £8M revenue;
+// under 1M Too Early, over 8M Too Large. MIRRORS BAND_MIN_M / BAND_MAX_M in
+// backend/ai/scoring.py (the one definition); change both or neither.
+// Uses the stored band (written by SmartFill and the rescore); falls back to
+// deriving from raw revenue data for rows that carry none.
+export const BAND_MIN_M = 1.0;
+export const BAND_MAX_M = 8.0;
 export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: number; revenue_m?: number; revenue_estimate_m?: number }): string | null {
   if (company.revenue_band) return company.revenue_band;
   let revM: number | null = null;
@@ -649,8 +651,8 @@ export function getRevenueBand(company: { revenue_band?: string; revenue_y1?: nu
   else if (company.revenue_m != null && company.revenue_m > 0) revM = company.revenue_m;
   else if (company.revenue_estimate_m != null && company.revenue_estimate_m > 0) revM = company.revenue_estimate_m;
   if (revM == null) return null;
-  if (revM < 2.5) return 'Too Early';
-  if (revM <= 40) return 'Target Band';
+  if (revM < BAND_MIN_M) return 'Too Early';
+  if (revM <= BAND_MAX_M) return 'Target Band';
   return 'Too Large';
 }
 

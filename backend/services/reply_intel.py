@@ -114,9 +114,9 @@ def bucket_reply(company: dict, reply_subject: str, reply_text: str,
     bucket_defs = """
 - "right_fit_call": company fits the mandate (revenue band is Target Band or clearly investable, thesis fit) AND the founder is open, positive, or asking for a call or meeting. Action: propose times.
 - "right_fit_answer": company fits, but the founder asked questions first (ticket size, fund, model, who we are) before committing. Action: answer, then push for the call.
-- "right_fit_early": thesis fit but the company is below the revenue envelope (band Too Early, or the founder revealed revenue below 2.5m GBP). Action: warm reply, keep the door open, set a revisit date.
+- "right_fit_early": thesis fit but the company is below the revenue envelope (band Too Early, or the founder revealed revenue below 1m GBP). Action: warm reply, keep the door open, set a revisit date.
 - "right_fit_structure": fit and size work, but the founder signalled deal terms outside the mandate: pure secondary, very small minority, no path to 25 percent, or similar structure constraints. Action: judgement call, explore whether a workable structure exists.
-- "right_fit_large": thesis fit but above the envelope (band Too Large, or the founder revealed revenue or valuation above what a 15 to 40m cheque can buy 25 percent of). Action: polite reply, stay close, no active pursuit.
+- "right_fit_large": thesis fit but above the envelope (band Too Large, or the founder revealed revenue above 8m GBP). Action: polite reply, stay close, no active pursuit.
 - "not_now_timing": fit is fine but the founder said the timing is wrong: revisit in N months, mid fundraise, after an event. Action: courteous reply plus a stored follow up date.
 - "not_fit_no_respond": the reply confirms a thesis mismatch (wrong sector, geography, business model) or our record already marks it unfit and nothing in the reply changes that. Action: no response.
 - "declined_close": the founder clearly declined regardless of fit: not interested, not for sale, asked to stop contacting. Action: one graceful close out, or silence if they asked for silence.

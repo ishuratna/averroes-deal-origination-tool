@@ -4876,6 +4876,25 @@ async def admin_rescore_fit(request: Request,
             return -1.0 if v is None else float(v)
 
         applied, failures = 0, []
+        # THE BAND CHIP ON UNSCORED ROWS. The chunks below relabel every scored
+        # row from the exact resolver; rows with revenue but no score (no
+        # business-fit judgement yet) keep a stored band that would otherwise
+        # go stale when the thresholds move (1 to 8M, 26 Oct 2026). One
+        # statement relabels them from the same constants (`band_case_sql`),
+        # on the row's best stored figure in waterfall order; the chunks then
+        # overwrite scored rows, so the resolver's answer wins where it exists.
+        relabelled = 0
+        try:
+            from ai.scoring import band_case_sql
+            job = bq_handler.client.query(f"""
+                UPDATE `{bq_handler.table_id}`
+                SET revenue_band = {band_case_sql(_REV_EXPR)}
+                WHERE {_REV_EXPR} IS NOT NULL
+                  AND IFNULL(revenue_band, '') != {band_case_sql(_REV_EXPR)}""")
+            job.result()
+            relabelled = job.num_dml_affected_rows or 0
+        except Exception as e:
+            failures.append(f"band relabel: {e}")
         chunk = 500
         for i in range(0, len(plan), chunk):
             part = plan[i:i + chunk]
@@ -4917,8 +4936,9 @@ async def admin_rescore_fit(request: Request,
             except Exception as e:
                 failures.append(f"chunk {i // chunk}: {e}")
         return {"status": "Success", "dry_run": False, **summary,
-                "updated": applied, "failed": failures,
-                "message": f"Rescored {applied} companies under the current weights."
+                "updated": applied, "band_relabelled": relabelled, "failed": failures,
+                "message": f"Rescored {applied} companies under the current weights; "
+                           f"{relabelled} band chip(s) relabelled."
                            + (f" {len(failures)} chunk(s) FAILED." if failures else "")}
 
     return _stream_json(_run)

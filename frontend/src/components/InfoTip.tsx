@@ -69,7 +69,7 @@ export const DEFS: Record<string, string> = {
   valuation: "Estimated valuation (PitchBook). Also a revenue proxy (valuation ÷ 6). Thesis target range: £15–50M.",
   revenueFY: "Latest financial-year revenue. Filed Companies House accounts first, then PitchBook. '~ (est.)' means estimated from proxies (employees, assets, EBITDA, valuation, funding) — hover the value for detail.",
   revenuePrevFY: "Prior financial-year revenue from Companies House filings. Compared against the current FY to compute the revenue-growth score.",
-  band: "Deal band by revenue (actual or estimated): Too Early < £2.5M · Target Band £2.5–40M (core sweet spot £8–20M) · Too Large > £40M. Calibrated to £15–40M equity cheques at 25–100% stakes. Companies over £40M revenue fail the size filter.",
+  band: "Deal band by revenue (filed, recorded or estimated): Too Early < £1M · Target Band £1–8M · Too Large > £8M. The fit score's revenue-size dimension is tighter still: £2–6M scores full marks, under £2M or £6–10M half, over £10M zero.",
   investors: "Known investors and current owners as reported by the source data (Inven / PitchBook). Verified stakes come from the CS01 cap table on qualification; the LP miner extracts these names into the Investors database with full connection mapping.",
   ebitda: "Estimated EBITDA from source data. The investment thesis targets £1–10M EBITDA.",
   profit: "Latest filed profit from Companies House accounts (or net income from PitchBook).",
