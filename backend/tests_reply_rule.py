@@ -104,6 +104,9 @@ sql = sql.replace("{self._genuine_reply_sql()}", pm.group(1))
 # does, so adding one (out_of_office, bounce, ...) is picked up here automatically
 # instead of leaving this test asserting an older definition of "a reply".
 sql = sql.replace("{excluded}", ", ".join(f"'{c}'" for c in BigQueryHandler.NON_REPLY_CLASSES))
+# The predicate is parameterised by entity (14 Sep 2026); the company default
+# is what reconcile_reply_stages calls it with.
+sql = sql.replace("{entity_type}", "company")
 sql = (sql.replace("`{log}`", "email_log")
           .replace("`{self.activity_table_id}`", "activity_log")
           .replace("`{self.table_id}`", "targets"))

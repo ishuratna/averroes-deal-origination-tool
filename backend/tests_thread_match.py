@@ -66,7 +66,7 @@ print()
 print("── The adoption guard (never a third party) ──")
 import main  # noqa: E402
 
-sync_src = inspect.getsource(main.sync_emails)
+sync_src = inspect.getsource(main._sync_emails_impl)  # the body moved into _sync_emails_impl (9 Sep 2026)
 chk("adoption considers ONLY thread-matched replies",
     'r.get("matched_by") != "thread"' in sync_src, True)
 chk("autoresponders and bounces prove nothing about a person",
