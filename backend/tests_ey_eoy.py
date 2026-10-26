@@ -97,6 +97,11 @@ EY_IE_PAGE = '<div class="upHtmlApp"><iframe src="https://flo.uri.sh/visualisati
 def test_ireland_flourish_embed():
     from scrapers.ranking_scraper import parse_ey_eoy_ireland, flourish_embed_url
     assert flourish_embed_url(EY_IE_PAGE) == "https://flo.uri.sh/visualisation/28338005/embed?auto=1"
+    # the raw (pre-JS) page: Flourish's div, no iframe yet
+    raw = ('<div id="htmlApp-5b95a59d4e5d" class="up-html-app"><script>window.Flourish = {};</script>'
+           '<div class="flourish-embed flourish-cards" data-src="visualisation/28338005?790558">'
+           '<script src="https://public.flourish.studio/resources/embed.js"></script></div></div>')
+    assert flourish_embed_url(raw) == "https://flo.uri.sh/visualisation/28338005/embed?auto=1"
     rows = parse_ey_eoy_ireland(FLOURISH, 2026)
     by = {r["name"]: r for r in rows}
     assert set(by) == {"SISTERLY", "Xtremepush", "StormHarvester", "Manna Air Delivery", "Lunn's", "Inscribe"}, set(by)

@@ -288,9 +288,20 @@ _FLOURISH_DATA = re.compile(r"_Flourish_data\s*=\s*(\{.*?\})\s*[,;]\s*(?:_Flouri
 _PERSON_OF = re.compile(r"^(?P<people>.+?)\s+of\s+(?P<company>.+?)$", re.S)
 
 
+_FLOURISH_DATA_SRC = re.compile(r'class="flourish-embed[^"]*"\s+data-src="visualisation/(\d+)[^"]*"')
+
+
 def flourish_embed_url(page_html: str) -> str:
+    """The raw page carries <div class="flourish-embed" data-src="visualisation/<id>?..">;
+    the iframe URL only exists after Flourish's embed.js runs (found 26 Oct
+    2026: the live run read the UK pages and zero Irish rows). Either form."""
     m = _FLOURISH_SRC.search(page_html or "")
-    return m.group(0) if m else ""
+    if m:
+        return m.group(0)
+    m = _FLOURISH_DATA_SRC.search(page_html or "")
+    if m:
+        return f"https://flo.uri.sh/visualisation/{m.group(1)}/embed?auto=1"
+    return ""
 
 
 def parse_ey_eoy_ireland(embed_html: str, year: int) -> List[Dict]:
