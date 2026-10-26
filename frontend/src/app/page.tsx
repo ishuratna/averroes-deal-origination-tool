@@ -644,21 +644,12 @@ function HomeInner() {
                               {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
                             </p>
 
-                            {/* Action-bucket chip: Meeting and beyond only, per
-                                Ishu. On Contacted and Responded cards the
-                                recommendation boxes were clutter; the suggested
-                                action still lives in the profile's Outreach tab
-                                and drives the Responded page queues. */}
-                            {(() => {
-                              const b = actionBucketInfo(company.action_bucket);
-                              if (!b || ['Contacted', 'Responded'].includes(company.status)) return null;
-                              return (
-                                <div className={`kc-bucket bucket-${b.tone}`}
-                                  title={`${company.action_rationale || ''}${company.action_follow_up_date ? ` · Follow up: ${company.action_follow_up_date}` : ''}`}>
-                                  {b.label}
-                                </div>
-                              );
-                            })()}
+                            {/* The action-bucket chip ("Right fit — too early,
+                                nurture") is gone from every card (Ishu, 26 Oct
+                                2026). The bucket still orders the Contacted
+                                column and drives the Responded page queues;
+                                the reading itself sits in the profile's
+                                Outreach tab. */}
 
                             {/* Row 2 — assessment badges + who is managing it.
                                 Owner uses the shared OwnerTag so it looks and

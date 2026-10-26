@@ -1242,15 +1242,17 @@ export default function CompanyProfile({ companies, index, onClose, onNavigate, 
           {tab === 'Outreach' && (
             <>
               {(() => {
-                const b = actionBucketInfo(company.action_bucket);
-                if (!b) return null;
+                // The bucket CHIP ("Right fit — too early, nurture") was removed
+                // everywhere (Ishu, 26 Oct 2026). The reading behind it (the
+                // rationale and the suggested reply) stays; the bucket itself
+                // still orders the Contacted column and the Responded queues.
+                if (!actionBucketInfo(company.action_bucket)) return null;
                 return (
                   <>
-                    <div className="cp-section-title">Action bucket</div>
+                    <div className="cp-section-title">Reply reading</div>
                     <div className="cp-card">
-                      <div className={`kc-bucket bucket-${b.tone}`} style={{ display: 'inline-block' }}>{b.label}</div>
                       {company.action_rationale && (
-                        <p style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.6, margin: '0.55rem 0 0' }}>{company.action_rationale}</p>
+                        <p style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.6, margin: 0 }}>{company.action_rationale}</p>
                       )}
                       {company.action_follow_up_date && (
                         <div className="cp-kv" style={{ marginTop: '0.45rem' }}><span className="k">Follow up</span><span className="v">{company.action_follow_up_date}</span></div>
