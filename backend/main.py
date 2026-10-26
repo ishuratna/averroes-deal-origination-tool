@@ -423,7 +423,11 @@ async def ingest_ranking(request: Request, list_name: str = Query(..., descripti
         _require_token(request)
     if list_name not in rank_scraper.get_supported_lists():
         raise HTTPException(status_code=404, detail=f"Ranking list '{list_name}' not supported.")
-    raw_companies = rank_scraper.scrape_ranking(list_name)
+    # Off the event loop: the scrape is a chain of blocking HTTP calls (the EY
+    # run is several minutes) and inside an async handler it froze every other
+    # request on the service for that long (26 Oct 2026).
+    import asyncio as _asyncio
+    raw_companies = await _asyncio.to_thread(rank_scraper.scrape_ranking, list_name)
     if not raw_companies:
         return {"status": "Complete", "count": 0, "message": "No new companies found."}
     for c in raw_companies:

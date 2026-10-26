@@ -112,6 +112,7 @@ def test_ireland_flourish_embed():
     assert "(International category)" in by["Inscribe"]["description"]
     assert by["Inscribe"]["contact_name"] == "Ronan"  # first of "Ronan & Conor Burke"; SmartFill completes it
     assert by["Lunn's"]["hq_country"] == "Ireland" and by["Lunn's"]["region"] == "Ireland"
+    assert by["Lunn's"]["hq_location"] == ""  # a category is not a place
     assert by["Lunn's"]["source"] == "EY Entrepreneur Of The Year Ireland 2026"
     assert by["Lunn's"]["website"] == ""
 

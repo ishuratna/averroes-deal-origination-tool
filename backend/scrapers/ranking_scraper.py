@@ -339,7 +339,9 @@ def parse_ey_eoy_ireland(embed_html: str, year: int) -> List[Dict]:
             desc = (f"EY Entrepreneur Of The Year {year} Ireland finalist"
                     f"{f' ({category} category)' if category else ''}, island of Ireland. Nominee"
                     f"{'s' if len(_split_nominees(people)) > 1 else ''}: {people}.")
-            out.append(_ey_row(company, "", people, category, year, desc, country="Ireland"))
+            # The category (Emerging/Established/International) is a programme
+            # label, not a place: it stays in the description only.
+            out.append(_ey_row(company, "", people, "", year, desc, country="Ireland"))
     return out
 
 
@@ -349,7 +351,7 @@ def scrape_ey_eoy_ireland(years: List[int]) -> List[Dict]:
         for slug in EY_EOY_IE_SLUGS:
             url = slug.format(year=year)
             try:
-                resp = requests.get(url, headers=HEADERS, timeout=25)
+                resp = requests.get(url, headers=HEADERS, timeout=15)
             except Exception as e:
                 logger.warning(f"[EY EOY IE] {url}: {e}")
                 continue
@@ -360,7 +362,7 @@ def scrape_ey_eoy_ireland(years: List[int]) -> List[Dict]:
                 logger.warning(f"[EY EOY IE] {url}: no Flourish embed found")
                 break
             try:
-                er = requests.get(embed, headers=HEADERS, timeout=25)
+                er = requests.get(embed, headers=HEADERS, timeout=15)
                 rows = parse_ey_eoy_ireland(er.text, year) if er.status_code == 200 else []
             except Exception as e:
                 logger.warning(f"[EY EOY IE] {embed}: {e}")
@@ -377,7 +379,7 @@ def scrape_ey_eoy(years: List[int] = None) -> List[Dict]:
     first so a company that appears twice keeps its latest citation."""
     from datetime import date
     this_year = date.today().year
-    years = years or list(range(this_year + 1, this_year - 5, -1))
+    years = years or list(range(this_year + 1, this_year - 4, -1))
     seen: Dict[str, Dict] = {}
 
     def _add(rows: List[Dict]):
@@ -390,7 +392,7 @@ def scrape_ey_eoy(years: List[int] = None) -> List[Dict]:
         for slug in EY_EOY_REGIONAL_SLUGS:
             url = slug.format(year=year)
             try:
-                resp = requests.get(url, headers=HEADERS, timeout=25)
+                resp = requests.get(url, headers=HEADERS, timeout=15)
             except Exception as e:
                 logger.warning(f"[EY EOY] {url}: {e}")
                 continue
@@ -401,7 +403,7 @@ def scrape_ey_eoy(years: List[int] = None) -> List[Dict]:
             _add(rows)
             break
     try:
-        resp = requests.get(EY_EOY_FINALISTS_URL, headers=HEADERS, timeout=25)
+        resp = requests.get(EY_EOY_FINALISTS_URL, headers=HEADERS, timeout=15)
         if resp.status_code == 200:
             rows = parse_ey_eoy_finalists(resp.text)
             logger.info(f"[EY EOY] national finalists page: {len(rows)} companies")
