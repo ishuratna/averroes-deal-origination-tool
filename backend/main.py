@@ -415,9 +415,12 @@ async def ingest_conference(conference_name: str = Query(..., description="Name 
         "gcs_path": gcs_filename
     }
 
-@app.post("/ingest/ranking")
-async def ingest_ranking(list_name: str = Query(..., description="Name of the ranking list to ingest")):
+@app.post("/ingest/ranking")              # browser: Google sign-in (the Sources panel)
+@app.post("/admin/ingest/ranking")        # terminal: WATCH_TOKEN (ops, sign-in exempt)
+async def ingest_ranking(request: Request, list_name: str = Query(..., description="Name of the ranking list to ingest")):
     """Scrape ranking list → save raw to BQ. No AI. Use SmartFill per-company afterwards."""
+    if request.url.path.startswith("/admin/"):
+        _require_token(request)
     if list_name not in rank_scraper.get_supported_lists():
         raise HTTPException(status_code=404, detail=f"Ranking list '{list_name}' not supported.")
     raw_companies = rank_scraper.scrape_ranking(list_name)

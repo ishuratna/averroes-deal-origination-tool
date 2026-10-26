@@ -50,6 +50,13 @@ const ALL_SOURCES: SourceDef[] = [
   { name: 'FT 1000', type: 'ranking', label: 'FT 1000', description: 'FT ranking of Europe\'s fastest-growing companies. Not scrapeable — paywalled interactive table.', icon: '📊', canRefresh: false },
   { name: 'Startups 100 UK', type: 'ranking', label: 'Startups 100 UK', description: 'The UK\'s top 100 new businesses, scraped live from startups.co.uk (latest year).', icon: '📊', canRefresh: true, refreshType: 'ranking', familyPrefixes: ['Startups 100'] },
   { name: 'Deloitte Fast 50 UK', type: 'ranking', label: 'Deloitte Fast 50 UK', description: 'UK\'s 50 fastest-growing tech companies. Not scrapeable — JS-rendered page.', icon: '📊', canRefresh: false, familyPrefixes: ['Deloitte Fast 50'] },
+  // EY Entrepreneur Of The Year: UK regional finalists (~90 businesses a
+  // year, from the April press release tables, with founder and website),
+  // the UK national finalists page (2024, 2025), and EY Ireland's 24
+  // finalists a year (read from the Flourish embed on its April release).
+  // UK and Ireland only by construction; the scraper stamps
+  // "EY Entrepreneur Of The Year UK 2026" / "... Ireland 2026".
+  { name: 'EY Entrepreneur Of The Year', type: 'ranking', label: 'EY Entrepreneur Of The Year', description: 'EY Entrepreneur Of The Year finalists, UK and Ireland only: every UK regional finalist (about 90 businesses a year, with the nominated founder and the company website) plus the UK national finalists, and EY Ireland\'s 24 finalists a year. Founder-led, revenue-generating businesses across all sectors; hard filters and SmartFill sort fit afterwards.', icon: '🏆', canRefresh: true, refreshType: 'ranking', familyPrefixes: ['EY Entrepreneur Of The Year'] },
   // Directories
   { name: 'TheSaaSDirectory', type: 'directory', label: 'TheSaaSDirectory', description: 'Curated directory of SaaS products, scraped page-by-page.', icon: '📁', canRefresh: true, refreshType: 'directory' },
   // Enterprise Ireland's client directory: ~4,200 Irish exporters over a
