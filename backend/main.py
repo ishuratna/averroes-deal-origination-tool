@@ -2319,6 +2319,15 @@ DAILY_SMARTFILL_CAP = int(os.getenv("DAILY_SMARTFILL_CAP", "450"))      # SmartF
 # Sources where a PERSON asked about one company: enrich first, judge on the
 # evidence after (never gate an empty row). See smartfill_company.
 EVIDENCE_FIRST_SOURCES = ("Quick Research", "Manual (CH number)")
+# Source FAMILIES that arrive as a name, a website and a founder and nothing
+# else (an awards list). Gating such a row on stored data would refuse it on
+# no evidence, so they take the same enrich-first route.
+EVIDENCE_FIRST_PREFIXES = ("EY Entrepreneur Of The Year",)
+
+
+def _evidence_first(source) -> bool:
+    src = source or ""
+    return src in EVIDENCE_FIRST_SOURCES or src.startswith(EVIDENCE_FIRST_PREFIXES)
 
 # All outreach for the Internal Test company goes to this inbox — always.
 TEST_RECIPIENT = "admin@averroescapital.com"
@@ -2594,7 +2603,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # them instead of the gate guessing from an empty row.
     # MANUAL (CH NUMBER) rows take the same route (Ishu, 20 Oct 2026: Inndex,
     # a bare name-and-number row, was gated Not a Fit with nothing on it).
-    if company_data.get("source") in EVIDENCE_FIRST_SOURCES:
+    if _evidence_first(company_data.get("source")):
         # A husk left by an earlier gated run sits at Not a Fit with the gate's
         # no-evidence reason. Re-running Quick Research must wipe that verdict,
         # or the bypass would enrich the row and then faithfully keep the wrong
@@ -3135,7 +3144,7 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
     # actual evidence. Not a Fit stays Not a Fit - but as a researched verdict
     # sitting on a populated row in the Master Universe, not a guess stamped on
     # an empty one. Data is never removed by the verdict.
-    if company_data.get("source") in EVIDENCE_FIRST_SOURCES:
+    if _evidence_first(company_data.get("source")):
         try:
             fresh = bq_handler.get_company_full(company_name) or {}
             _ensure_criteria()
@@ -3149,13 +3158,14 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                     created_by="smartfill")
                 raise RuntimeError("empty research result; verdict deferred")
             verdict = qualify_company_with_gemini(fresh)
-            if verdict.get("qualified") and company_data.get("source") == "Manual (CH number)" \
+            if verdict.get("qualified") and company_data.get("source") != "Quick Research" \
                     and (fresh.get("status") or "") in ("Uploaded", "Scraped", "", None):
                 # A person added this company by its register number and asked
                 # for it to be qualified automatically: the evidence passed the
                 # hard filters, so it joins the Qualified queue through the one
-                # status writer (status_change logged). Quick Research rows are
-                # left for the person to judge, as before.
+                # status writer (status_change logged). The same for an awards
+                # list row (EY EOY, 27 Oct 2026). Quick Research rows are left
+                # for the person to judge, as before.
                 if bq_handler.update_company_status(company_name, "Qualified", created_by="add-by-number"):
                     new_status = "Qualified"
             elif not verdict.get("qualified"):
@@ -3407,26 +3417,36 @@ def _auto_smartfill_rank(c: dict) -> tuple:
 # parameter, so this route is now shadow-proof by construction, not by ordering.
 @app.get("/smartfill/auto/run")   # GET alias so a scheduler URL is enough
 @app.post("/smartfill/auto/run")
-async def smartfill_auto_run(request: Request):
+async def smartfill_auto_run(request: Request,
+                             source_prefix: str = Query("", description="Scope the tick to rows whose source starts with this (a terminal run for one source, e.g. 'EY Entrepreneur Of The Year'). Bypasses the nightly pause and target; the daily cap still applies."),
+                             batch: int = Query(0, description="Companies this tick (default AUTO_SMARTFILL_BATCH). Keep a tick under Cloud Run's 300s: about 10 at concurrency 5.")):
     """One tick of the nightly bulk SmartFill. Token-gated (Cloud Scheduler
     cannot hold a browser session).
 
     Idempotent by construction: the daily count INCLUDES manual runs, so
     target minus used-today can only shrink. Re-running a tick after the
     target is met does nothing and costs nothing.
+
+    SCOPED RUN (Ishu, 27 Oct 2026: "schedule a SmartFill from the terminal
+    only for these"): `source_prefix` restricts the queue to one source
+    family and is a person asking, so the nightly pause and the nightly
+    target do not apply to it; the hard daily cap inside SmartFill still
+    does. Evidence-first sources skip the stored-data gate here exactly as
+    they do inside SmartFill.
     """
     _require_token(request)
+    source_prefix = (source_prefix or "").strip()
     # THE KILL SWITCH (Ishu, 9 Oct 2026: AI budget exceeded, enough Qualified
     # companies on hand). Read at REQUEST time, never cached at import, so a
     # Cloud Run env change takes effect on the next tick without a deploy.
     # Manual SmartFill / SmartEnrich from a card are untouched: a person
     # asking is the whole point. The queue is derived from the rows, so
     # nothing is lost while paused; flip the env back to resume.
-    if os.getenv("AUTO_SMARTFILL_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+    if not source_prefix and os.getenv("AUTO_SMARTFILL_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
         return {"status": "Paused", "message": "Nightly bulk SmartFill is switched off (AUTO_SMARTFILL_ENABLED=0). "
                                                "Manual SmartFill and SmartEnrich still work. Nothing was spent."}
     used = bq_handler.count_smartfills_today()
-    remaining = AUTO_SMARTFILL_TARGET - used
+    remaining = (DAILY_SMARTFILL_CAP if source_prefix else AUTO_SMARTFILL_TARGET) - used
     if remaining <= 0:
         return {"status": "Done", "used_today": used, "target": AUTO_SMARTFILL_TARGET,
                 "message": f"Daily target of {AUTO_SMARTFILL_TARGET} already met ({used} run today). Nothing to do."}
@@ -3439,15 +3459,18 @@ async def smartfill_auto_run(request: Request):
             continue
         if c.get("source") == "Internal Test":
             continue
-        qual = qualify_company(c)
-        if not qual["is_uk_ireland"] or not qual["is_tech"]:
+        if source_prefix and not (c.get("source") or "").startswith(source_prefix):
             continue
-        if qual.get("size_qualified") is False:
-            continue
+        if not _evidence_first(c.get("source")):
+            qual = qualify_company(c)
+            if not qual["is_uk_ireland"] or not qual["is_tech"]:
+                continue
+            if qual.get("size_qualified") is False:
+                continue
         eligible.append(c)
     eligible.sort(key=_auto_smartfill_rank)
 
-    batch = [c["name"] for c in eligible[:min(AUTO_SMARTFILL_BATCH, remaining)]]
+    batch = [c["name"] for c in eligible[:min(batch or AUTO_SMARTFILL_BATCH, remaining)]]
     processed, failed = [], []
     # THREADS, NOT ASYNC — measured, twice. The first version was sequential
     # (~1 company per 11-minute tick). The second used asyncio.gather with a
@@ -3492,8 +3515,10 @@ async def smartfill_auto_run(request: Request):
     return {
         "status": "Success",
         "used_today_before": used,
-        "target": AUTO_SMARTFILL_TARGET,
+        "target": DAILY_SMARTFILL_CAP if source_prefix else AUTO_SMARTFILL_TARGET,
+        "source_prefix": source_prefix,
         "backlog": len(eligible),
+        "remaining_after": max(0, len(eligible) - len(processed)),
         "processed": processed,
         "failed": failed,
         "message": (f"Processed {len(processed)} of a {len(eligible)}-company backlog "
