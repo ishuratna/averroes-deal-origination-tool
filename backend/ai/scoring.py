@@ -428,6 +428,10 @@ def _compute_revenue_size(company: dict) -> Optional[Dict]:
 # `types/index.ts` mirrors them (tests_fit_scoring checks the mirror).
 BAND_MIN_M = 1.0
 BAND_MAX_M = 8.0
+# The bulk cost gate: above this revenue the size filter would refuse the
+# company anyway (criteria.py max_revenue_m), so bulk mode spends no
+# web-search calls scoring it. Independent of the chip on purpose.
+BULK_SCORING_SKIP_ABOVE_M = 40.0
 
 
 def compute_revenue_band(rev_m: Optional[float]) -> Optional[str]:
@@ -523,12 +527,17 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
         scores["revenue_size"] = rev_size["score"]
         details["revenue_size"] = rev_size
 
-    # ── Cost gate (bulk mode): Too Large band → skip the 3 web-search metrics.
-    # The company stays Qualified but unscored; score on demand via the
-    # individual SmartFill button. Saves ~3 grounded calls per Too Large company.
+    # ── Cost gate (bulk mode): revenue above the hard-filter cap → skip the 3
+    # web-search metrics. The company stays Qualified but unscored; score on
+    # demand via the individual SmartFill button. Saves ~3 grounded calls.
+    # KEYED ON THE CAP, NOT THE CHIP (28 Oct 2026): this used to test
+    # `band == "Too Large"`, which meant over GBP 40M until the chip moved to
+    # 1 to 8M on 26 Oct; for two days every bulk-processed company over 8M
+    # (most EY finalists) came out Qualified with no fit score at all.
     band_now = details.get("revenue_size", {}).get("revenue_band")
-    if skip_qualitative_if_too_large and band_now == "Too Large":
-        logger.info(f"[Scoring] '{company_name}' is Too Large (bulk mode) — skipping web-search metrics")
+    rev_now = details.get("revenue_size", {}).get("value")
+    if skip_qualitative_if_too_large and rev_now is not None and float(rev_now) > BULK_SCORING_SKIP_ABOVE_M:
+        logger.info(f"[Scoring] '{company_name}' is over GBP {BULK_SCORING_SKIP_ABOVE_M:.0f}M (bulk mode) — skipping web-search metrics")
         return {
             "averroes_fit_score": None,
             "score_employee_growth": None,
@@ -542,7 +551,7 @@ def score_company(company: dict, skip_qualitative_if_too_large: bool = False) ->
             "revenue_source": details.get("revenue_size", {}).get("source"),
             "revenue_confidence": details.get("revenue_size", {}).get("confidence"),
             "metrics_available": len(scores),
-            "error": "Skipped web-search scoring: Too Large band (bulk cost gate). Run SmartFill individually to score.",
+            "error": f"Skipped web-search scoring: revenue over GBP {BULK_SCORING_SKIP_ABOVE_M:.0f}M (bulk cost gate). Run SmartFill individually to score.",
         }
 
     # ── Metrics 1, 4, 5: Gemini assessment (employee growth, business fit, market sentiment) ──

@@ -3166,7 +3166,8 @@ async def smartfill_company(company_name: str, bulk: bool = Query(False, descrip
                 # status writer (status_change logged). The same for an awards
                 # list row (EY EOY, 27 Oct 2026). Quick Research rows are left
                 # for the person to judge, as before.
-                if bq_handler.update_company_status(company_name, "Qualified", created_by="add-by-number"):
+                actor = "add-by-number" if company_data.get("source") == "Manual (CH number)" else "smartfill"
+                if bq_handler.update_company_status(company_name, "Qualified", created_by=actor):
                     new_status = "Qualified"
             elif not verdict.get("qualified"):
                 from google.cloud import bigquery as bq_lib
@@ -3419,7 +3420,8 @@ def _auto_smartfill_rank(c: dict) -> tuple:
 @app.post("/smartfill/auto/run")
 async def smartfill_auto_run(request: Request,
                              source_prefix: str = Query("", description="Scope the tick to rows whose source starts with this (a terminal run for one source, e.g. 'EY Entrepreneur Of The Year'). Bypasses the nightly pause and target; the daily cap still applies."),
-                             batch: int = Query(0, description="Companies this tick (default AUTO_SMARTFILL_BATCH). Keep a tick under Cloud Run's 300s: about 10 at concurrency 5.")):
+                             batch: int = Query(0, description="Companies this tick (default AUTO_SMARTFILL_BATCH). Keep a tick under the service timeout: 5 at concurrency 5 is one wave."),
+                             unscored: int = Query(0, description="1 = also re-run rows already SmartFilled that sit Qualified with NO fit score (the 26-28 Oct bulk-gate fault); needs source_prefix.")):
     """One tick of the nightly bulk SmartFill. Token-gated (Cloud Scheduler
     cannot hold a browser session).
 
@@ -3454,9 +3456,13 @@ async def smartfill_auto_run(request: Request,
     # Same eligibility as the manual bulk button: never-SmartFilled, passes all
     # three hard filters on stored data, not hidden. ZERO AI spent choosing.
     eligible = []
+    redo_unscored = bool(unscored) and bool(source_prefix)
     for c in bq_handler.get_universe():
-        if c.get("hidden_at") or c.get("last_smartfill_at"):
+        if c.get("hidden_at"):
             continue
+        if c.get("last_smartfill_at"):
+            if not (redo_unscored and c.get("status") == "Qualified" and c.get("averroes_fit_score") is None):
+                continue
         if c.get("source") == "Internal Test":
             continue
         if source_prefix and not (c.get("source") or "").startswith(source_prefix):

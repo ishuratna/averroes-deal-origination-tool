@@ -687,7 +687,11 @@ mistake is both visible and correctable. This one logged nothing, which is why
   Band while scoring zero. `POST /admin/rescore-fit` relabels every
   stored chip: unscored rows in one statement from the SQL twin, scored
   rows from the resolver. Change the two numbers, rerun the rescore,
-  never edit a chip by hand.
+  never edit a chip by hand. AND NOTHING ELSE MAY READ THE CHIP AS A
+  THRESHOLD: the bulk cost gate in `compute_fit_score` tested
+  `band == "Too Large"` and, the day the chip moved, silently stopped
+  scoring every bulk-processed company over 8M (28 Oct 2026). It keys on
+  `BULK_SCORING_SKIP_ABOVE_M` (the 40M size cap) now. A label is a label.
 - `FIT_REQUIRED`: revenue size and business fit must both be present or the
   row is UNSCORED (None), never flattered by what it happens to have. A
   missing minor dimension renormalises over the present weights; the
