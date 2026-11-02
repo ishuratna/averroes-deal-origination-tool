@@ -4765,6 +4765,7 @@ async def admin_followup_send(request: Request,
                               dry_run: int = Query(1, description="1 = list who would get one (default), 0 = send"),
                               limit: int = Query(1, description="how many to send this call"),
                               names: str = Query("", description="comma-separated company names to restrict to"),
+                              skip: str = Query("", description="comma-separated company names to leave out (a row a person will handle by hand)"),
                               min_days: int = Query(14, description="days since our email before a follow-up is due"),
                               shuffle: int = Query(0, description="1 = pick at random from the eligible list")):
     """THE ONE FOLLOW-UP, sent from the terminal instead of card by card
@@ -4792,6 +4793,9 @@ async def admin_followup_send(request: Request,
     wanted = {n.strip().lower() for n in names.split(",") if n.strip()}
     if wanted:
         eligible = [r for r in eligible if (r.get("name") or "").lower() in wanted]
+    unwanted = {n.strip().lower() for n in skip.split(",") if n.strip()}
+    if unwanted:
+        eligible = [r for r in eligible if (r.get("name") or "").lower() not in unwanted]
     if shuffle:
         import random
         random.shuffle(eligible)

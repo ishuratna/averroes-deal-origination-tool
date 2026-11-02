@@ -190,17 +190,6 @@ def followup_greeting(company_data: Dict) -> str:
     never a generic word (an inbox name is not a person). Otherwise "Hello,"."""
     g = first_email_greeting(company_data.get("first_sent_snippet") or "")
     if g:
-        # Mirror the first email, unless it greeted the address's own local
-        # part (abell@moneyfacts -> "Hi Abell,", a surname; 2 Nov 2026): a
-        # name adopted from an address is not a name, so open "Hello,".
-        who = g.split(" ", 1)[1].rstrip(",").strip().lower() if " " in g else ""
-        local = ((company_data.get("contact_email") or "").split("@")[0] or "").lower()
-        full = (company_data.get("contact_name") or "").strip().split()
-        # damon@purecyber.com with "Damon Rands" on the row IS Damon; the
-        # override is only for a bare single word that is nothing but the
-        # address (Moneyfacts: contact "Abell", abell@).
-        if who and local and who == local and who != "team" and len(full) <= 1:
-            return "Hello,"
         return g
     first, _ = _greeting_for(company_data)   # already refuses inbox words and titles
     if first:
