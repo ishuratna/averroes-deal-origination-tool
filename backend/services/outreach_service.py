@@ -207,7 +207,13 @@ def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     the full signature block beneath it.
     """
     greeting = followup_greeting(company_data)
-    company = company_data.get("name", "your company")
+    # The body names the company the way a person would: "PureCyber stood
+    # out to us", not "PureCyber Limited stood out to us" (bulk run QA,
+    # 2 Nov 2026). The legal suffix is dropped from the sentence only; the
+    # row name and the subject line are untouched.
+    import re as _re
+    company = _re.sub(r"\s+(limited|ltd\.?|plc|llp|llc|inc\.?)$", "",
+                      (company_data.get("name") or "your company").strip(), flags=_re.I).strip() or "your company"
 
     original_subject = (company_data.get("outreach_draft_subject") or "").strip()
     if original_subject:
