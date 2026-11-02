@@ -175,6 +175,10 @@ def first_email_greeting(snippet: str) -> str:
     word = word[:1].upper() + word[1:].lower()
     if word.lower().startswith("good"):
         word = " ".join(w.capitalize() for w in word.split())
+    # A mirrored name is still a name: "Hi eamonn," (ChannelSight, 2 Nov
+    # 2026) is capitalised, hyphens and apostrophes kept ("Jean-François").
+    if who and who[:1].islower() and who.lower() != "team":
+        who = who[:1].upper() + who[1:]
     return f"{word} {who},"
 
 
@@ -186,6 +190,13 @@ def followup_greeting(company_data: Dict) -> str:
     never a generic word (an inbox name is not a person). Otherwise "Hello,"."""
     g = first_email_greeting(company_data.get("first_sent_snippet") or "")
     if g:
+        # Mirror the first email, unless it greeted the address's own local
+        # part (abell@moneyfacts -> "Hi Abell,", a surname; 2 Nov 2026): a
+        # name adopted from an address is not a name, so open "Hello,".
+        who = g.split(" ", 1)[1].rstrip(",").strip().lower() if " " in g else ""
+        local = ((company_data.get("contact_email") or "").split("@")[0] or "").lower()
+        if who and local and who == local and who != "team":
+            return "Hello,"
         return g
     first, _ = _greeting_for(company_data)   # already refuses inbox words and titles
     if first:
@@ -228,9 +239,24 @@ def draft_followup_email(company_data: Dict) -> Dict[str, str]:
     # the name Bea goes by rather than the first token of her legal name), so
     # a mailbox change is an env change, never a code edit.
     first_name_sender = SIG_FIRST_NAME
+    # "a couple of weeks ago" is only true after about ten days; a follow-up
+    # sent a week after the first email (the 2 Nov 2026 bulk run went back
+    # over everything since 10 Oct, regardless of age) says "last week".
+    when = "a couple of weeks ago"
+    sent_at = company_data.get("last_sent_at") or company_data.get("outreach_sent_at")
+    if sent_at:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            s_at = _dt.fromisoformat(str(sent_at).replace("Z", "+00:00"))
+            if s_at.tzinfo is None:
+                s_at = s_at.replace(tzinfo=_tz.utc)
+            if (_dt.now(_tz.utc) - s_at).days < 10:
+                when = "last week"
+        except Exception:
+            pass
     body = (
         f"{greeting}\n\n"
-        "I wanted to follow up on my note from a couple of weeks ago. I know how "
+        f"I wanted to follow up on my note from {when}. I know how "
         "busy things get, so no concern at all if it slipped past.\n\n"
         "In short, we are Averroes Capital, a private equity investor in UK software "
         f"companies, and {company} stood out to us. I would love to hear how you "
