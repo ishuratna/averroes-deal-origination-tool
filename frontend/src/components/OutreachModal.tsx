@@ -16,7 +16,7 @@
 //     sets Contacted, a follow-up keeps Contacted, a send from Responded or
 //     later never changes the stage.
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { dealApi } from '@/services/api';
 import { outreachMode } from '@/lib/outreach';
 
@@ -46,15 +46,35 @@ const API = {
   },
 };
 
+// QUEUE MODE (Ishu, 5 Nov 2026: "it takes a lot of time to send one email
+// ... the window refreshes ... I want a slider where I can go left and
+// right"). The parent passes the ordered column (`queue`) and the current
+// position; the modal shows "3 of 42", steps with the arrows or the keyboard,
+// and after a send advances by itself to the next company that still needs
+// one. Nothing in the modal reloads the page: `onSentLocal` lets the parent
+// patch the one row in place (doctrine 1: the row is still the only truth,
+// the patch mirrors exactly what the send path wrote), and the parent
+// refreshes quietly when the modal closes.
+//   ← →            previous / next company
+//   Cmd/Ctrl+Enter send
+//   Esc            close
 export default function OutreachModal({
   company,
   onClose,
   onSent,
+  onSentLocal,
+  queue,
+  index,
+  onIndexChange,
   entity = 'company',
 }: {
   company: any | null;
   onClose: () => void;
   onSent?: () => void;
+  onSentLocal?: (name: string, mode: 'outreach' | 'followup' | 'compose') => void;
+  queue?: any[];
+  index?: number;
+  onIndexChange?: (i: number) => void;
   entity?: Entity;
 }) {
   const api = API[entity];
@@ -62,6 +82,37 @@ export default function OutreachModal({
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
+  // Companies sent in THIS session, so the auto-advance skips them even
+  // before the parent's patch lands, and the counter can say "3 sent".
+  const doneRef = useRef<Set<string>>(new Set());
+  const [doneCount, setDoneCount] = useState(0);
+  // Drafts fetched ahead for the next company (first-email mode only; the
+  // follow-up and compose drafts are already on the row or instant).
+  const prefetched = useRef<Map<string, Draft>>(new Map());
+  const inQueue = Array.isArray(queue) && queue.length > 0 && typeof index === 'number' && !!onIndexChange;
+
+  // "Still needs an email": a first email or the one follow-up, and not sent
+  // in this session. Compose rows (live conversations) are never auto-stepped
+  // into: a blank email is a decision, not a queue item.
+  const needsEmail = (c: any) => {
+    if (!c || doneRef.current.has(c.name)) return false;
+    const m = outreachMode(c);
+    return m === 'outreach' || m === 'followup';
+  };
+  const nextActionable = (from: number, dir: 1 | -1): number => {
+    if (!inQueue) return -1;
+    for (let i = from + dir; i >= 0 && i < queue!.length; i += dir) {
+      if (needsEmail(queue![i])) return i;
+    }
+    return -1;
+  };
+  const step = (dir: 1 | -1) => {
+    if (!inQueue) return;
+    // Plain stepping walks every card (so one can be skipped or revisited);
+    // only the post-send auto-advance insists on the next actionable one.
+    const i = index! + dir;
+    if (i >= 0 && i < queue!.length) onIndexChange!(i);
+  };
 
   const generateDraft = useCallback(async (c: any) => {
     setLoading(true);
@@ -128,19 +179,71 @@ export default function OutreachModal({
       });
       return;
     }
+    const pre = prefetched.current.get(company.name);
+    if (pre) { setDraft(pre); return; }
     generateDraft(company);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company?.name]);
 
+  // PREFETCH: while this one is being read, draft the next first-email row
+  // that has no stored draft, so stepping forward never waits on the AI.
+  // One at a time, never further ahead: a draft costs AI credit, and the
+  // person may close the modal after this one.
+  useEffect(() => {
+    if (!inQueue || !company) return;
+    const ni = nextActionable(index!, 1);
+    if (ni < 0) return;
+    const nx = queue![ni];
+    if (outreachMode(nx) !== 'outreach' || nx.outreach_draft_body || prefetched.current.has(nx.name)) return;
+    let cancelled = false;
+    api.draft(nx.name).then(d => {
+      if (cancelled) return;
+      prefetched.current.set(nx.name, { to: d.to || nx.contact_email || '', subject: d.subject || '',
+                                         body: d.body || '', company: nx.name, from: d.from });
+    }).catch(() => { /* the row opens the normal way when reached */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.name, index]);
+
+  // KEYBOARD. Arrows only when the cursor is not inside a field (they move
+  // the caret there); Cmd/Ctrl+Enter sends from anywhere; Esc closes.
+  useEffect(() => {
+    if (!company) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName || '';
+      const inField = tag === 'INPUT' || tag === 'TEXTAREA';
+      if (e.key === 'Escape') { onClose(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void handleSend(); return; }
+      if (inField || !inQueue) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.name, draft, sending, sent, index]);
+
   if (!company) return null;
 
   const handleSend = async () => {
-    if (!draft?.to) return;
+    if (!draft?.to || sending || sent || loading) return;
     setSending(true);
     try {
       await api.send(draft.to, draft.subject, draft.body, draft.company);
       setSent(true);
-      onSent?.();  // stage bumps to Contacted — let the parent reload
+      doneRef.current.add(draft.company);
+      setDoneCount(doneRef.current.size);
+      prefetched.current.delete(draft.company);
+      if (onSentLocal) {
+        // Queue mode: the parent patches the one row; no reload.
+        onSentLocal(draft.company, mode);
+        if (inQueue) {
+          const ni = nextActionable(index!, 1);
+          if (ni >= 0) setTimeout(() => onIndexChange!(ni), 650);
+        }
+      } else {
+        onSent?.();  // legacy: stage bumps to Contacted — let the parent reload
+      }
     } catch (err: any) {
       alert(`Send failed: ${err.message}`);
     } finally { setSending(false); }
@@ -157,7 +260,18 @@ export default function OutreachModal({
       <div className="modal-content outreach-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>{mode === 'followup' ? 'Follow up' : mode === 'compose' ? 'Email' : 'Outreach'} — {company.name}</h3>
-          <button className="modal-close" onClick={onClose}>&times;</button>
+          <div className="om-nav">
+            {inQueue && (
+              <>
+                <button className="om-arrow" onClick={() => step(-1)} disabled={index! <= 0} title="Previous (←)">&#8249;</button>
+                <span className="om-pos" title={`${queue![0]?.status || ''} column, in board order. ${doneCount} sent this session.`}>
+                  {index! + 1} of {queue!.length}{doneCount ? ` · ${doneCount} sent` : ''}
+                </span>
+                <button className="om-arrow" onClick={() => step(1)} disabled={index! >= queue!.length - 1} title="Next (→)">&#8250;</button>
+              </>
+            )}
+            <button className="modal-close" onClick={onClose} title="Close (Esc)">&times;</button>
+          </div>
         </div>
         <div className="modal-body">
           {loading ? (
@@ -186,6 +300,7 @@ export default function OutreachModal({
                   : mode === 'followup'
                     ? 'Still Contacted; the 14-day follow-up clock has restarted from this send.'
                     : `The ${api.noun}'s stage has moved to Contacted.`}
+                {inQueue && nextActionable(index!, 1) >= 0 ? ' Moving to the next one…' : inQueue ? ' That was the last one in this column.' : ''}
               </p>
             </div>
           ) : draft ? (
@@ -220,10 +335,18 @@ export default function OutreachModal({
         </div>
         <div className="modal-footer">
           {sent ? (
-            <button className="modal-ok-btn" onClick={onClose}>Done</button>
+            <>
+              {inQueue && nextActionable(index!, 1) >= 0 && (
+                <button className="outreach-cancel-btn" onClick={() => onIndexChange!(nextActionable(index!, 1))}>Next now (→)</button>
+              )}
+              <button className="modal-ok-btn" onClick={onClose}>Done</button>
+            </>
           ) : draft && !loading ? (
             <>
-              <button className="outreach-cancel-btn" onClick={onClose}>Cancel</button>
+              <button className="outreach-cancel-btn" onClick={onClose}>{inQueue ? 'Close' : 'Cancel'}</button>
+              {inQueue && nextActionable(index!, 1) >= 0 && (
+                <button className="outreach-cancel-btn" onClick={() => onIndexChange!(nextActionable(index!, 1))} title="Leave this one and move on (→)">Skip</button>
+              )}
               <button className="outreach-copy-btn" onClick={handleCopy}>Copy Draft</button>
               {/* Regeneration is a first-email concept: the follow-up is a fixed
                   template and compose is deliberately blank. */}
@@ -235,7 +358,7 @@ export default function OutreachModal({
               )}
               <button className="outreach-send-btn" onClick={handleSend} disabled={!draft.to || sending}
                 title={!draft.to ? 'No recipient email — type one above or run SmartFill to find contacts' : ''}>
-                {sending ? 'Sending…' : 'Send Email'}
+                {sending ? 'Sending…' : inQueue ? 'Send (⌘↵)' : 'Send Email'}
               </button>
             </>
           ) : null}
@@ -249,6 +372,11 @@ export default function OutreachModal({
         .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0; }
         .modal-header h3 { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0; }
         .modal-close { background: none; border: none; font-size: 1.4rem; color: #94a3b8; cursor: pointer; }
+        .om-nav { display: flex; align-items: center; gap: 0.35rem; }
+        .om-arrow { background: #f1f5f9; border: 1px solid #e2e8f0; color: #0f172a; width: 28px; height: 28px; border-radius: 6px; font-size: 1.1rem; line-height: 1; cursor: pointer; }
+        .om-arrow:hover:not(:disabled) { background: #e2e8f0; }
+        .om-arrow:disabled { opacity: 0.35; cursor: default; }
+        .om-pos { font-size: 0.74rem; color: #64748b; font-weight: 700; min-width: 5.5rem; text-align: center; }
         .modal-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
         .modal-footer { padding: 1rem 1.5rem; display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid #f1f5f9; }
         .modal-ok-btn { background: #2563eb; color: white; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }

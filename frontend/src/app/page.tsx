@@ -135,7 +135,10 @@ function HomeInner() {
   }, []);
   const [memoBusy, setMemoBusy] = useState<string>('');
   const openProfile = (name: string, tab?: string) => { setProfileTab(tab); const i = filteredPipeline.findIndex(c => c.name === name); if (i >= 0) setProfileIdx(i); };
-  const [outreachTarget, setOutreachTarget] = useState<CompanyTarget | null>(null);
+  // The outreach queue (Ishu, 5 Nov 2026): the column the card sits in, in
+  // board order, and the position in it. The company shown is derived from
+  // `pipeline` by name so a local patch after a send is reflected at once.
+  const [outreachQueue, setOutreachQueue] = useState<{ names: string[]; index: number } | null>(null);
 
   // Saved views
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -166,21 +169,63 @@ function HomeInner() {
     } catch (e) {}
   }, []);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(opts: { stats?: boolean; quiet?: boolean } = { stats: true }) {
+    // `quiet`: refresh the rows without the loading screen (after a send
+    // session). `stats`: the universe count needs the WHOLE universe (17k
+    // rows, the slow call); it is fetched on first load only. Reloading it
+    // after every send was the minute Ishu waited between emails.
+    if (!opts.quiet) setLoading(true);
     try {
       const data = await dealApi.getPipeline();
       // Sort by Averroes Fit Score descending (scored companies first, then by score)
       data.sort((a, b) => (b.averroes_fit_score ?? -1) - (a.averroes_fit_score ?? -1));
       setPipeline(data);
-      const uni = await dealApi.getUniverse();
-      setStats({ total: uni.length, qualified: data.length });
+      if (opts.stats) {
+        const uni = await dealApi.getUniverse();
+        setStats({ total: uni.length, qualified: data.length });
+      } else {
+        setStats(st => ({ ...st, qualified: data.length }));
+      }
     } catch (error) {
       console.error("Failed to load pipeline", error);
     } finally {
-      setLoading(false);
+      if (!opts.quiet) setLoading(false);
     }
   }
+
+  // ONE column order for the board and the outreach queue, so "next" in the
+  // modal is the card to the right on the board. Best fit first, unscored
+  // last; Contacted breaks ties on the action bucket; then latest entry.
+  const sortStage = (stage: string, deals: CompanyTarget[]) => {
+    const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
+    const prio = (c: CompanyTarget) => actionBucketInfo(c.action_bucket)?.priority ?? 99;
+    const fit = (c: CompanyTarget) => c.averroes_fit_score ?? -1;
+    return [...deals].sort((a, b) => fit(b) - fit(a)
+      || (stage === 'Contacted' ? prio(a) - prio(b) : 0)
+      || entered(b) - entered(a));
+  };
+
+  // Open the modal on a card WITH its column as the queue.
+  const openOutreach = (company: CompanyTarget) => {
+    const col = sortStage(company.status, filteredPipeline.filter(c => c.status === company.status));
+    const names = col.map(c => c.name);
+    const index = Math.max(0, names.indexOf(company.name));
+    setOutreachQueue({ names: names.length ? names : [company.name], index });
+  };
+
+  // After a send, mirror EXACTLY what the send path wrote on the row, so the
+  // card, the button state and the queue position are right without a
+  // reload. The row in BigQuery is still the truth; this is the view
+  // catching up early. A full quiet refresh follows when the modal closes.
+  const patchAfterSend = (name: string, mode: 'outreach' | 'followup' | 'compose') => {
+    const now = new Date().toISOString();
+    setPipeline(prev => prev.map(c => {
+      if (c.name !== name) return c;
+      const next: CompanyTarget = { ...c, outreach_sent_at: now, last_sent_at: now, sent_count: (c.sent_count ?? 0) + 1 };
+      if (mode === 'outreach') { next.status = 'Contacted'; next.contacted_at = c.contacted_at || now; next.stage_entered_at = now; }
+      return next;
+    }));
+  };
 
   // ── Deal lifecycle handlers ──────────────────────────────────────────────
 
@@ -188,7 +233,7 @@ function HomeInner() {
     setUpdatingStatus(companyName);
     try {
       await dealApi.updateCompanyStatus(companyName, newStatus);
-      await loadData();
+      await loadData({ stats: false, quiet: true });
     } catch (error) { alert(`Failed to update status: ${error}`); }
     finally { setUpdatingStatus(null); }
   };
@@ -208,7 +253,7 @@ function HomeInner() {
     setUpdatingStatus(companyName);
     try {
       await dealApi.removeFromPipeline(companyName);
-      await loadData();
+      await loadData({ stats: false, quiet: true });
     } catch (err: any) {
       alert(`Failed to remove: ${err.message}`);
     } finally {
@@ -352,9 +397,9 @@ function HomeInner() {
                 ⏰ Follow up <span className="followup-count">{followups.length}</span>
               </button>
             )}
-            <SyncEmailsButton onSynced={loadData} />
-            <SyncCallsButton onSynced={loadData} />
-            <ReplyRuleButton onDone={loadData} />
+            <SyncEmailsButton onSynced={() => loadData({ stats: false })} />
+            <SyncCallsButton onSynced={() => loadData({ stats: false })} />
+            <ReplyRuleButton onDone={() => loadData({ stats: false })} />
             <div className="view-toggle">
               <button className={`toggle-btn ${viewMode === 'kanban' ? 'active' : ''}`} onClick={() => setViewMode('kanban')}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z" fill="currentColor" opacity={viewMode === 'kanban' ? 1 : 0.4}/></svg>
@@ -529,17 +574,11 @@ function HomeInner() {
         {viewMode === 'kanban' ? (
           <section className="kanban-board">
             {PIPELINE_STAGES.map(stage => {
-              const stageDeals = filteredPipeline.filter(c => c.status === stage);
               // Every column: best fit first (Ishu, 25 Oct 2026: "resort
               // everything in the pipeline so the companies that follow the
-              // new fit score are on top"). Unscored rows sink. Ties: on
-              // Contacted the action bucket (act-now first), then latest entry.
-              const entered = (c: CompanyTarget) => new Date(c.stage_entered_at || c.ingested_at || 0).getTime();
-              const prio = (c: CompanyTarget) => actionBucketInfo(c.action_bucket)?.priority ?? 99;
-              const fit = (c: CompanyTarget) => c.averroes_fit_score ?? -1;
-              stageDeals.sort((a, b) => fit(b) - fit(a)
-                || (stage === 'Contacted' ? prio(a) - prio(b) : 0)
-                || entered(b) - entered(a));
+              // new fit score are on top"). The same order feeds the outreach
+              // queue (sortStage), so the modal's "next" is the next card.
+              const stageDeals = sortStage(stage, filteredPipeline.filter(c => c.status === stage));
 
               // Per-stage paging (same reasoning as Master Universe's table
               // pager): Qualified alone can hold hundreds of cards, so only
@@ -720,7 +759,7 @@ function HomeInner() {
                             {(() => {
                               const ob = outreachButtonState(company); return (
                               <button className={`kc-outreach ${ob.cls}`} title={ob.title}
-                                onClick={() => setOutreachTarget(company)}>
+                                onClick={() => openOutreach(company)}>
                                 {ob.label}
                               </button>
                             ); })()}
@@ -789,7 +828,7 @@ function HomeInner() {
           <section className="list-section">
             <div className="section-header">
               <h3>Pipeline ({filteredPipeline.length})</h3>
-              <button className="refresh-btn" onClick={loadData}>Refresh &nbsp;&#8635;</button>
+              <button className="refresh-btn" onClick={() => loadData({ stats: false })}>Refresh &nbsp;&#8635;</button>
             </div>
 
             <div className="cards-grid">
@@ -901,13 +940,28 @@ function HomeInner() {
           index={profileIdx}
           onClose={() => { setProfileIdx(null); setProfileTab(undefined); }}
           onNavigate={setProfileIdx}
-          onChanged={loadData}
+          onChanged={() => loadData({ stats: false })}
           initialTab={profileTab}
         />
       )}
 
       {/* Outreach Modal (shared with the Universe page) */}
-      <OutreachModal company={outreachTarget} onClose={() => setOutreachTarget(null)} onSent={loadData} />
+      {(() => {
+        const q = outreachQueue;
+        const byName = new Map(pipeline.map(c => [c.name, c] as const));
+        const items = q ? q.names.map(n => byName.get(n)).filter(Boolean) as CompanyTarget[] : [];
+        const current = q ? items[Math.min(q.index, items.length - 1)] || null : null;
+        return (
+          <OutreachModal
+            company={current}
+            queue={items}
+            index={q ? Math.min(q.index, items.length - 1) : undefined}
+            onIndexChange={(i) => setOutreachQueue(prev => prev ? { ...prev, index: i } : prev)}
+            onSentLocal={patchAfterSend}
+            onClose={() => { setOutreachQueue(null); void loadData({ quiet: true }); }}
+          />
+        );
+      })()}
 
       {/* Note Modal */}
       {noteModal && (
