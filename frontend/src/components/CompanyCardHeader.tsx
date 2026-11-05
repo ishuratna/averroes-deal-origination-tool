@@ -6,7 +6,10 @@
 // open that pop-up it should also show the company card ... exactly the
 // same format ... so I know what kind of company I'm sending emails to").
 // Same intent, same component, same CSS: the two can never drift
-// (doctrine 2). The timing chips (days in stage, replied) are the card's
+// (doctrine 2). Its CSS lives in globals.css under "CompanyCardHeader":
+// the first cut carried it as component-scoped styled-jsx and production
+// rendered the block bare (6 Nov 2026), so the rules are global on purpose.
+// The timing chips (days in stage, replied) are the card's
 // own and are passed in as an optional slot, because the modal has no
 // column clock to show.
 
@@ -84,42 +87,6 @@ export default function CompanyCardHeader({
         </div>
       )}
 
-      <style jsx>{`
-        .kc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.4rem; }
-        .kc-header-badges { display: flex; gap: 0.3rem; align-items: center; flex-shrink: 0; }
-        .kc-name {
-          font-size: 0.82rem; font-weight: 700; color: #0f172a; background: none; border: none;
-          padding: 0; cursor: pointer; text-align: left; line-height: 1.3; letter-spacing: -0.01em;
-        }
-        .kc-name:hover { color: #2563eb; }
-        .kc-name-static { cursor: default; }
-        .kc-name-static:hover { color: #0f172a; }
-        /* Sector and city: sentence case, small and grey. */
-        .kc-meta { font-size: 0.62rem; color: #94a3b8; font-weight: 500; margin: 0.1rem 0 0; }
-        .kc-badge-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
-        .kc-fit-badge { font-size: 0.62rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; color: white; letter-spacing: 0.02em; }
-        .kc-fit-badge.high { background: #16a34a; }
-        .kc-fit-badge.mid { background: #d97706; }
-        .kc-fit-badge.low { background: #dc2626; }
-        .kc-band-badge { font-size: 0.58rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
-        .kc-band-badge.band-target-band { background: #dcfce7; color: #166534; }
-        .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
-        .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
-        /* Labelled financial columns: Revenue / EBITDA / Team scan better
-           labelled than as one prose line. */
-        .kc-metrics { display: flex; gap: 0; margin-top: 0.5rem; padding: 0.4rem 0; border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; }
-        .kc-metric { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 0.55rem; border-left: 1px solid #f1f5f9; }
-        .kc-metric:first-child { padding-left: 0; border-left: none; }
-        .kc-metric-label { font-size: 0.56rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.1rem; }
-        .kc-metric-value { font-size: 0.78rem; font-weight: 700; color: #0f172a; white-space: nowrap; }
-        .kc-est { font-size: 0.6rem; color: #94a3b8; font-weight: 600; font-style: normal; }
-        /* In the modal the same block sits in a quiet panel, a touch larger. */
-        .cch-compact { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.7rem 0.85rem; }
-        .cch-compact .kc-name { font-size: 0.92rem; }
-        .cch-compact .kc-meta { font-size: 0.7rem; }
-        .cch-compact .kc-metric-value { font-size: 0.85rem; }
-        .cch-compact .kc-metrics { border-bottom: none; padding-bottom: 0; }
-      `}</style>
     </div>
   );
 }
