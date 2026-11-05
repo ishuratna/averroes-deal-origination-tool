@@ -2,18 +2,18 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from 'next/link';
-import { CompanyTarget, ActivityEntry, DEAL_STAGES, getRevenueBand, actionBucketInfo, displayStatus } from "../types";
+import { CompanyTarget, ActivityEntry, DEAL_STAGES, actionBucketInfo, displayStatus } from "../types";
 import { dealApi } from "../services/api";
 import CompanyProfile from "../components/CompanyProfile";
 import InfoTip, { DEFS, STAGE_DEFS } from "../components/InfoTip";
 import AuthGate from "../components/AuthGate";
 import OutreachModal from "../components/OutreachModal";
+import CompanyCardHeader from "../components/CompanyCardHeader";
 import SyncEmailsButton from "../components/SyncEmailsButton";
 import SyncCallsButton from "../components/SyncCallsButton";
 import ReplyRuleButton from "../components/ReplyRuleButton";
 import { outreachButtonState, owesReply, hasFollowedUp, lastSentAt } from "../lib/outreach";
 import SideNav from '../components/SideNav';
-import OwnerTag from '../components/OwnerTag';
 
 // ── Filter helpers ──────────────────────────────────────────────────────────
 
@@ -651,99 +651,38 @@ function HomeInner() {
                             onDragStart={() => handleDragStart(company.name)}
                             onDragEnd={handleDragEnd}
                           >
-                            {/* Row 1 — identity + timing signals */}
-                            <div className="kc-header">
-                              <button className="kc-name" onClick={() => openProfile(company.name)}>
-                                {company.name}
-                              </button>
-                              <div className="kc-header-badges">
-                                {company.last_reply_at && (
-                                  <span className="kc-reply" title={`Replied ${new Date(company.last_reply_at).toLocaleDateString('en-GB')}${company.reply_classification ? ` — ${company.reply_classification.replace('_', ' ')}` : ''}`}>
-                                    ✉
-                                  </span>
-                                )}
-                                {daysInStage !== null && (
-                                  <span className={`kc-days ${isStale ? 'stale' : ''}`}
-                                    title={isContacted
-                                      ? (followedUp
-                                          ? `${daysInStage} days since our follow-up — waiting on them; no further follow-up`
-                                          : isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
-                                      : company.status === 'Responded'
-                                        ? (owed
-                                            ? `${daysInStage} days since their message — ${isStale ? 'reply overdue' : 'we owe the reply'}`
-                                            : `${daysInStage} days since our reply — ball is with them`)
-                                        : (isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`)}>
-                                    {isStale ? '⚠ ' : ''}{daysInStage}d
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <p className="kc-meta">
-                              {company.sector || 'Tech'}
-                              {company.hq_city ? ` · ${company.hq_city}` : company.region ? ` · ${company.region}` : ''}
-                            </p>
-
-                            {/* The action-bucket chip ("Right fit — too early,
-                                nurture") is gone from every card (Ishu, 26 Oct
-                                2026). The bucket still orders the Contacted
-                                column and drives the Responded page queues;
-                                the reading itself sits in the profile's
-                                Outreach tab. */}
-
-                            {/* Row 2 — assessment badges + who is managing it.
-                                Owner uses the shared OwnerTag so it looks and
-                                behaves identically here, on the Universe table
-                                and on the Responded page. */}
-                            {(getRevenueBand(company) || company.averroes_fit_score != null || company.owner) && (
-                              <div className="kc-badge-row">
-                                {getRevenueBand(company) && (
-                                  <span className={`kc-band-badge band-${getRevenueBand(company)!.toLowerCase().replace(/\s+/g, '-')}`}>
-                                    {getRevenueBand(company)}
-                                  </span>
-                                )}
-                                {company.averroes_fit_score != null && (
-                                  <span className={`kc-fit-badge ${company.averroes_fit_score >= 0.7 ? 'high' : company.averroes_fit_score >= 0.4 ? 'mid' : 'low'}`}
-                                    title="Averroes fit score">
-                                    Fit {Math.round(company.averroes_fit_score * 100)}
-                                  </span>
-                                )}
-                                {company.owner && <OwnerTag owner={company.owner} />}
-                              </div>
-                            )}
-
-                            {/* Row 3 — financial snapshot. The labelled columns
-                                are back by request: with the buckets and memo
-                                button gone the card has room, and Revenue /
-                                EBITDA / Team scan better as a labelled row than
-                                as one line of prose. */}
-                            {(() => {
-                              const revM = company.revenue_y1 ? company.revenue_y1 / 1e6 : company.revenue_m || null;
-                              const revEst = !revM && company.revenue_estimate_m ? company.revenue_estimate_m : null;
-                              const team = company.employees || company.employees_ch || null;
-                              if (!revM && !revEst && !company.estimated_ebitda && !team) return null;
-                              return (
-                                <div className="kc-metrics">
-                                  {(revM || revEst) && (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">Revenue</span>
-                                      <span className="kc-metric-value">{revM ? `£${revM.toFixed(1)}M` : `~£${revEst!.toFixed(1)}M`}{revEst ? <em className="kc-est"> est.</em> : null}</span>
+                            {/* Rows 1 to 3 (identity, badges, metrics) are the
+                                shared CompanyCardHeader, the same block the
+                                outreach modal shows above the email (Ishu,
+                                5 Nov 2026). Only the timing chips are the
+                                card's own, passed in as badges. */}
+                            <CompanyCardHeader
+                              company={company}
+                              onNameClick={() => openProfile(company.name)}
+                              badges={(
+                                <>
+                                  {company.last_reply_at && (
+                                    <span className="kc-reply" title={`Replied ${new Date(company.last_reply_at).toLocaleDateString('en-GB')}${company.reply_classification ? ` — ${company.reply_classification.replace('_', ' ')}` : ''}`}>
+                                      ✉
                                     </span>
                                   )}
-                                  {company.estimated_ebitda ? (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">EBITDA</span>
-                                      <span className="kc-metric-value">&pound;{company.estimated_ebitda}M</span>
+                                  {daysInStage !== null && (
+                                    <span className={`kc-days ${isStale ? 'stale' : ''}`}
+                                      title={isContacted
+                                        ? (followedUp
+                                            ? `${daysInStage} days since our follow-up — waiting on them; no further follow-up`
+                                            : isStale ? `${daysInStage} days since our last email — follow-up overdue` : `${daysInStage} days since our last email`)
+                                        : company.status === 'Responded'
+                                          ? (owed
+                                              ? `${daysInStage} days since their message — ${isStale ? 'reply overdue' : 'we owe the reply'}`
+                                              : `${daysInStage} days since our reply — ball is with them`)
+                                          : (isStale ? `In this stage for ${daysInStage} days — needs attention` : `${daysInStage} days in this stage`)}>
+                                      {isStale ? '⚠ ' : ''}{daysInStage}d
                                     </span>
-                                  ) : null}
-                                  {team ? (
-                                    <span className="kc-metric">
-                                      <span className="kc-metric-label">Team</span>
-                                      <span className="kc-metric-value">{team}</span>
-                                    </span>
-                                  ) : null}
-                                </div>
-                              );
-                            })()}
+                                  )}
+                                </>
+                              )}
+                            />
 
                             {/* No contact row on ANY card (per Ishu: absolute
                                 consistency, the Contacted template everywhere).
@@ -1347,59 +1286,14 @@ function HomeInner() {
         .skeleton-kanban { height: 120px; background: #e2e8f0; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-        .kc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.4rem; }
-        .kc-header-badges { display: flex; gap: 0.3rem; align-items: center; flex-shrink: 0; }
-        .kc-name {
-          font-size: 0.82rem;
-          font-weight: 700;
-          color: #0f172a;
-          background: none;
-          border: none;
-          padding: 0;
-          cursor: pointer;
-          text-align: left;
-          line-height: 1.3;
-          letter-spacing: -0.01em;
-        }
-        .kc-name:hover { color: #2563eb; }
         .kc-days { font-size: 0.65rem; color: #94a3b8; font-weight: 700; background: #f8fafc; border: 1px solid #f1f5f9; padding: 0.1rem 0.4rem; border-radius: 999px; flex-shrink: 0; }
         .kc-days.stale { color: #dc2626; background: #fee2e2; border-color: #fecaca; font-weight: 800; }
         .kc-reply { font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.1rem 0.4rem; border-radius: 999px; flex-shrink: 0; cursor: help; }
         .kanban-card.stale { border-left: 3px solid #dc2626; }
         .kanban-card.test-card { background: #fffbeb; border-color: #f59e0b; }
 
-        /* Sector and city: sentence case, small and grey. The uppercase
-           letterspaced treatment shouted for attention that a location line
-           has not earned. */
-        .kc-meta { font-size: 0.62rem; color: #94a3b8; font-weight: 500; margin: 0.1rem 0 0; }
 
-        .kc-badge-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
-        .kc-fit-badge { font-size: 0.62rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; color: white; letter-spacing: 0.02em; }
-        .kc-fit-badge.high { background: #16a34a; }
-        .kc-fit-badge.mid { background: #d97706; }
-        .kc-fit-badge.low { background: #dc2626; }
-        .kc-band-badge { font-size: 0.58rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
-        .kc-band-badge.band-target-band { background: #dcfce7; color: #166534; }
-        .kc-band-badge.band-too-early { background: #fef3c7; color: #92400e; }
-        .kc-band-badge.band-too-large { background: #fef2f2; color: #dc2626; }
 
-        /* Labelled financial columns, restored by request: with the bucket
-           chips and the memo button gone the card has the room, and Revenue /
-           EBITDA / Team scan better labelled than as one prose line. Sizes sit
-           slightly under the originals to match the tightened card. */
-        .kc-metrics {
-          display: flex;
-          gap: 0;
-          margin-top: 0.5rem;
-          padding: 0.4rem 0;
-          border-top: 1px solid #f1f5f9;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .kc-metric { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 0.55rem; border-left: 1px solid #f1f5f9; }
-        .kc-metric:first-child { padding-left: 0; border-left: none; }
-        .kc-metric-label { font-size: 0.56rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.1rem; }
-        .kc-metric-value { font-size: 0.78rem; font-weight: 700; color: #0f172a; white-space: nowrap; }
-        .kc-est { font-size: 0.6rem; color: #94a3b8; font-weight: 600; font-style: normal; }
 
         .kc-outreach {
           display: block; width: 100%; margin-top: 0.5rem;

@@ -19,6 +19,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { dealApi } from '@/services/api';
 import { outreachMode } from '@/lib/outreach';
+import CompanyCardHeader from './CompanyCardHeader';
 
 interface Draft { to: string; subject: string; body: string; company: string; from?: string; }
 
@@ -274,6 +275,13 @@ export default function OutreachModal({
           </div>
         </div>
         <div className="modal-body">
+          {/* The company, in exactly the card's own format (Ishu, 5 Nov
+              2026): name, sector and city, band, fit, owner, Revenue /
+              EBITDA / Team, so what is being written to is in view before
+              the send. Founders only: an investor row has other fields. */}
+          {entity === 'company' && !sent && (
+            <div className="om-card"><CompanyCardHeader company={company} compact /></div>
+          )}
           {loading ? (
             <div className="outreach-loading">
               <div className="spinner"></div>
@@ -373,6 +381,7 @@ export default function OutreachModal({
         .modal-header h3 { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0; }
         .modal-close { background: none; border: none; font-size: 1.4rem; color: #94a3b8; cursor: pointer; }
         .om-nav { display: flex; align-items: center; gap: 0.35rem; }
+        .om-card { margin-bottom: 1rem; }
         .om-arrow { background: #f1f5f9; border: 1px solid #e2e8f0; color: #0f172a; width: 28px; height: 28px; border-radius: 6px; font-size: 1.1rem; line-height: 1; cursor: pointer; }
         .om-arrow:hover:not(:disabled) { background: #e2e8f0; }
         .om-arrow:disabled { opacity: 0.35; cursor: default; }
